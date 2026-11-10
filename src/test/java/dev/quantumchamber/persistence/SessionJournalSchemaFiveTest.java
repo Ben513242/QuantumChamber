@@ -18,6 +18,35 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SessionJournalSchemaFiveTest {
+
+    @Test void oldPolicySnapshotsRemainFrozenAcrossCheckedWriteAndReopen() throws Exception {
+        try(var fixture=settings()) {
+            var registry=builtin();var lease=new TestLease(fixture.registries());
+            var validator=SessionRecoveryState.m6Validator(()->registry,()->new TestLease(fixture.registries()));
+            for(int version:new int[]{1,2,3}) {
+                var nbt=fixtureRecord(version,true,registry,lease).toNbt(5);
+                nbt.getCompound("CandidateContext").putInt("PolicyVersion",version);
+                var intent=nbt.getList("CandidateLedger",10).getCompound(0).getCompound("Candidate").getCompound("Intent");
+                intent.putInt("PolicyVersion",version);byte[] material=new byte[32];material[0]=(byte)(version-1);
+                intent.putByteArray("GenerationSeedMaterial",material);
+                intent.putString("ProfileId",version==1?"quantumchamber:random_vanilla_v1":version==2?"quantumchamber:same_seed_fresh_v1":"quantumchamber:same_seed_toggle_amplified_v1");
+                if(version==2)intent.put("TargetSettingsSnapshot",intent.getCompound("SourceSettingsSnapshot").copy());
+                var original=SessionRecoveryRecord.fromNbt(nbt,5);var disk=new Disk("frozen-policy-"+version,validator,original);
+                assertEquals(original,disk.state.flushedRecords().get(original.sessionUuid()));
+                var bytes=Files.readAllBytes(disk.file);
+                // 目前新policy3可建，不得導致checked舊policy1/2改寫或重抽。
+                var old=original.candidateContext().orElseThrow();
+                new dev.quantumchamber.candidate.CandidatePolicySnapshot(old.policyId(),3,old.candidateSchemaVersion(),old.sourceWeight(),old.discoveredWeight(),old.newWeight(),old.discoveryWatermark(),old.maxCandidateEntries(),old.entropyFingerprint(),old.sourceFamilyRef(),0);
+                var reopened=SessionRecoveryState.load(disk.file,validator);reopened.requireHealthy();
+                assertEquals(original,reopened.flushedRecords().get(original.sessionUuid()));
+                assertEquals(version,reopened.flushedRecords().get(original.sessionUuid()).candidateContext().orElseThrow().policyVersion());
+                reopened.markDirty();reopened.save(disk.file.toFile(),null);
+                assertArrayEquals(bytes,Files.readAllBytes(disk.file));
+                assertEquals(original,SessionRecoveryState.load(disk.file,validator).flushedRecords().get(original.sessionUuid()));
+            }
+        }
+    }
+
     private static final long INDEPENDENT_SCHEMA_FIVE_LIMIT = 16L * 1024 * 1024;
     @TempDir Path directory;
     @FunctionalInterface interface Raw { void write(DataOutputStream out) throws IOException; }

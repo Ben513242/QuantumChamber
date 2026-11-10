@@ -33,6 +33,7 @@ public record UniverseRecord(UniverseDefinition definition, DesiredAvailability 
                     || !GenerationSettingsSnapshot.isBuiltin(snapshot.providerId())
                     || !snapshot.providerId().equals("quantumchamber:vanilla_" + preset + "_v1")
                     || !(NewUniverseIntent.SAME_SEED_PROFILE_ID.equals(profileId)
+                    || NewUniverseIntent.TOGGLE_AMPLIFIED_PROFILE_ID.equals(profileId)
                     || NewUniverseIntent.RANDOM_PROFILE_ID.equals(profileId) && preset.equals("normal")))) {
                 throw new IllegalArgumentException("NEW_M6 profile 與受支援目標設定不符");
             }

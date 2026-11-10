@@ -26,6 +26,24 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
 class UniverseAllocationLedgerTest {
+
+    @Test void policyThreeAllocationOwnerAcceptsToggleAndKeepsOlderMatrix() {
+        var fields = assertDoesNotThrow(() -> new UniverseAllocationLedger.M6Fields(3,
+                "quantumchamber:same_seed_toggle_amplified_v1", Long.MIN_VALUE, new CandidateBytes(new byte[32])),
+                "TOGGLE_ALLOCATION_OWNER：合法policy3 toggle配置權威必須接受");
+        assertEquals(3, fields.policyVersion()); assertEquals(Long.MIN_VALUE, fields.rootWorldSeed());
+        var allocation=token(81);
+        var entry=new UniverseAllocationLedger.Entry(allocation,UniverseAllocationLedger.deriveUniverseId(allocation),null,1,fields);
+        var ledger=UniverseAllocationLedger.empty().upgradeEnvelope().append(entry);
+        assertEquals(ledger.toNbt(),UniverseAllocationLedger.fromNbt(ledger.toNbt()).toNbt());
+        assertEquals(entry,UniverseAllocationLedger.fromNbt(ledger.toNbt()).entries().getFirst());
+        for (int oldPolicy : new int[] {1, 2})
+            assertThrows(IllegalArgumentException.class, () -> new UniverseAllocationLedger.M6Fields(oldPolicy,
+                    "quantumchamber:same_seed_toggle_amplified_v1", 42, new CandidateBytes(new byte[32])));
+        assertThrows(IllegalArgumentException.class, () -> new UniverseAllocationLedger.M6Fields(3,
+                "quantumchamber:unknown_v1", 42, new CandidateBytes(new byte[32])));
+    }
+
     /**
      * 固定 test vectors：期望值由獨立工具（Python 3.11 hashlib，見 implementation note F2b 一節）以
      * SHA-256(UTF-8("quantumchamber:universe-id:v1") ‖ token) 的前 16 bytes、設定 version 8 與 variant 10 算出，不經 production helper。
@@ -103,7 +121,7 @@ class UniverseAllocationLedgerTest {
         var encoded = ledger.toNbt();
         assertEquals(encoded, UniverseAllocationLedger.fromNbt(encoded).toNbt());
         assertEquals(1, UniverseAllocationLedger.fromNbt(encoded).entries().getFirst().m6().policyVersion());
-        assertThrows(IllegalArgumentException.class, () -> new UniverseAllocationLedger.M6Fields(3,
+        assertThrows(IllegalArgumentException.class, () -> new UniverseAllocationLedger.M6Fields(4,
                 "quantumchamber:random_vanilla_v1", 42, token(3)));
     }
 
@@ -132,7 +150,7 @@ class UniverseAllocationLedgerTest {
         rejects(cases, "多欄", mixed, nbt -> row(nbt, 1).putInt("Extra", 1));
         rejects(cases, "種子型別錯誤", mixed, nbt -> row(nbt, 1).putInt("RootWorldSeed", 0));
         rejects(cases, "指紋長度錯誤", mixed, nbt -> row(nbt, 1).putByteArray("TargetSettingsFingerprint", new byte[31]));
-        rejects(cases, "未知 policy", mixed, nbt -> row(nbt, 1).putInt("PolicyVersion", 3));
+        rejects(cases, "未知 policy", mixed, nbt -> row(nbt, 1).putInt("PolicyVersion", 4));
         rejects(cases, "未知 profile", mixed, nbt -> row(nbt, 1).putString("ProfileId", "quantumchamber:other"));
         rejects(cases, "未知列版本", mixed, nbt -> row(nbt, 1).putInt("EntryVersion", 3));
         assertAll(cases);

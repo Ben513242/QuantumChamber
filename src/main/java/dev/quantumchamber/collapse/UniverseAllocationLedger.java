@@ -48,9 +48,10 @@ public final class UniverseAllocationLedger {
 
     public record M6Fields(int policyVersion, String profileId, long rootWorldSeed, CandidateBytes targetSettingsFingerprint) {
         public M6Fields {
-            if ((policyVersion != 1 && policyVersion != 2)
+            if ((policyVersion != 1 && policyVersion != 2 && policyVersion != 3)
                     || !(NewUniverseIntent.RANDOM_PROFILE_ID.equals(profileId)
-                    || policyVersion == 2 && NewUniverseIntent.SAME_SEED_PROFILE_ID.equals(profileId))) {
+                    || policyVersion >= 2 && NewUniverseIntent.SAME_SEED_PROFILE_ID.equals(profileId)
+                    || policyVersion == 3 && NewUniverseIntent.TOGGLE_AMPLIFIED_PROFILE_ID.equals(profileId))) {
                 throw new IllegalArgumentException("未知的 M6 allocation policy 或 profile");
             }
             Objects.requireNonNull(targetSettingsFingerprint, "targetSettingsFingerprint");

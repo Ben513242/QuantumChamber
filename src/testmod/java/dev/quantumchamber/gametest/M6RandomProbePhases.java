@@ -928,7 +928,7 @@ public final class M6RandomProbePhases {
                             +" uuid="+controller.chamberUuid()+" state="+controller.chamberState()+" readiness="+readiness));
             sid=initial.sessionUuid();
             var policy=initial.candidateContext().orElseThrow();
-            require(initial.state()==SessionState.ARMING && policy.isM6() && policy.policyVersion()==2
+            require(initial.state()==SessionState.ARMING && policy.isM6() && policy.policyVersion()==3
                     && policy.familyCapabilityVersion()==0,"FORMAL_ARMING_POLICY_TWO");
             proof.put("formalLeverEntry",true);proof.put("armingPolicy",policy.policyVersion());proof.put("familyCapability",policy.familyCapabilityVersion());stage=2;
         }
@@ -967,7 +967,7 @@ public final class M6RandomProbePhases {
         private void takeIntent(SessionRecoveryRecord row) {
             require(row.selectedCandidate().orElseThrow() instanceof QuantumCandidate.New,"FORMAL_NOT_NEW");
             intent=((QuantumCandidate.New)row.selectedCandidate().orElseThrow()).intent();
-            require(intent.isM6() && intent.policyVersion()==2 && intent.familyCapabilityVersion()==0
+            require(intent.isM6() && intent.policyVersion()==3 && intent.familyCapabilityVersion()==0
                     && row.candidateContext().orElseThrow().policyVersion()==intent.policyVersion()
                     && NewUniverseIntent.RANDOM_PROFILE_ID.equals(intent.profileId()),"FORMAL_FROZEN_POLICY");
             require(intent.sourceRootWorldSeed()==server.getSaveProperties().getGeneratorOptions().getSeed()

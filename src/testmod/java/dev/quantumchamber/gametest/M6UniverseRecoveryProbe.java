@@ -66,7 +66,7 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
             LOGGER.info("M6_NATIVE_BEGIN chain={} phase={} mode=DIAGNOSTIC startupNonce={}", config.chain(), config.phase(), config.startupNonce());
             return;
         }
-        if (Set.of("same-seed-restart","same-seed-amplified-restart").contains(config.chain())) {
+        if (Set.of("same-seed-restart","same-seed-amplified-restart","profile-restart","profile-amplified-restart").contains(config.chain())) {
             var profiles = new M6ProfileProbePhases(config.phase(), config.root(), config.evidence(), proof);
             ServerLifecycleEvents.SERVER_STARTED.register(AFTER, profiles::started);
             ServerTickEvents.END_SERVER_TICK.register(profiles::tick);
@@ -323,7 +323,7 @@ public final class M6UniverseRecoveryProbe implements ModInitializer {
             if (Set.of("vanilla-normal-control","vanilla-amplified-control","vanilla-normal-carvers-control","vanilla-amplified-carvers-control").contains(values.get(4))) {
                 require(values.get(1).equals("sample"), "M6_CONFIG_PHASE_UNKNOWN");
                 require(values.get(5).equals("DIAGNOSTIC"), "M6_CONFIG_MODE_MIXED");
-            } else if (Set.of("same-seed-restart","same-seed-amplified-restart").contains(values.get(4))) {
+            } else if (Set.of("same-seed-restart","same-seed-amplified-restart","profile-restart","profile-amplified-restart").contains(values.get(4))) {
                 require(Set.of("source", "new", "restart").contains(values.get(1)), "M6_CONFIG_PHASE_UNKNOWN");
                 require(values.get(5).equals("FUNCTIONAL"), "M6_CONFIG_MODE_MIXED");
             } else if (values.get(4).equals("partial-overworld")) {

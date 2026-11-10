@@ -83,6 +83,12 @@ public final class CandidateResolver {
             parameters.putString("OverworldPreset", "normal");
             target = registry.createSnapshot("quantumchamber:vanilla_normal_v1", 1, parameters, lease);
         }
+        if (NewUniverseIntent.TOGGLE_AMPLIFIED_PROFILE_ID.equals(profile)) {
+            var parameters = source.settings().parameters();
+            String preset = parameters.getString("OverworldPreset").equals("normal") ? "amplified" : "normal";
+            parameters.putString("OverworldPreset", preset);
+            target = registry.createSnapshot("quantumchamber:vanilla_" + preset + "_v1", 1, parameters, lease);
+        }
         var intent = new NewUniverseIntent(token, material, policy.policyVersion(),
                 profile, 1,
                 source.rootSeed(), source.settings(), target, policy.familyCapabilityVersion());

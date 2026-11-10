@@ -26,6 +26,30 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class UniverseRegistryStateTest {
+
+    @Test void toggleCatalogOwnerAcceptsBothBuiltinTargets() {
+        for (String preset : java.util.List.of("normal", "amplified")) {
+            var parameters = new NbtCompound(); parameters.putString("OverworldPreset", preset);
+            parameters.putByte("GenerateStructures", (byte) 1);
+            var snapshot = new NbtCompound(); snapshot.putInt("SnapshotVersion", 1);
+            snapshot.putString("ProviderId", "quantumchamber:vanilla_" + preset + "_v1");
+            snapshot.putInt("ProviderVersion", 1); snapshot.put("Parameters", parameters);
+            snapshot.putByteArray("OutputFingerprint", new byte[32]);
+            var generation = org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> new UniverseRecord.Generation(
+                    Long.MIN_VALUE, "quantumchamber:same_seed_toggle_amplified_v1", 1, snapshot,
+                    UniverseRecord.Provenance.NEW_M6, null), "TOGGLE_CATALOG_OWNER：合法toggle target必須接受");
+            assertEquals(Long.MIN_VALUE, generation.rootWorldSeed());
+            assertEquals(snapshot, generation.targetSettingsSnapshot());
+            var record=new UniverseRecord(m6CatalogFixture().definition(),DesiredAvailability.EAGER_ENABLED,generation);
+            assertEquals(record,UniverseRecord.fromNbt(record.toNbt()));
+            assertEquals(record.toNbt(),UniverseRecord.fromNbt(record.toNbt()).toNbt());
+            var mismatch = snapshot.copy(); mismatch.putString("ProviderId", "quantumchamber:vanilla_"
+                    + (preset.equals("normal") ? "amplified" : "normal") + "_v1");
+            assertThrows(IllegalArgumentException.class, () -> new UniverseRecord.Generation(42,
+                    "quantumchamber:same_seed_toggle_amplified_v1", 1, mismatch, UniverseRecord.Provenance.NEW_M6, null));
+        }
+    }
+
     private static final UUID ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
     @TempDir

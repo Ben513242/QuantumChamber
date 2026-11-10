@@ -809,13 +809,62 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 ### Task 14：policy3 的 normal↔amplified mutation
 
-**開工前待辦（同一份 T14 設計內完成）**：釘選 `sameSeedAmplifiedTerrainDiffersReproducibly` 的比較層級與固定樣本：seed／frozen 設定／provider／UUID／catalog／重啟權威嚴格驗，normal↔amplified 的差異以實際 feature 前生成層證明；各 preset 的可重現性另驗，final FEATURES 完整 rows／差格只作診斷，不用最終方塊逐格相同或任意容差。`NewUniverseIntent.java`、`UniverseRecord.java` 與下列 Files 是否需改由本 T14 設計明列，未列不得順改；不新增未回報的 production 注入點。T13 已結案且 `270ea3f` 已核對；本輪三檔修正唯一窄審 C／I 清零後，依使用者本輪授權開始 T14，沿既有 T14 設計，不另開設計文件。
+**2026-11-10 Phase 1 唯一設計（獨立窄審 C0/I0/M0 已採用）**：本節取代原簡略 Task14；沿 spec v1.7 與已結案 T13，只實作 policy3／U 主世界／FamilyCapabilityVersion=0。T13 `270ea3f` 與本次開工授權不重問；Task R、8-H、M2 offline／pin cap、client、人工、main、tag 不在本 task。設計依 `e366571` owning source 靜態核對，設計審查報告 SHA256 `950cb15060035ed36efce4f64ea5fa597d2c7977405d1eea81e65b0e2e980234`，I-1 已修正；Phase2A先做原production的有界RED checkpoint，不先改production。
 
-**Files:** Modify `src/main/java/dev/quantumchamber/candidate/CandidateResolver.java`、`M6CandidatePolicySelector.java`、`src/main/java/dev/quantumchamber/universe/UniverseProfileRegistry.java`、`universe/minecraft121/Minecraft121ServerWorldFactory.java`、`src/test/java/dev/quantumchamber/universe/GenerationSettingsSnapshotTest.java`、`src/testmod/java/dev/quantumchamber/gametest/M6UniverseGameTests.java`、`M6UniverseRecoveryProbe.java`、`M6ProfileProbePhases.java`、`scripts/verification/m6-universe-probe.ps1`。
-**Interfaces:** 同一真實入場 selector 只對**新 session**啟用 policy3/family0、三類等量；toggle 只翻轉 target Overworld preset（ProviderId 與 `OverworldPreset` 一併切換為對應內建 id），Nether/End snapshot 沿 source；舊 policy1/2、既有 target fingerprint 不改。
-- [ ] native gate 證 1.21 amplified preset 與 normal 都能獨立建 world。RED `formalEntryFreezesPolicyThreeWithoutChangingOlderSessions`、`toggleChangesOverworldNotNetherEnd`、`sameSeedAmplifiedTerrainDiffersReproducibly`、`oldPolicySnapshotsRemainFrozen`、`providerChangedOutputFailsClosed`（`SHALLOW_V1` 深度；內容級變更屬 8-H H1）。
-- [ ] `m6-focused.ps1 -Suite GameTest -Batch m6_universe_profile -Label g8-red` 具名 FAIL；窄改後 `g8-green-a/b` 與 `-Suite Probe -Chain profile-restart` PASS，不以重抽修錯。
-- [ ] compile→code commit→兩次 clean HEAD focused＋full→fresh spec／quality；完成切片③自動驗收，②③ portal／死亡限制仍明列。
+#### 精確 Files 與 owning source
+
+以下均為既有檔；只有本節所述責任可改，其他路徑先回報理由並窄審，不新增 script／mixin／注入點／workflow job。
+
+| 類型 | 精確允改路徑 | 唯一責任 |
+| --- | --- | --- |
+| production | `src/main/java/dev/quantumchamber/candidate/M6CandidatePolicySelector.java` | `freeze` 僅新 session 的 policy 2→3，schema2、5/20/75、4096、cap0 不變。 |
+| production | `src/main/java/dev/quantumchamber/candidate/CandidatePolicySnapshot.java` | M6 validator 允許1/2/3；legacy M4仍只1，其他欄位限制不減。 |
+| production | `src/main/java/dev/quantumchamber/candidate/NewUniverseIntent.java` | 新 toggle profile 常數、固定選擇、strict source/target 契約、toggle source root seed。 |
+| production | `src/main/java/dev/quantumchamber/candidate/CandidateResolver.java` | NEW 分支在同一 valid lease 由 source copy 翻轉 preset，呼既有 registry 建 target；不配置世界。 |
+| production | `src/main/java/dev/quantumchamber/collapse/UniverseAllocationLedger.java` | `M6Fields` 明列 policy/profile 合法組合，schema2／UUID/token／checked readback不變。 |
+| production | `src/main/java/dev/quantumchamber/universe/UniverseRecord.java` | `Generation` 接受 toggle 的兩種合法 builtin target；其餘 strict schema／provenance／role shape不變。 |
+| JUnit | `src/test/java/dev/quantumchamber/candidate/CandidateResolverTest.java` | 三類固定向量、source/target防禦複製、舊policy1/2 frozen及新policy3拒絕條件。 |
+| JUnit | `src/test/java/dev/quantumchamber/persistence/CandidateJournalCodecTest.java`、`src/test/java/dev/quantumchamber/persistence/SessionJournalSchemaFiveTest.java` | policy3 roundtrip／Context-intent不符拒絕；舊checked policy1/2完整讀回不升版。 |
+| JUnit | `src/test/java/dev/quantumchamber/collapse/UniverseAllocationLedgerTest.java`、`src/test/java/dev/quantumchamber/universe/UniverseRegistryStateTest.java` | toggle allocation/catalog roundtrip與非法profile/policy拒絕；舊row原樣。 |
+| JUnit | `src/test/java/dev/quantumchamber/universe/GenerationSettingsSnapshotTest.java`、`src/test/java/dev/quantumchamber/universe/UniverseProfileRegistryTest.java` | 雙preset、GenerateStructures兩值、provider/schema/SHALLOW_V1 FP拒絕回歸；不擴閉包深度。 |
+| testmod | `src/testmod/java/dev/quantumchamber/gametest/M6UniverseGameTests.java` | 新 `m6_universe_profile` 契約案與正式新session policy3；既有案例ID保留並註明歷史命名，既有測試集合不減。 |
+| testmod | `src/testmod/java/dev/quantumchamber/gametest/M4CandidateDoorGameTests.java` | 只有正式新session helper期待改policy3；M4 frozen／legacy fixture與13個normal案例功能斷言不變。 |
+| testmod | `src/testmod/java/dev/quantumchamber/gametest/M6RandomProbePhases.java` | 正式新session ARMING／intent期待policy3，仍選random且嚴驗不同seed；舊fixture不變。 |
+| testmod | `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRecoveryProbe.java`、`src/testmod/java/dev/quantumchamber/gametest/M6ProfileProbePhases.java` | 新兩鏈dispatch／strict phase入口，沿既有Flow擴toggle與分層比較；不新增觀測器或修改控制鏈。 |
+| harness／文件 | `scripts/verification/m6-universe-probe.ps1`、`scripts/verification/README.md` | manifest／runtime／SavedSummary／continuity／negative SelfTest全接新兩鏈，current-policy3與精確命令／數量。 |
+| controller文件 | 本 plan、`docs/implementation-notes/2026-10-24-m6-universe-generation.md` | 本節設計與後續真證據；STATUS／progress由controller管理。 |
+
+**經核不需改的 owner**：`UniverseProfileRegistry.createSnapshot/resolve` 已有兩個受綁 builtin provider、lease與FP exact；`Minecraft121ServerWorldFactory` 已依 frozen target resolve，不需改。`CandidateJournalCodec` 已傳值給 strict constructors，`SessionRecoveryRecord` 已核 Context-intent policy/cap exact，`SessionJournalStore` 無 current-policy特例，均維持原碼。`build.gradle` 的既有 M6 run、`m6-ci-gametest.ps1` 的來源宣告掃描、`run-all.ps1` 的動態native計數及 `.github/workflows/build.yml` 的 AllEnabled／SelfTest與 `same-seed-*` artifact pattern 可直接覆蓋新增鏈，不改build/workflow。若實作證實無法覆蓋，先具名回報，不隨手加路徑。
+
+#### 固定產品契約
+
+1. `TOGGLE_AMPLIFIED_PROFILE_ID = quantumchamber:same_seed_toggle_amplified_v1`，ProfileVersion=1。`selectedProfileId` 固定沿用 `SHA-256(UTF8("quantumchamber:m6:profile-choice:v1") || int32BE(policy) || material[32])`，取第一個 unsigned64 大端餘數，排序 random、same-seed、toggle；policy1/2仍分別只取前1/2項。這是等權重餘數規則，不要求有限fixture剛好三等份，也不重抽以湊比例。
+2. random既有seed推導與normal target不變；same-seed target NBT exact source不變。toggle只將source參數的 `OverworldPreset` normal↔amplified及對應ProviderId一起切換，GenerateStructures原byte保留；由既有registry重新計算target FP，不複製source FP。source snapshot獨立凍結不改，兩種same-seed profile的root seed均直接source root seed。
+3. intent validator先核兩端builtin id/version/preset配對，再核toggle恰相反preset且GenerateStructures相等；policy1不容same/toggle、policy2不容toggle，policy3可三類。allocation row validator採同一合法矩陣；catalog無policy/source欄，僅核toggle target為受支援builtin，不能假造其有能力驗source翻轉。完整source→target關係仍由checked intent與 `CollapseAuthorities.catalogRecordMatches` 驗。
+4. 三role snapshot／descriptor仍是既有資料shape，不物化Nether/End、不改UniverseKeys、不升capability、不新增schema。透過provider resolved設定測試確認切preset不改Nether/End設定。SHALLOW_V1相同pack/mod前提明列；provider缺失、版本／參數／envelope FP改變fail closed，不聲稱可偵測registry引用內容變動。
+5. current-policy期待只更新真正式新session入口：M4 normal/default helper、M6正式ARMING、random Flow、T13兩same-seed Flow與對應PS；`M6ProfileProbePhases.verifyOwnerSettingsGameTest` 的 `forNewSession` 與policy2硬編碼屬current入口，亦改驗policy3，不當作舊checked fixture。保留 `policyTwoCopiesExactSourceAndKeepsRandomDerivation` 等明確policy2 fixture及checked roundtrip；schema version2、profileVersion1、歷史receipt不全域替換。新增policy3不得使舊policy2重新選profile，後續重啟不採當前selector。
+
+#### Native 分層 oracle 與既有門檻接線
+
+- 靜態現況：PS manifest為七鏈21 phase，DIAGNOSTIC2／FUNCTIONAL19；兩條same-seed各 `source,new,restart`。既有SelfTest原277反例由manifest／phase／專屬負控累加，末尾重新全baseline；CI verifier為5分鐘（300秒），不增加timeout、不移除反例、不以PASS cache取代重驗。
+- 新增 `profile-restart`（canonical normal→amplified U）及 `profile-amplified-restart`（canonical amplified→normal U），各三獨立JVM／fresh owned root。全體變九鏈27 phase，DIAGNOSTIC2／FUNCTIONAL25；兩條原same-seed仍同preset且新policy3。全部鏈一次AllEnabled、runtime dispatch、SavedSummary dispatch、continuity、SelfTest、server.properties來源preset必同步；不把新增鏈藏在focused專用模式。沿現有 `same-seed-<sourcePreset>-*.json/nbt` 名稱，各鏈各root不碰撞，現有CI artifact glob涵蓋。
+- source階段真玩家拉桿→ARMING→checked MEASURED/SELECTED→checked COLLAPSING intent，記empty target storage／無allocation，freeze policy3所選toggle，保存source NBT及遠區virgin receipt；new／restart走既有正式recovery/materialization，不直建U。receipt明列 `sourcePreset`、`targetPreset`、`profileId`、source/target snapshot與FP、source/target seed與world key，跨phase exact。`sourceTargetExact` 僅保留給same-seed；toggle另具 `targetMatchesFrozenToggle`，不把不同target稱為source exact。
+- CARVERS固定沿 `carversSample`：chunk(1024,1024)，x,z=16384..16399各step3（6×6），y=-64..<256 step8（40），共1440完整ordered actual block states及stored noise biomes。嚴核ProtoChunk／CARVERS／current holder owner、固定generation metadata／halo、無FULL干擾、raw/live與canonical non-reparse；不改座標、seed `20260921`、請求序列或成熟度找綠。target 依checked catalog frozen settings嚴核actual native seed／noise config／placement calculator／GenerateStructures owner；canonical source只採既有source seed／settings／runtime identity／actual CARVERS證據，維持 `nativeConsumerCoverage=target-only`、canonical native consumer `NOT_COVERED` 的如實界線，不添source observer／hook，也不把source preset套target。既有雙平台direct catalog GameTest的雙側owner exact證據保留，但不得冒稱覆蓋canonical source的native consumer。
+- `sameSeedAmplifiedTerrainDiffersReproducibly`：新兩toggle鏈的new與restart，**跨preset** actual CARVERS block rows至少一格不同，保存完整差異索引／兩側hash；**同側同preset** restart對new 1440 block及stored biome逐列exact，並維持immutable receipt/SHA/root/nonce/startupNonce/UUID/token/catalog連結。原兩same-seed仍跨側block/biome exact。toggle跨側biome與structure bbox不要求相等，但target native owner／flags嚴格、source依上列既有coverage，且structure各自非空；各自new→restart的biome與structure證據仍exact，不降低same-preset回歸。
+- restart先讀new immutable witness／startup authority，再讀raw/live halo；全ABSENT標FRESH_REGENERATED，存在<=CARVERS標REOPENED_OR_COMPLETED_PARTIAL，>CARVERS／IO／錯型／缺receipt均FAIL。不為保CARVERS升FULL或反射寫chunk。
+- final FEATURES仍取原chunk31..33、固定1440 rows，兩側完整rows/hash/全部跨側與new→restart差格只診斷；不逐格相等作terrain gate、不容差、不baseline membership、不以density代替actual。Java `FinalComparison` 增明確toggle layered分支，既有T13 layered與default EXACT各自不變；PS同步按profile分派。toggle兩側biome／structure欄位分開保存，避免原 `compareAndEdit` 的跨presetbiome／structure equality誤殺。建築不複製、雙向edits隔離、持久UUID、storage與收據權威全部保留。
+- 唯讀歷史控制可用性：M6 note的A摘要記normal10次hash `957bf76ec7cc5d47bbd4176e0876b5422d27545597234f95b369c1c72f47acb7`、amplified10次hash `742a4d5b7966e6d5596da7e62fbfc7916f7df14913f6e47649928996a1f05455`，支持既定樣本有區別；不將這兩hash寫成新gate白名單，不新跑控制或另開canonical＋U／U-only觀測。
+- verifier保留原277每一反例與末全baseline，再加兩新鏈manifest/phase/restore、wrong target preset/provider/seed/policy、缺CARVERS row／錯SHA／錯owner、偽跨preset相同、同側restart一格漂移與final漏差格等具名反例。由完整case集合核新增數量，不先聲稱固定新count。reuse既有global＋受影響chain共用predicate，任何超300秒保原FAIL並回報；不得放寬或刪case求綠。
+
+#### RED／GREEN、必要 mutation 與交付
+
+- [ ] 先本節一次獨立設計窄審C/I0；之後在原production做具名RED：`formalEntryFreezesPolicyThreeWithoutChangingOlderSessions`、`toggleChangesOverworldNotNetherEnd`、`sameSeedAmplifiedTerrainDiffersReproducibly`、`oldPolicySnapshotsRemainFrozen`、`providerChangedOutputFailsClosed`，以及policy3 intent/allocation/catalog roundtrip／非法組合拒絕。後兩者已有正向回歸可先PASS；新增toggle未支持的拒絕才是原RED，不能拿compile failure或任意FAIL冒產品RED。
+- [ ] 窄改六production owner，GREEN涵蓋normal→amplified與反向、GenerateStructures true/false、固定hash向量、source immutable、target合法、profile選擇與policy/cap exact；既有舊fixture全數保留。GameTest新批次 `m6_universe_profile` 負責設定／owner／不物化N/E；terrain差異與restart在上述兩正式native鏈具名核。
+- [ ] 必要production mutation各獨立新root／具名殺手：selector退回2；toggle rootSeed誤走random；resolver不翻preset（或provider/preset錯配）；toggle漏保GenerateStructures；strict intent、allocation、catalog分別錯接允許不合法profile/policy（各owner獨立殺手）。每次單一改動，保存patch/log/XML/receipt/SHA，finally byte-exact REVERT。前置錯誤若遮蔽較深owner，改用對應strict JUnit直接到達該owner，不以被別層攔截冒該層殺手。這是T14 production門檻，不適用僅tests/scripts/docs免mutation規則。
+- [ ] 固定CLI沿既有 `pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M6Compile -Label <fresh>`；JUnit逐一 `m6-focused.ps1 -Suite JUnit -TestClass <上述七個fqcn> -Label <fresh>`；`-Suite GameTest -Batch m6_universe_profile` 及原 `m6_universe_same_seed`／`m6_universe_random` 批次；M4新入口以 `gates.ps1 -Mode M4NormalGameTest` 與default正式入口案驗；native用 `m6-focused.ps1 -Suite Probe -Chain <profile-restart|profile-amplified-restart|same-seed-restart|same-seed-amplified-restart> -ExpectedMode FUNCTIONAL -Label <fresh>`。兩次clean pin focused各涵蓋兩toggle方向與原兩same-seed、相關JUnit/GameTest；完整run-all再全九鏈及原集合。
+- [ ] root安排compile／候選code commit後，同乾淨code pin雙focused→`pwsh -NoProfile -File scripts/verification/run-all.ps1` 自然 `END ALL exit=0`與outer0→fresh spec與quality兩席C/I0→docs truth／正常push→同SHA Ubuntu build、Windows windows-native、Windows m6-native三job PASS。CI新M6案例由既有宣告掃描精確查有無缺席；source新增批次須出現在兩平台XML。不以過往T13綠或文件CI替本task。
+- [ ] `m6-universe-probe.ps1 -VerifySummary <當次AllEnabled-summary> -ExpectedHead <sha> -SelfTest` 完整新集合與末全baseline必PASS；run-all仍保default／M4 normal／M5／legacy／M6、JUnit、artifact與main-only全門檻。執行用process-local UTF8啟動既有pwsh、短預設EvidenceRoot，不改OS／producer pin／oracle。
+- [ ] 每次僅一gate；world move先canonical/non-reparse/owned root/無live Java/session.lock，原world可恢復move與逐檔hash還原；失敗root/receipt不覆寫、不刪除。僅已明定Windows atomic-move AccessDenied或Windows default AABB／容量連坐可同code pin一次fresh nonce重跑，第二次立即停報；docs SHA不洗額度。其他FAIL不歸偶發；未知final差格保診斷並交兩席，不改terrain oracle。純測試/腳本窄修才依B+C一席＋必要targeted/CI，不豁免本T14產品總出口。
 
 ## 未排程構想（不排 M6 或 M7）
 

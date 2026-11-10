@@ -439,7 +439,7 @@ public final class M6ProfileProbePhases {
                 require(configuredPacks.equals(sourceProof.get("configuredPackOrder").getAsString())
                         && enabledPacks.equals(sourceProof.get("runtimePackOrder").getAsString()),"SAME_RESTART_PACK_ORDER");
             }
-            String preset=chain.equals("same-seed-restart")?"normal":"amplified";
+            String preset=Set.of("same-seed-restart","profile-restart").contains(chain)?"normal":"amplified";
             require(Minecraft121VanillaPresetProfileProvider.detectOverworldPreset(Minecraft121SettingsLifecycle.acquire(server)).orElse("").equals(preset),"SAME_CANONICAL_PRESET");
             var canonicalFlow=new Flow(preset,server.getOverworld());flows.add(canonicalFlow);
             // 先掛同一 row 參考；失敗也必留下已觀測的條件，不等成功才公開證據。
@@ -520,6 +520,9 @@ public final class M6ProfileProbePhases {
         SessionRecoveryRecord startupRecord;
         int carversWaits;
         Flow(String preset,ServerWorld source){this.preset=preset;this.source=source;}
+        boolean toggle(){return chain.equals("profile-restart") || chain.equals("profile-amplified-restart");}
+        String targetPreset(){return toggle()?(preset.equals("normal")?"amplified":"normal"):preset;}
+        String profileId(){return toggle()?NewUniverseIntent.TOGGLE_AMPLIFIED_PROFILE_ID:NewUniverseIntent.SAME_SEED_PROFILE_ID;}
         SessionRecoveryRecord record(){return sid==null?null:SessionRecoveryState.get(server).flushedRecords().get(sid);}
         Path storage(){return root.resolve("world/dimensions/quantumchamber/universe/"+targetId.value()+"/overworld");}
         Path snapshotPath(){return root.resolve("same-seed-"+preset+"-source.nbt");}
@@ -589,16 +592,16 @@ public final class M6ProfileProbePhases {
                     Vec3d.ofCenter(lever),Direction.NORTH,lever,false)).isAccepted(),"SAME_FORMAL_LEVER");
             var initial=SessionRecoveryState.get(server).flushedRecords().values().stream().filter(r -> r.chamberUuid().equals(controller.chamberUuid())).findFirst().orElseThrow();
             sid=initial.sessionUuid();
-            require(initial.state()==SessionState.ARMING && initial.candidateContext().orElseThrow().policyVersion()==2
+            require(initial.state()==SessionState.ARMING && initial.candidateContext().orElseThrow().policyVersion()==3
                     && initial.candidateContext().orElseThrow().familyCapabilityVersion()==0
-                    && initial.candidateContext().orElseThrow().sourceFamilyRef().equals(new SourceFamilyRef.Vanilla(net.minecraft.world.World.OVERWORLD,DimensionRole.OVERWORLD)),"formalEntryFreezesPolicyTwoAndSourceSnapshot");
+                    && initial.candidateContext().orElseThrow().sourceFamilyRef().equals(new SourceFamilyRef.Vanilla(net.minecraft.world.World.OVERWORLD,DimensionRole.OVERWORLD)),"formalEntryFreezesPolicyThreeAndSourceSnapshot");
             row.put("formalLeverEntry",true);stage=2;
         }
         void select() throws Exception {
             var current=record(); if(current==null || current.state()!=SessionState.SUPERPOSITION)return;
             var pages=CorridorPageManager.forServer(server);
             var entry=current.candidateLedger().stream().filter(r -> r.candidate() instanceof QuantumCandidate.New n
-                    && NewUniverseIntent.SAME_SEED_PROFILE_ID.equals(n.intent().profileId()) && pages.selectableDoors(sid).contains(r.doorKey())).findFirst();
+                    && profileId().equals(n.intent().profileId()) && pages.selectableDoors(sid).contains(r.doorKey())).findFirst();
             if(entry.isEmpty())return;
             var key=entry.get().doorKey();BlockPos cell=null;
             for(var view:pages.currentMappings(sid).instances()) {
@@ -620,17 +623,27 @@ public final class M6ProfileProbePhases {
             var lease=Minecraft121SettingsLifecycle.acquire(server);
             var parameters=new NbtCompound();parameters.putString("OverworldPreset",preset);parameters.putBoolean("GenerateStructures",lease.sourceGenerateStructures());
             var sourceSnapshot=Minecraft121SettingsLifecycle.registry().createSnapshot("quantumchamber:vanilla_"+preset+"_v1",1,parameters,lease);
-            require(intent.policyVersion()==2 && record.candidateContext().orElseThrow().policyVersion()==2
-                    && intent.familyCapabilityVersion()==0 && NewUniverseIntent.SAME_SEED_PROFILE_ID.equals(intent.profileId())
+            var targetParameters=parameters.copy();targetParameters.putString("OverworldPreset",targetPreset());
+            var targetSnapshot=Minecraft121SettingsLifecycle.registry().createSnapshot("quantumchamber:vanilla_"+targetPreset()+"_v1",1,targetParameters,lease);
+            require(intent.policyVersion()==3 && record.candidateContext().orElseThrow().policyVersion()==3
+                    && intent.familyCapabilityVersion()==0 && profileId().equals(intent.profileId())
                     && intent.rootWorldSeed()==source.getSeed() && intent.sourceRootWorldSeed()==source.getSeed()
                     && intent.sourceSettingsSnapshot().toNbt().equals(sourceSnapshot.toNbt())
-                    && intent.targetSettingsSnapshot().toNbt().equals(intent.sourceSettingsSnapshot().toNbt())
+                    && intent.targetSettingsSnapshot().toNbt().equals(targetSnapshot.toNbt())
                     && !UniverseKeys.world(targetId,DimensionRole.OVERWORLD).equals(source.getRegistryKey()),"SAME_FROZEN_SOURCE_TARGET");
             row.put("preset",preset);row.put("session",sid.toString());row.put("sourceIdentity",source.getRegistryKey().getValue().toString());
             row.put("uuid",targetId.value().toString());row.put("seed",Long.toString(intent.rootWorldSeed()));
             row.put("allocationToken",HexFormat.of().formatHex(intent.allocationToken().bytes()));
             row.put("snapshot",intent.targetSettingsSnapshot().toNbt().toString());row.put("policyVersion",intent.policyVersion());
-            row.put("profileId",intent.profileId());row.put("sourceTargetExact",true);
+            row.put("profileId",intent.profileId());row.put("sourceTargetExact",!toggle());row.put("targetMatchesFrozenToggle",toggle());
+            row.put("sourcePreset",preset);row.put("targetPreset",targetPreset());
+            row.put("sourceSnapshot",intent.sourceSettingsSnapshot().toNbt().toString());
+            row.put("sourceFingerprint",HexFormat.of().formatHex(intent.sourceSettingsSnapshot().outputFingerprint()));
+            row.put("targetFingerprint",HexFormat.of().formatHex(intent.targetSettingsSnapshot().outputFingerprint()));
+            row.put("sourceProvider",intent.sourceSettingsSnapshot().providerId());row.put("targetProvider",intent.targetSettingsSnapshot().providerId());
+            row.put("generateStructures",intent.sourceSettingsSnapshot().parameters().getByte("GenerateStructures"));
+            row.put("targetGenerateStructures",intent.targetSettingsSnapshot().parameters().getByte("GenerateStructures"));
+            row.put("sourceSeed",Long.toString(intent.sourceRootWorldSeed()));
         }
         void reopen() throws Exception {
             var prior=JsonParser.parseString(Files.readString(root.resolve("same-seed-"+preset+"-source.json"))).getAsJsonObject();
@@ -640,7 +653,7 @@ public final class M6ProfileProbePhases {
             var saved=(SessionRecoveryRecord)decode.invoke(null,NbtIo.readCompressed(snapshotPath(),NbtSizeTracker.of(16L*1024*1024)),5);
             require(saved.candidateContext().equals(record().candidateContext()) && saved.selectedCandidate().equals(record().selectedCandidate()),"SAME_RESTART_FROZEN_JOURNAL");
             startupRecord=record();frozen(startupRecord);
-            for(String key:List.of("preset","session","sourceIdentity","uuid","seed","allocationToken","snapshot","profileId"))
+            for(String key:List.of("preset","sourcePreset","targetPreset","sourceSnapshot","sourceFingerprint","targetFingerprint","sourceProvider","targetProvider","generateStructures","targetGenerateStructures","sourceSeed","profileId","session","sourceIdentity","uuid","seed","allocationToken","snapshot","profileId"))
                 require(row.get(key).toString().equals(prior.get(key).getAsString()),"SAME_RESTART_IDENTITY:"+key);
             require(prior.get("sourceInitialRequest").getAsString().equals("128,128=minecraft:full"),"SAME_SOURCE_GENERATION_REQUEST");
             row.put("sourceInitialRequest",prior.get("sourceInitialRequest").getAsString());
@@ -661,7 +674,7 @@ public final class M6ProfileProbePhases {
             try(var output=Files.newOutputStream(nbt,StandardOpenOption.CREATE_NEW)){NbtIo.writeCompressed((NbtCompound)encode.invoke(startupRecord,5),output);}
             var captured=new LinkedHashMap<String,Object>();
             for(String key:List.of("chain","phase","root","nonce","startupNonce","pid","startTimeUtc"))captured.put(key,proof.get(key));
-            for(String key:List.of("preset","session","sourceIdentity","uuid","seed","allocationToken","snapshot","sourceRecordSha256"))captured.put(key,row.get(key));
+            for(String key:List.of("preset","sourcePreset","targetPreset","sourceSnapshot","sourceFingerprint","targetFingerprint","sourceProvider","targetProvider","generateStructures","targetGenerateStructures","sourceSeed","profileId","session","sourceIdentity","uuid","seed","allocationToken","snapshot","sourceRecordSha256"))captured.put(key,row.get(key));
             captured.put("schema",1);captured.put("kind","CHECKED_STARTUP_SESSION_AUTHORITY");captured.put("startupState",startupRecord.state().toString());
             captured.put("currentEqualsFlushed",true);captured.put("frozenSelectedIntentChecked",true);captured.put("notQuarantinedAndNoRollForward",true);
             captured.put("nbtPath","carvers-startup-authority.nbt");captured.put("nbtSha256",hash(nbt));
@@ -671,7 +684,7 @@ public final class M6ProfileProbePhases {
         Map<String,Object> layerEnvelope() throws Exception {
             var layer=new LinkedHashMap<String,Object>();
             for(String key:List.of("chain","phase","root","nonce","startupNonce","pid","startTimeUtc"))layer.put(key,proof.get(key));
-            for(String key:List.of("preset","session","sourceIdentity","uuid","seed","allocationToken","snapshot","sourceRecordSha256"))layer.put(key,row.get(key));
+            for(String key:List.of("preset","sourcePreset","targetPreset","sourceSnapshot","sourceFingerprint","targetFingerprint","sourceProvider","targetProvider","generateStructures","targetGenerateStructures","sourceSeed","profileId","session","sourceIdentity","uuid","seed","allocationToken","snapshot","sourceRecordSha256"))layer.put(key,row.get(key));
             layer.put("schema",1);layer.put("layer","ACTUAL_CARVERS_V1");layer.put("startupAuthority",row.get("startupAuthority"));
             layer.put("targetIdentity",UniverseKeys.world(targetId,DimensionRole.OVERWORLD).getValue().toString());
             var sourceFinal=evidence.getParent().resolve("source/final.json");var original=readJson(sourceFinal);
@@ -694,8 +707,8 @@ public final class M6ProfileProbePhases {
             priorCarvers=readJson(evidence.getParent().resolve("new/carvers-new.json"));
             require(priorCarvers.get("startupNonce").equals(priorNewFinal.get("startupNonce")) && priorCarvers.get("pid").equals(priorNewFinal.get("pid")),"SAME_CARVERS_NEW_PRODUCER");
             for(String key:List.of("chain","root","nonce"))require(priorCarvers.get(key).getAsString().equals(proof.get(key)),"SAME_CARVERS_NEW_IDENTITY:"+key);
-            for(String key:List.of("preset","session","sourceIdentity","uuid","seed","allocationToken","snapshot","sourceRecordSha256"))
-                require(priorCarvers.get(key).getAsString().equals(row.get(key)),"SAME_CARVERS_NEW_IDENTITY:"+key);
+            for(String key:List.of("preset","sourcePreset","targetPreset","sourceSnapshot","sourceFingerprint","targetFingerprint","sourceProvider","targetProvider","generateStructures","targetGenerateStructures","sourceSeed","profileId","session","sourceIdentity","uuid","seed","allocationToken","snapshot","sourceRecordSha256"))
+                require(priorCarvers.get(key).getAsString().equals(row.get(key).toString()),"SAME_CARVERS_NEW_IDENTITY:"+key);
             require(priorCarvers.get("phase").getAsString().equals("new") && priorCarvers.get("targetIdentity").getAsString().equals(UniverseKeys.world(targetId,DimensionRole.OVERWORLD).getValue().toString())
                     && priorCarvers.get("schema").getAsInt()==1 && priorCarvers.get("layer").getAsString().equals("ACTUAL_CARVERS_V1")
                     && priorCarvers.get("generationMetadata").equals(JSON.toJsonTree(carversMetadata())),"SAME_CARVERS_NEW_SCHEMA");
@@ -760,15 +773,23 @@ public final class M6ProfileProbePhases {
                 writeNew(evidence.resolve(String.format(Locale.ROOT,"carvers-%s-header-wait-%04d.json",phase,carversWaits)),carversLayer);return false;
             }
             var a=(Map<String,Object>)carversSides.get(0).get("sample");var b=(Map<String,Object>)carversSides.get(1).get("sample");
-            requireCarversBlocksExact(carversBlocks(a),carversBlocks(b));
-            require(a.get("biomeHash").equals(b.get("biomeHash")),"SAME_CARVERS_BIOME_EXACT");
+            if(toggle()) {
+                require(!carversBlocks(a).equals(carversBlocks(b)),"sameSeedAmplifiedTerrainDiffersReproducibly:ACTUAL_CARVERS_DIFFERENCE");
+                var differences=new ArrayList<Integer>();
+                var left=carversBlocks(a);var right=carversBlocks(b);
+                for(int i=0;i<1440;i++)if(!left.get(i).equals(right.get(i)))differences.add(i);
+                carversLayer.put("blockDifferenceIndices",differences);
+            } else {
+                requireCarversBlocksExact(carversBlocks(a),carversBlocks(b));
+                require(a.get("biomeHash").equals(b.get("biomeHash")),"SAME_CARVERS_BIOME_EXACT");
+            }
             if(phase.equals("restart"))for(int i=0;i<2;i++) {
                 var expected=priorCarvers.getAsJsonArray("sides").get(i).getAsJsonObject().getAsJsonObject("sample");
                 var actual=JSON.toJsonTree(carversSides.get(i).get("sample")).getAsJsonObject();
                 requireCarversBlocksExact(carversBlocksFromJson(expected),carversBlocksFromJson(actual));
                 require(expected.get("biomeHash").equals(actual.get("biomeHash")),"SAME_CARVERS_RESTART_BIOME_EXACT");
             }
-            carversLayer.put("blocksExact",true);carversLayer.put("biomesExact",true);carversLayer.put("status","PASS");
+            carversLayer.put("comparison",toggle()?"TOGGLE_DIFFERENT":"SAME_EXACT");carversLayer.put("blocksExact",carversBlocks(a).equals(carversBlocks(b)));carversLayer.put("biomesExact",a.get("biomeHash").equals(b.get("biomeHash")));carversLayer.put("status","PASS");
             Path receipt=evidence.resolve("carvers-"+phase+".json");writeNew(receipt,carversLayer);
             row.put("carversReceiptPath",receipt.getFileName().toString());row.put("carversReceiptSha256",hash(receipt));row.put("carversReceiptPhase",phase);
             carversDone=true;return true;
@@ -798,14 +819,14 @@ public final class M6ProfileProbePhases {
             if(!advanceCarvers(target))return;
             if(phase.equals("new"))samplePreflight(List.of(source,target),row);
             compareAndEdit(source,target,phase.equals("restart"),row,evidence.resolve("comparison-before-assert.json"),
-                    () -> nativeConsumer(server,target,targetRecord),FinalComparison.T13_LAYERED);
+                    () -> nativeConsumer(server,target,targetRecord),toggle()?FinalComparison.T14_TOGGLE_LAYERED:FinalComparison.T13_LAYERED);
             row.put("catalogChecked",true);
             if(phase.equals("new")) {
                 writeNew(root.resolve("same-seed-"+preset+"-new.json"),row);
                 row.put("newSnapshotSha256",hash(root.resolve("same-seed-"+preset+"-new.json")));
             } else {
                 var prior=readJson(root.resolve("same-seed-"+preset+"-new.json"));
-                for(String key:List.of("biomes","structures"))require(JSON.toJsonTree(row.get(key)).equals(prior.get(key)),"SAME_RESTART_GENERATION:"+key);
+                for(String key:List.of("biomes","targetBiomes","structures","targetStructures"))require(JSON.toJsonTree(row.get(key)).equals(prior.get(key)),"SAME_RESTART_GENERATION:"+key);
                 var current=(Map<String,Object>)row.get("finalDiagnostic");
                 var previous=prior.getAsJsonObject("finalDiagnostic");
                 current.put("newToRestartDifferences",Map.of("source",sampleDifferences(jsonRows(previous.getAsJsonObject("source")),jsonRows(JSON.toJsonTree(current.get("source")).getAsJsonObject())),
@@ -908,6 +929,12 @@ public final class M6ProfileProbePhases {
 
     /** Task13 的同 JVM owner／設定控制；不執行 Task21 保留的全量方塊比較。 */
     static void verifyOwnerSettingsGameTest(MinecraftServer server) throws Exception {
+        verifyOwnerSettingsGameTest(server,false);
+    }
+    static void verifyToggleOwnerSettingsGameTest(MinecraftServer server) throws Exception {
+        verifyOwnerSettingsGameTest(server,true);
+    }
+    private static void verifyOwnerSettingsGameTest(MinecraftServer server,boolean toggle) throws Exception {
         var root=server.getSavePath(WorldSavePath.ROOT);
         var entropy=CandidateEntropyState.loadOrCreate(root,false);
         for(String preset:List.of("normal","amplified")) {
@@ -923,7 +950,7 @@ public final class M6ProfileProbePhases {
             for(int station=0;station<4096 && intent==null;station++) {
                 var candidate=resolver.resolve(new DoorKey(session,station,DoorKey.DoorWallSide.NEGATIVE_LATERAL),policy,List.of(),
                         () -> new SourceGenerationSnapshot(sourceRecord.generation().rootWorldSeed(),snapshot));
-                if(candidate instanceof QuantumCandidate.New fresh && NewUniverseIntent.SAME_SEED_PROFILE_ID.equals(fresh.intent().profileId()))intent=fresh.intent();
+                if(candidate instanceof QuantumCandidate.New fresh && (toggle?NewUniverseIntent.TOGGLE_AMPLIFIED_PROFILE_ID:NewUniverseIntent.SAME_SEED_PROFILE_ID).equals(fresh.intent().profileId()))intent=fresh.intent();
             }
             require(intent!=null,"SAME_OWNER_SETTINGS_EXACT: same candidate missing");
             var targetId=UniverseAllocationLedger.deriveUniverseId(intent.allocationToken());
@@ -938,17 +965,21 @@ public final class M6ProfileProbePhases {
             var expectedParameters=new NbtCompound();expectedParameters.putString("OverworldPreset",preset);expectedParameters.putBoolean("GenerateStructures",true);
             String provider="quantumchamber:vanilla_"+preset+"_v1";
             var expected=Minecraft121SettingsLifecycle.registry().createSnapshot(provider,1,expectedParameters,Minecraft121SettingsLifecycle.acquire(server));
-            require(policy.policyVersion()==2 && policy.familyCapabilityVersion()==0 && intent.policyVersion()==2 && intent.familyCapabilityVersion()==0
+            String targetPreset=toggle?(preset.equals("normal")?"amplified":"normal"):preset;
+            var targetParameters=expectedParameters.copy();targetParameters.putString("OverworldPreset",targetPreset);
+            var expectedTarget=Minecraft121SettingsLifecycle.registry().createSnapshot("quantumchamber:vanilla_"+targetPreset+"_v1",1,targetParameters,Minecraft121SettingsLifecycle.acquire(server));
+            require(policy.policyVersion()==3 && policy.familyCapabilityVersion()==0 && intent.policyVersion()==3 && intent.familyCapabilityVersion()==0
                     && intent.rootWorldSeed()==SEED && intent.sourceRootWorldSeed()==SEED
-                    && intent.sourceSettingsSnapshot().toNbt().equals(expected.toNbt()) && intent.targetSettingsSnapshot().toNbt().equals(expected.toNbt()),
+                    && intent.sourceSettingsSnapshot().toNbt().equals(expected.toNbt()) && intent.targetSettingsSnapshot().toNbt().equals(expectedTarget.toNbt()),
                     "SAME_OWNER_SETTINGS_EXACT: frozen intent");
             var settingsRows=new ArrayList<Map<String,Object>>();
             for(var record:List.of(sourceRecord,targetRecord)) {
                 var actual=GenerationSettingsSnapshot.fromNbt(record.generation().targetSettingsSnapshot());
+                var expectedSide=record==sourceRecord?expected:expectedTarget;
                 require(record.equals(catalog.records().get(record.definition().universeId())) && record.generation().rootWorldSeed()==SEED
-                        && actual.providerId().equals(provider) && actual.providerVersion()==1
-                        && actual.parameters().getString("OverworldPreset").equals(preset) && actual.parameters().equals(expectedParameters)
-                        && Arrays.equals(actual.outputFingerprint(),expected.outputFingerprint()) && actual.toNbt().equals(expected.toNbt()),
+                        && actual.providerId().equals(expectedSide.providerId()) && actual.providerVersion()==1
+                        && actual.parameters().equals(expectedSide.parameters())
+                        && Arrays.equals(actual.outputFingerprint(),expectedSide.outputFingerprint()) && actual.toNbt().equals(expectedSide.toNbt()),
                         "SAME_OWNER_SETTINGS_EXACT: source/target snapshot");
                 settingsRows.add(Map.of("worldKey",record.definition().worlds().get(DimensionRole.OVERWORLD).worldKey().getValue().toString(),
                         "seed",Long.toString(record.generation().rootWorldSeed()),"providerId",actual.providerId(),"providerVersion",actual.providerVersion(),
@@ -957,6 +988,8 @@ public final class M6ProfileProbePhases {
             LoggerFactory.getLogger("quantumchamber-m6-gametest").info("SAME_OWNER_SETTINGS {}",JSON.toJson(Map.of("preset",preset,"status","PASS","worlds",settingsRows)));
             nativeConsumer(server,source,sourceRecord);
             nativeConsumer(server,target,targetRecord);
+            for(var id:List.of(sourceId,targetId))for(var role:List.of(DimensionRole.NETHER,DimensionRole.END))
+                require(server.getWorld(UniverseKeys.world(id,role))==null,"PROFILE_NON_OVERWORLD_NOT_MATERIALIZED");
         }
     }
 
@@ -1099,7 +1132,7 @@ public final class M6ProfileProbePhases {
         require(digest(rows.stream().map(r -> r.get("block")).toList()).equals(sample.get("blockHash").getAsString())
                 && digest(rows.stream().map(r -> r.get("biome")).toList()).equals(sample.get("biomeHash").getAsString()),"SAME_CARVERS_SAMPLE_HASH");
     }
-    private enum FinalComparison {EXACT,T13_LAYERED}
+    private enum FinalComparison {EXACT,T13_LAYERED,T14_TOGGLE_LAYERED}
     private static Map<String,Object> finalSample(ServerWorld world,List<String> blocks,List<String> biomes) throws Exception {
         var rows=new ArrayList<Map<String,Object>>();int index=0;
         for(int x=512;x<528;x+=3)for(int z=512;z<528;z+=3)for(int y=-64;y<256;y+=8) {
@@ -1170,7 +1203,7 @@ public final class M6ProfileProbePhases {
         row.put("firstDifference",firstDifference);row.put("terrain",digest(sourceTerrain));row.put("targetTerrain",digest(targetTerrain));
         row.put("biomes",digest(sourceBiomes));row.put("targetBiomes",digest(targetBiomes));row.put("sampleCount",sourceTerrain.size());
         row.put("matchedMaturity","FULL_3X3");
-        if(comparison==FinalComparison.T13_LAYERED) {
+        if(comparison!=FinalComparison.EXACT) {
             var a=finalSample(source,sourceTerrain,sourceBiomes);var b=finalSample(target,targetTerrain,targetBiomes);
             var diagnostic=new LinkedHashMap<String,Object>();diagnostic.put("schema",1);diagnostic.put("kind","T13_FINAL_DIAGNOSTIC");
             diagnostic.put("source",a);diagnostic.put("target",b);
@@ -1189,8 +1222,10 @@ public final class M6ProfileProbePhases {
         // 原抽樣與收據先完成；owner FAIL 時原 terrain require 尚未執行。
         if(afterComparison!=null)afterComparison.run();
         if(comparison==FinalComparison.T13_LAYERED)require(sourceBiomes.equals(targetBiomes),"SAME_T13_FINAL_BIOME_EXACT"+firstDifference);
-        else require(sourceTerrain.equals(targetTerrain) && sourceBiomes.equals(targetBiomes),"sameSeedFreshCopiesSettingsNotBlocks:TERRAIN_BIOME"+firstDifference);
-        var a=structures(source);var b=structures(target);require(a.equals(b),"sameSeedFreshCopiesSettingsNotBlocks:STRUCTURE");
+        else if(comparison==FinalComparison.EXACT) require(sourceTerrain.equals(targetTerrain) && sourceBiomes.equals(targetBiomes),"sameSeedFreshCopiesSettingsNotBlocks:TERRAIN_BIOME"+firstDifference);
+        var a=structures(source);var b=structures(target);
+        if(comparison!=FinalComparison.T14_TOGGLE_LAYERED)require(a.equals(b),"sameSeedFreshCopiesSettingsNotBlocks:STRUCTURE");
+        require(!a.isEmpty() && !b.isEmpty(),"PROFILE_STRUCTURE_NONEMPTY");row.put("targetStructures",b);
         require(source.getBlockState(BUILDING).isOf(Blocks.DIAMOND_BLOCK) && !target.getBlockState(BUILDING).isOf(Blocks.DIAMOND_BLOCK),"sameSeedFreshCopiesSettingsNotBlocks:BUILDING");
         if(!restart){source.setBlockState(SOURCE_EDIT,Blocks.EMERALD_BLOCK.getDefaultState(),3);target.setBlockState(TARGET_EDIT,Blocks.GOLD_BLOCK.getDefaultState(),3);}
         require(source.getBlockState(SOURCE_EDIT).isOf(Blocks.EMERALD_BLOCK) && !target.getBlockState(SOURCE_EDIT).isOf(Blocks.EMERALD_BLOCK)

@@ -17,7 +17,7 @@ public final class M6CandidatePolicySelector {
     }
 
     public CandidatePolicySnapshot freeze(long watermark, CandidateBytes fingerprint, SourceFamilyRef source) {
-        return new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"), 2, 2,
+        return new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"), 3, 2,
                 5, 20, 75, watermark, 4096, fingerprint, source, 0);
     }
 }

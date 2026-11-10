@@ -20,6 +20,8 @@ $manifest=@(
     [pscustomobject]@{chain='partial-overworld';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('intent','catalog','partial','restart')}
     [pscustomobject]@{chain='same-seed-restart';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('source','new','restart')}
     [pscustomobject]@{chain='same-seed-amplified-restart';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('source','new','restart')}
+    [pscustomobject]@{chain='profile-restart';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('source','new','restart')}
+    [pscustomobject]@{chain='profile-amplified-restart';m6ProbeSchema=1;expectedMode='FUNCTIONAL';phases=@('source','new','restart')}
 )
 if(-not $IsWindows){throw 'M6_NATIVE_PLATFORM_UNSUPPORTED：owned Win32_Process原生鏈僅支援Windows'}
 if($IdleSeconds -ne 90 -or $PhaseMinutes -ne 3 -or $BlockMinutes -ne 60){throw 'M6_NATIVE_BUDGET_MISMATCH：phase3分/idle90秒/block60分'}
@@ -66,7 +68,7 @@ function Assert-DiagnosticReceipt($receipt,[string]$Phase,[string]$Nonce,[string
     if($Phase -ceq 'save-reopen' -and -not $receipt.diagnosticAssertions.reopenExact){throw 'M6_REOPEN_ORACLE_MISSING'}
 }
 function Assert-GameplayReceipt($receipt,$chain,$phase,$owned,$state) {
-    if($receipt.armingPolicy -ne 2 -or $receipt.policyVersion -ne 2 -or $receipt.familyCapability -ne 0){throw 'M6_FORMAL_POLICY_TWO'}
+    if($receipt.armingPolicy -ne 3 -or $receipt.policyVersion -ne 3 -or $receipt.familyCapability -ne 0){throw 'M6_FORMAL_POLICY_THREE'}
     if($receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'FUNCTIONAL' -or $receipt.chain -cne $chain -or $receipt.phase -cne $phase -or $receipt.nonce -cne $owned.nonce -or $receipt.startupNonce -cne $state.StartupNonce){throw 'M6_FORMAL_RECEIPT_IDENTITY'}
     if($receipt.status -cne 'PASS' -or @($receipt.failures).Count -or -not $receipt.functionalPassed){throw 'M6_FORMAL_BEHAVIOR_FAILED'}
     if($receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds){throw 'M6_FORMAL_RUNTIME_SCOPE'}
@@ -172,7 +174,7 @@ function Assert-ProfileDifferences($Before,$After,$Differences) {
 function Assert-ProfileFinalDiagnostic($Diagnostic,$Row,$Prior=$null) {
     if($Diagnostic.schema -ne 1 -or $Diagnostic.kind -cne 'T13_FINAL_DIAGNOSTIC' -or $Diagnostic.classificationScope -cne 'NO_HISTORICAL_MEMBERSHIP_CHECK'){throw 'M6_FINAL_DIAGNOSTIC_SCHEMA'}
     Assert-ProfileSample $Diagnostic.source 512 'minecraft:full';Assert-ProfileSample $Diagnostic.target 512 'minecraft:full'
-    if($Diagnostic.source.worldKey -cne $Row.sourceIdentity -or $Diagnostic.target.worldKey -cne "quantumchamber:universe/$($Row.uuid)/overworld" -or $Diagnostic.source.seed -cne $Row.seed -or $Diagnostic.target.seed -cne $Row.seed -or $Diagnostic.source.blockHash -cne $Row.terrain -or $Diagnostic.target.blockHash -cne $Row.targetTerrain -or $Diagnostic.source.biomeHash -cne $Row.biomes -or $Diagnostic.target.biomeHash -cne $Row.targetBiomes -or $Row.biomes -cne $Row.targetBiomes){throw 'M6_FINAL_DIAGNOSTIC_IDENTITY_HASH'}
+    if($Diagnostic.source.worldKey -cne $Row.sourceIdentity -or $Diagnostic.target.worldKey -cne "quantumchamber:universe/$($Row.uuid)/overworld" -or $Diagnostic.source.seed -cne $Row.seed -or $Diagnostic.target.seed -cne $Row.seed -or $Diagnostic.source.blockHash -cne $Row.terrain -or $Diagnostic.target.blockHash -cne $Row.targetTerrain -or $Diagnostic.source.biomeHash -cne $Row.biomes -or $Diagnostic.target.biomeHash -cne $Row.targetBiomes -or ($Row.profileId -ceq 'quantumchamber:same_seed_fresh_v1' -and $Row.biomes -cne $Row.targetBiomes)){throw 'M6_FINAL_DIAGNOSTIC_IDENTITY_HASH'}
     Assert-ProfileDifferences $Diagnostic.source.rows $Diagnostic.target.rows $Diagnostic.differences
     if(@($Diagnostic.reviewItems).Count -ne 2){throw 'M6_FINAL_REVIEW_ITEMS'}
     for($i=0;$i -lt 2;$i++){$side=@('source','target')[$i];$item=$Diagnostic.reviewItems[$i];if($item.side -cne $side -or $item.blockHash -cne $Diagnostic.$side.blockHash -or $item.classification -cne 'UNRESOLVED' -or $item.novelty -cne 'NOT_CLASSIFIED' -or $item.reviewStatus -cne 'UNRESOLVED'){throw 'M6_FINAL_REVIEW_ITEMS'}}
@@ -181,7 +183,7 @@ function Assert-ProfileFinalDiagnostic($Diagnostic,$Row,$Prior=$null) {
 function Assert-ProfileStartupAuthority($Receipt,$Row,$State) {
     $captured=Read-ProfileJsonLink $State.PhaseEvidence $Row.startupAuthority.path 'carvers-startup-authority.json' $Row.startupAuthority.sha256
     foreach($key in @('root','nonce','chain','phase','startupNonce','pid','startTimeUtc')){if($captured.$key -cne $Receipt.$key){throw "M6_STARTUP_AUTHORITY_IDENTITY:$key"}}
-    foreach($key in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($captured.$key -cne $Row.$key){throw "M6_STARTUP_AUTHORITY_IDENTITY:$key"}}
+    foreach($key in @('preset','sourcePreset','targetPreset','sourceSnapshot','sourceFingerprint','targetFingerprint','sourceProvider','targetProvider','generateStructures','targetGenerateStructures','sourceSeed','profileId','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($captured.$key -cne $Row.$key){throw "M6_STARTUP_AUTHORITY_IDENTITY:$key"}}
     if($captured.schema -ne 1 -or $captured.kind -cne 'CHECKED_STARTUP_SESSION_AUTHORITY' -or $captured.currentEqualsFlushed -ne $true -or $captured.frozenSelectedIntentChecked -ne $true -or $captured.notQuarantinedAndNoRollForward -ne $true -or $captured.startupState -cnotin @('COLLAPSING','PASSAGE_READY')){throw 'M6_STARTUP_AUTHORITY_SCHEMA'}
     Read-ProfileJsonLink $State.PhaseEvidence $captured.nbtPath 'carvers-startup-authority.nbt' $captured.nbtSha256 -Binary
     $authority=$Row.sessionAuthority
@@ -192,19 +194,20 @@ function Assert-ProfileStartupAuthority($Receipt,$Row,$State) {
 }
 function Assert-ProfileCarversLayer($Layer,$Receipt,$Row,$State,$Owned) {
     foreach($key in @('root','nonce','chain','phase','startupNonce','pid','startTimeUtc')){if($Layer.$key -cne $Receipt.$key){throw "M6_CARVERS_IDENTITY:$key"}}
-    foreach($key in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($Layer.$key -cne $Row.$key){throw "M6_CARVERS_IDENTITY:$key"}}
-    if($Layer.schema -ne 1 -or $Layer.layer -cne 'ACTUAL_CARVERS_V1' -or $Layer.status -cne 'PASS' -or $Layer.blocksExact -ne $true -or $Layer.biomesExact -ne $true -or $Layer.targetIdentity -cne "quantumchamber:universe/$($Row.uuid)/overworld" -or @($Layer.sides).Count -ne 2){throw 'M6_CARVERS_LAYER_SCHEMA'}
+    foreach($key in @('preset','sourcePreset','targetPreset','sourceSnapshot','sourceFingerprint','targetFingerprint','sourceProvider','targetProvider','generateStructures','targetGenerateStructures','sourceSeed','profileId','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($Layer.$key -cne $Row.$key){throw "M6_CARVERS_IDENTITY:$key"}}
+    if($Layer.schema -ne 1 -or $Layer.layer -cne 'ACTUAL_CARVERS_V1' -or $Layer.status -cne 'PASS' -or $Layer.targetIdentity -cne "quantumchamber:universe/$($Row.uuid)/overworld" -or @($Layer.sides).Count -ne 2){throw 'M6_CARVERS_LAYER_SCHEMA'}
     Assert-CarversMetadata $Layer.generationMetadata
     if($Layer.startupAuthority.path -cne $Row.startupAuthority.path -or $Layer.startupAuthority.sha256 -cne $Row.startupAuthority.sha256){throw 'M6_STARTUP_AUTHORITY_LINK'}
     Assert-ProfileStartupAuthority $Receipt $Row $State
     $source=Read-ProfileJsonLink $State.PhaseEvidence $Layer.sourceFinal.path '../source/final.json' $Layer.sourceFinal.sha256
     if($source.phase -cne 'source' -or $source.status -cne 'PASS' -or $source.root -cne $Receipt.root -or $source.nonce -cne $Receipt.nonce -or $source.chain -cne $Receipt.chain -or $source.startupNonce -cne $Layer.sourceFinal.startupNonce -or $source.pid -ne $Layer.sourceFinal.pid){throw 'M6_CARVERS_SOURCE_FINAL'}
-    foreach($key in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($source.variants[0].$key -cne $Row.$key){throw 'M6_CARVERS_SOURCE_VARIANT'}}
+    foreach($key in @('preset','sourcePreset','targetPreset','sourceSnapshot','sourceFingerprint','targetFingerprint','sourceProvider','targetProvider','generateStructures','targetGenerateStructures','sourceSeed','profileId','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($source.variants[0].$key -cne $Row.$key){throw 'M6_CARVERS_SOURCE_VARIANT'}}
     $nbt=Join-Path $Owned.root "same-seed-$($Row.preset)-source.nbt"
     if((Get-FileHash -LiteralPath $nbt).Hash.ToLowerInvariant() -cne $Layer.sourceRecordSha256){throw 'M6_CARVERS_SOURCE_NBT_SHA'}
     for($i=0;$i -lt 2;$i++) {
         $side=$Layer.sides[$i];$label=@('source','target')[$i];$worldKey=@($Layer.sourceIdentity,$Layer.targetIdentity)[$i]
-        if($side.side -cne $label -or $side.worldKey -cne $worldKey -or $side.seed -cne $Row.seed -or $side.frozenSettings -cne $Row.snapshot){throw 'M6_CARVERS_SIDE_IDENTITY'}
+        $frozenSettings=if($i -eq 0){$Row.sourceSnapshot}else{$Row.snapshot}
+        if($side.side -cne $label -or $side.worldKey -cne $worldKey -or $side.seed -cne $Row.seed -or $side.frozenSettings -cne $frozenSettings){throw 'M6_CARVERS_SIDE_IDENTITY'}
         Assert-CarversHalo $side.initialHalo $worldKey $Owned.root ($Receipt.phase -ceq 'new')
         Assert-CarversHalo $side.beforeSampleHalo $worldKey $Owned.root $false;Assert-CarversHalo $side.afterSampleHalo $worldKey $Owned.root $false
         $absent=@($side.initialHalo.cells|Where-Object {$_.raw -cne 'ABSENT' -or $_.currentHolder -ne $false -or $_.unloadingHolder -ne $false}).Count -eq 0
@@ -213,14 +216,21 @@ function Assert-ProfileCarversLayer($Layer,$Receipt,$Row,$State,$Owned) {
         if($side.request.x -ne 1024 -or $side.request.z -ne 1024 -or $side.request.status -cne 'minecraft:carvers' -or $side.request.create -ne $true -or $side.request.explicitCount -ne 1 -or $side.returnedOwner.holderLatestIsReturnedChunk -ne $true -or $side.returnedOwner.holderStatus -cne 'minecraft:carvers' -or $side.returnedOwner.returnedStatus -cne 'minecraft:carvers' -or $side.returnedOwner.returnedClass -cne 'net.minecraft.world.chunk.ProtoChunk'){throw 'M6_CARVERS_REQUEST_OWNER'}
         Assert-ProfileSample $side.sample 16384 'minecraft:carvers'
     }
-    foreach($field in @('block','biome')){if((Get-ProfileListHash ([string[]]$Layer.sides[0].sample.rows.$field)) -cne (Get-ProfileListHash ([string[]]$Layer.sides[1].sample.rows.$field))){throw 'M6_CARVERS_PAIRWISE_EXACT'}}
+    $blocksExact=(Get-ProfileListHash ([string[]]$Layer.sides[0].sample.rows.block)) -ceq (Get-ProfileListHash ([string[]]$Layer.sides[1].sample.rows.block))
+    $biomesExact=(Get-ProfileListHash ([string[]]$Layer.sides[0].sample.rows.biome)) -ceq (Get-ProfileListHash ([string[]]$Layer.sides[1].sample.rows.biome))
+    if($Layer.blocksExact -ne $blocksExact -or $Layer.biomesExact -ne $biomesExact){throw 'M6_CARVERS_PAIRWISE_FLAGS'}
+    if($Row.profileId -ceq 'quantumchamber:same_seed_toggle_amplified_v1') {
+        if($Layer.comparison -cne 'TOGGLE_DIFFERENT' -or $blocksExact){throw 'M6_CARVERS_TOGGLE_DIFFERENCE'}
+        $indices=@(for($index=0;$index -lt 1440;$index++){if($Layer.sides[0].sample.rows[$index].block -cne $Layer.sides[1].sample.rows[$index].block){$index}})
+        if(($indices -join ',') -cne (@($Layer.blockDifferenceIndices) -join ',')){throw 'M6_CARVERS_TOGGLE_DIFFERENCE_COMPLETE'}
+    } elseif($Layer.comparison -cne 'SAME_EXACT' -or -not $blocksExact -or -not $biomesExact){throw 'M6_CARVERS_PAIRWISE_EXACT'}
     if($Receipt.phase -ceq 'restart') {
         $newFinal=Read-ProfileJsonLink $State.PhaseEvidence $Layer.newWitness.newFinalPath '../new/final.json' $Layer.newWitness.newFinalSha256
         $newLayer=Read-ProfileJsonLink $State.PhaseEvidence $Layer.newWitness.path '../new/carvers-new.json' $Layer.newWitness.sha256
         $newRow=$newFinal.variants[0]
         if($newFinal.phase -cne 'new' -or $newFinal.status -cne 'PASS' -or $newRow.carversReceiptPath -cne 'carvers-new.json' -or $newRow.carversReceiptSha256 -cne $Layer.newWitness.sha256 -or $newRow.newSnapshotSha256 -cne $Layer.newWitness.newSnapshotSha256){throw 'M6_CARVERS_NEW_WITNESS'}
         $rootNew=Read-ProfileJsonLink $Owned.root $Layer.newWitness.newSnapshotPath "same-seed-$($Row.preset)-new.json" $Layer.newWitness.newSnapshotSha256
-        foreach($key in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($rootNew.$key -cne $Row.$key -or $newRow.$key -cne $Row.$key){throw 'M6_CARVERS_NEW_WITNESS_IDENTITY'}}
+        foreach($key in @('preset','sourcePreset','targetPreset','sourceSnapshot','sourceFingerprint','targetFingerprint','sourceProvider','targetProvider','generateStructures','targetGenerateStructures','sourceSeed','profileId','session','sourceIdentity','uuid','seed','allocationToken','snapshot','sourceRecordSha256')){if($rootNew.$key -cne $Row.$key -or $newRow.$key -cne $Row.$key){throw 'M6_CARVERS_NEW_WITNESS_IDENTITY'}}
         $newState=[pscustomobject]@{PhaseEvidence=[IO.Path]::GetFullPath((Join-Path $State.PhaseEvidence '../new'))}
         Assert-ProfileCarversLayer $newLayer $newFinal $newRow $newState $Owned
         for($i=0;$i -lt 2;$i++){foreach($field in @('block','biome')){if((Get-ProfileListHash ([string[]]$Layer.sides[$i].sample.rows.$field)) -cne (Get-ProfileListHash ([string[]]$newLayer.sides[$i].sample.rows.$field))){throw 'M6_CARVERS_RESTART_ACTUAL_EXACT'}}}
@@ -255,6 +265,27 @@ function Test-ProfileCarversNegatives($Receipt,$Owned,$State) {
         $rejected=$false;try{Assert-ProfileCarversLayer $bad $Receipt $row $State $Owned}catch{if($_.Exception.Message -notmatch 'M6_CARVERS_'){throw};$rejected=$true}
         if(-not $rejected){throw "M6_CARVERS_NEGATIVE_MISSED:$case"};$checks++
     }
+    if($Receipt.chain -cin @('profile-restart','profile-amplified-restart')) {
+        foreach($case in @('equal-preset-blocks','missing-toggle-difference','wrong-side-owner')) {
+            $bad=$layer|ConvertTo-Json -Depth 40|ConvertFrom-Json -DateKind String
+            switch($case) {
+                'equal-preset-blocks' {$bad.sides[1].sample=$bad.sides[0].sample|ConvertTo-Json -Depth 12|ConvertFrom-Json;$bad.blocksExact=$true;$bad.biomesExact=$true;$bad.blockDifferenceIndices=@()}
+                'missing-toggle-difference' {$bad.blockDifferenceIndices=@()}
+                'wrong-side-owner' {$bad.sides[1].worldKey='minecraft:overworld'}
+            }
+            $rejected=$false;try{Assert-ProfileCarversLayer $bad $Receipt $row $State $Owned}catch{if($_.Exception.Message -notmatch 'M6_CARVERS_'){throw};$rejected=$true}
+            if(-not $rejected){throw "M6_PROFILE_NEGATIVE_MISSED:$case"};$checks++
+        }
+        if($Receipt.phase -ceq 'restart') {
+            $bad=$layer|ConvertTo-Json -Depth 40|ConvertFrom-Json -DateKind String
+            $bad.sides[1].sample.rows[0].block=if($bad.sides[1].sample.rows[0].block -ceq 'Block{minecraft:diamond_block}'){'Block{minecraft:gold_block}'}else{'Block{minecraft:diamond_block}'}
+            $bad.sides[1].sample.blockHash=Get-ProfileListHash ([string[]]$bad.sides[1].sample.rows.block)
+            $bad.blocksExact=$bad.sides[0].sample.blockHash -ceq $bad.sides[1].sample.blockHash
+            $bad.blockDifferenceIndices=@(for($i=0;$i -lt 1440;$i++){if($bad.sides[0].sample.rows[$i].block -cne $bad.sides[1].sample.rows[$i].block){$i}})
+            $rejected=$false;try{Assert-ProfileCarversLayer $bad $Receipt $row $State $Owned}catch{if($_.Exception.Message -notmatch 'M6_CARVERS_RESTART_ACTUAL_EXACT'){throw};$rejected=$true}
+            if(-not $rejected){throw 'M6_PROFILE_NEGATIVE_MISSED:restart-one-block'};$checks++
+        }
+    }
     $bad=$Receipt|ConvertTo-Json -Depth 40|ConvertFrom-Json -DateKind String;$bad.variants[0].carversReceiptSha256='0'*64
     $rejected=$false;try{Assert-ProfileCarvers $bad $bad.variants[0] $State $Owned}catch{if($_.Exception.Message -notmatch 'M6_CARVERS_LINK_SHA'){throw};$rejected=$true}
     if(-not $rejected){throw 'M6_CARVERS_NEGATIVE_MISSED:wrong-sha'};$checks++
@@ -272,12 +303,17 @@ function Test-ProfileCarversNegatives($Receipt,$Owned,$State) {
     return $checks
 }
 function Assert-ProfileReceipt($receipt,$phase,$owned,$state,[string]$ExpectedChain) {
-    if($receipt.chain -cne $ExpectedChain -or $receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'FUNCTIONAL' -or $receipt.chain -cnotin @('same-seed-restart','same-seed-amplified-restart') -or $receipt.phase -cne $phase -or $receipt.nonce -cne $owned.nonce -or $receipt.startupNonce -cne $state.StartupNonce){throw 'M6_SAME_RECEIPT_IDENTITY'}
+    if($receipt.chain -cne $ExpectedChain -or $receipt.m6ProbeSchema -ne 1 -or $receipt.expectedMode -cne 'FUNCTIONAL' -or $receipt.chain -cnotin @('same-seed-restart','same-seed-amplified-restart','profile-restart','profile-amplified-restart') -or $receipt.phase -cne $phase -or $receipt.nonce -cne $owned.nonce -or $receipt.startupNonce -cne $state.StartupNonce){throw 'M6_SAME_RECEIPT_IDENTITY'}
     if($receipt.status -cne 'PASS' -or @($receipt.failures).Count -or -not $receipt.functionalPassed -or -not $receipt.stopRequested -or -not $receipt.stoppingSeen -or -not $receipt.stoppedSeen){throw "M6_SAME_FUNCTIONAL_FAILED:$($receipt.failures -join '; ')"}
     if($receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -notin $receipt.loadedModIds){throw 'M6_SAME_RUNTIME_SCOPE'}
-    $preset=if($receipt.chain -ceq 'same-seed-restart'){'normal'}else{'amplified'}
+    $preset=if($receipt.chain -cin @('same-seed-restart','profile-restart')){'normal'}else{'amplified'}
+    $toggle=$receipt.chain -cin @('profile-restart','profile-amplified-restart')
+    $targetPreset=if($toggle){if($preset -ceq 'normal'){'amplified'}else{'normal'}}else{$preset}
+    $profile=if($toggle){'quantumchamber:same_seed_toggle_amplified_v1'}else{'quantumchamber:same_seed_fresh_v1'}
     if(@($receipt.variants).Count -ne 1 -or $receipt.variants[0].preset -cne $preset){throw 'M6_SAME_VARIANT_SET'}
     foreach($row in $receipt.variants) {
+        if($row.sourcePreset -cne $preset -or $row.targetPreset -cne $targetPreset -or $row.preset -cne $preset -or $row.sourceSeed -cne $row.seed -or $row.sourceProvider -cne "quantumchamber:vanilla_${preset}_v1" -or $row.targetProvider -cne "quantumchamber:vanilla_${targetPreset}_v1" -or $row.sourceFingerprint -cnotmatch '^[0-9a-f]{64}$' -or $row.targetFingerprint -cnotmatch '^[0-9a-f]{64}$' -or $row.generateStructures -notin @(0,1) -or $row.targetGenerateStructures -ne $row.generateStructures){throw 'M6_PROFILE_FROZEN_SETTINGS'}
+        if((-not $toggle -and ($row.sourceSnapshot -cne $row.snapshot -or $row.sourceFingerprint -cne $row.targetFingerprint)) -or ($toggle -and ($row.sourceSnapshot -ceq $row.snapshot -or $row.sourceFingerprint -ceq $row.targetFingerprint))){throw 'M6_PROFILE_FROZEN_RELATION'}
         Assert-ProfileCarvers $receipt $row $state $owned
         if($row.sourceInitialRequest -cne '128,128=minecraft:full'){throw 'M6_SAME_SOURCE_REQUEST'}
         if($phase -cin @('source','new')) {
@@ -294,9 +330,9 @@ function Assert-ProfileReceipt($receipt,$phase,$owned,$state,[string]$ExpectedCh
                 }
             }
         }
-        if(-not $row.formalLeverEntry -or -not $row.formalBatch -or -not $row.formalSelected -or -not $row.emptyStorageBeforeAllocation -or -not $row.sourceTargetExact -or $row.policyVersion -ne 2 -or $row.profileId -cne 'quantumchamber:same_seed_fresh_v1' -or $row.sourceIdentity -cne 'minecraft:overworld' -or $row.uuid -cnotmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or $row.allocationToken -cnotmatch '^[0-9a-f]{64}$'){throw 'M6_SAME_FORMAL_ENTRY'}
+        if(-not $row.formalLeverEntry -or -not $row.formalBatch -or -not $row.formalSelected -or -not $row.emptyStorageBeforeAllocation -or $row.sourceTargetExact -ne (-not $toggle) -or $row.targetMatchesFrozenToggle -ne $toggle -or $row.policyVersion -ne 3 -or $row.profileId -cne $profile -or $row.sourceIdentity -cne 'minecraft:overworld' -or $row.uuid -cnotmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' -or $row.allocationToken -cnotmatch '^[0-9a-f]{64}$'){throw 'M6_SAME_FORMAL_ENTRY'}
         if($phase -cne 'source') {
-            if(-not $row.catalogChecked -or -not $row.allocationChecked -or -not $row.buildingAbsent -or -not $row.editsIndependent -or $row.matchedMaturity -cne 'FULL_3X3' -or $row.sampleCount -ne 1440 -or $row.terrain -cnotmatch '^[0-9a-f]{64}$' -or $row.biomes -cnotmatch '^[0-9a-f]{64}$' -or @($row.structures).Count -ne 3){throw 'M6_SAME_GENERATION_OR_ISOLATION'}
+            if(-not $row.catalogChecked -or -not $row.allocationChecked -or -not $row.buildingAbsent -or -not $row.editsIndependent -or $row.matchedMaturity -cne 'FULL_3X3' -or $row.sampleCount -ne 1440 -or $row.terrain -cnotmatch '^[0-9a-f]{64}$' -or $row.biomes -cnotmatch '^[0-9a-f]{64}$' -or @($row.structures).Count -ne 3 -or @($row.targetStructures).Count -ne 3){throw 'M6_SAME_GENERATION_OR_ISOLATION'}
             $requests=@('32,32=minecraft:full')+@(foreach($x in 31..33){foreach($z in 31..33){"$x,$z=minecraft:full"}})
             if(($row.sourceRequests -join '|') -cne ($requests -join '|') -or ($row.targetRequests -join '|') -cne ($requests -join '|')){throw 'M6_SAME_REQUEST_SEQUENCE'}
             if($phase -ceq 'restart' -and -not $row.restartExact){throw 'M6_SAME_RESTART'}
@@ -315,7 +351,7 @@ function Assert-ProfileContinuity($receipts,[string[]]$EvidenceBases) {
         $bases+=,$base
     }
     for($i=0;$i -lt 1;$i++) {
-        foreach($field in @('preset','session','sourceIdentity','uuid','seed','allocationToken','snapshot','policyVersion','profileId')) {
+        foreach($field in @('preset','sourcePreset','targetPreset','sourceSnapshot','sourceFingerprint','targetFingerprint','sourceProvider','targetProvider','generateStructures','targetGenerateStructures','sourceSeed','profileId','session','sourceIdentity','uuid','seed','allocationToken','snapshot','policyVersion','profileId')) {
             if(@($receipts | ForEach-Object {$_.variants[$i].$field} | Sort-Object -Unique).Count -ne 1){throw "M6_SAME_RESTART_IDENTITY:$field"}
         }
         $layers=@(foreach($phaseIndex in 1..2) {
@@ -325,7 +361,7 @@ function Assert-ProfileContinuity($receipts,[string[]]$EvidenceBases) {
         for($side=0;$side -lt 2;$side++){foreach($field in @('block','biome')) {
             if((Get-ProfileListHash ([string[]]$layers[0].sides[$side].sample.rows.$field)) -cne (Get-ProfileListHash ([string[]]$layers[1].sides[$side].sample.rows.$field))){throw "M6_SAME_RESTART_CARVERS:$field"}
         }}
-        foreach($field in @('biomes','structures')) {
+        foreach($field in @('biomes','targetBiomes','structures','targetStructures')) {
             if(($receipts[1].variants[$i].$field | ConvertTo-Json -Compress) -cne ($receipts[2].variants[$i].$field | ConvertTo-Json -Compress)){throw "M6_SAME_RESTART_GENERATION:$field"}
         }
     }
@@ -424,6 +460,8 @@ function Assert-SavedNativeReceiptPredicate($receipt,$phaseName,$owned,$state,$s
             'native-seed-functional' {Assert-SeedReceipt $receipt $phaseName $owned $state}
             'same-seed-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
             'same-seed-amplified-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
+            'profile-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
+            'profile-amplified-restart' {Assert-ProfileReceipt $receipt $phaseName $owned $state $spec.chain}
             default {Assert-GameplayReceipt $receipt $spec.chain $phaseName $owned $state}
         }
 }
@@ -461,7 +499,7 @@ function Assert-SavedNativeChain($native,[int]$ChainIndex,$receiptOverrides=@{},
         for($w=0;$w -lt 2;$w++){foreach($field in @('worldKey','seed','frozenStructures','accessorStructures','settingsKey','samples','positivePosition')) {
             if(($receipts[0].worlds[$w].$field | ConvertTo-Json -Compress) -cne ($receipts[1].worlds[$w].$field | ConvertTo-Json -Compress)){throw 'M6_SAVED_SEED_REOPEN'}
         }}
-    } elseif($spec.chain -cin @('same-seed-restart','same-seed-amplified-restart')) {
+    } elseif($spec.chain -cin @('same-seed-restart','same-seed-amplified-restart','profile-restart','profile-amplified-restart')) {
         Assert-ProfileContinuity $receipts $phaseEvidenceBases
     } else {
         $fields=if($spec.chain -ceq 'catalog-readback'){@('uuid','session','allocationToken','rootWorldSeed','targetFingerprint','profileId','profileVersion','journalHash')}else{@('session','uuid','worldKey','allocationToken','rootWorldSeed','sourceRootWorldSeed','sourceFingerprint','targetFingerprint','profileId','storage')}
@@ -520,10 +558,19 @@ if($VerifySummary) {
                 $rejected=$false;try{Assert-SavedNativeReceiptOverride $native $chainIndex $index @{$index=$bad}}catch{$rejected=$true};if(-not $rejected){throw 'M6_SAVED_RECEIPT_NEGATIVE_MISSED'};$checks++
             }
             $original=Get-Content -LiteralPath $native.phases[$index].receipt -Raw | ConvertFrom-Json -DateKind String
-            if($original.chain -cin @('same-seed-restart','same-seed-amplified-restart')) {
-                $fields=@('formalLeverEntry','formalBatch','formalSelected','emptyStorageBeforeAllocation','sourceTargetExact','policyVersion','sourceInitialRequest')
+            if($original.chain -cin @('same-seed-restart','same-seed-amplified-restart','profile-restart','profile-amplified-restart')) {
+                $fields=@('formalLeverEntry','formalBatch','formalSelected','emptyStorageBeforeAllocation','policyVersion','sourceInitialRequest')
+                $fields+=if($original.chain -cin @('profile-restart','profile-amplified-restart')){'targetMatchesFrozenToggle'}else{'sourceTargetExact'}
                 if($original.phase -cne 'source'){$fields+=@('catalogChecked','allocationChecked','buildingAbsent','editsIndependent','sampleCount','sourceRequests','targetRequests')}
                 if($original.phase -ceq 'restart'){$fields+='restartExact'}
+                if($original.chain -cin @('profile-restart','profile-amplified-restart')) {
+                    foreach($field in @('sourcePreset','targetPreset','sourceProvider','targetProvider','sourceSeed','targetGenerateStructures','sourceFingerprint','targetFingerprint')) {
+                        $bad=$original|ConvertTo-Json -Depth 40|ConvertFrom-Json -DateKind String
+                        $bad.variants[0].$field=if($field -ceq 'targetGenerateStructures'){2}else{'WRONG'}
+                        $rejected=$false;try{Assert-SavedNativeReceiptOverride $native $chainIndex $index @{$index=$bad}}catch{$rejected=$true}
+                        if(-not $rejected){throw "M6_PROFILE_NEGATIVE_MISSED:$field"};$checks++
+                    }
+                }
                 $profileOwned=[pscustomobject]@{root=$original.root;nonce=$original.nonce}
                 $profileState=[pscustomobject]@{PhaseEvidence=(Split-Path -Parent $native.phases[$index].receipt)}
                 $checks+=Test-ProfileCarversNegatives $original $profileOwned $profileState
@@ -569,9 +616,9 @@ try {
         $owned=New-OwnedRoot -Context $context -Suffix $chainSpec.chain
         if($chainSpec.chain -ceq 'native-seed-functional'){'level-type=minecraft:amplified' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
         if($chainSpec.chain -cin @('intent-allocation','partial-overworld')){'level-type=minecraft:normal' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
-        if($chainSpec.chain -ceq 'same-seed-restart'){'level-type=minecraft:normal' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
-        if($chainSpec.chain -ceq 'same-seed-amplified-restart'){'level-type=minecraft:amplified' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
-        if($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart')){
+        if($chainSpec.chain -cin @('same-seed-restart','profile-restart')){'level-type=minecraft:normal' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
+        if($chainSpec.chain -cin @('same-seed-amplified-restart','profile-amplified-restart')){'level-type=minecraft:amplified' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII}
+        if($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart','profile-restart','profile-amplified-restart')){
             'initial-enabled-packs=vanilla,fabric,fabric-gametest-api-v1,quantumchamber,fabric-convention-tags-v2,quantumchamber-testmod' | Add-Content -LiteralPath (Join-Path $owned.root 'server.properties') -Encoding ASCII
         }
         $chainStart=$results.Count
@@ -605,7 +652,7 @@ try {
             } else {
                 if($state.Launcher.ExitCode -ne 0 -or $state.JavaProcess.ExitCode -ne 0){throw 'M6_PHASE_EXIT_NONZERO'}
                 if($gameplay){Assert-GameplayReceipt $receipt $chainSpec.chain $phase $owned $state}
-                elseif($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart')){Assert-ProfileReceipt $receipt $phase $owned $state $chainSpec.chain}
+                elseif($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart','profile-restart','profile-amplified-restart')){Assert-ProfileReceipt $receipt $phase $owned $state $chainSpec.chain}
                 elseif($chainSpec.chain -ceq 'native-seed-functional'){
                     Assert-SeedReceipt $receipt $phase $owned $state
                     foreach($field in @('worldMonitorReadBlocked','thirdUniversePublishedAndUnloaded')) {
@@ -639,7 +686,7 @@ try {
             Write-Output "M6_PHASE PASS chain=$($chainSpec.chain) phase=$phase pid=$($row.javaPid) mode=$($chainSpec.expectedMode) ROOT=$($owned.root)"
         }
         $current=@($results.ToArray() | Select-Object -Skip $chainStart)
-        if($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart')) {
+        if($chainSpec.chain -cin @('same-seed-restart','same-seed-amplified-restart','profile-restart','profile-amplified-restart')) {
             Assert-ProfileContinuity @($current | ForEach-Object {Get-Content -LiteralPath $_.receipt -Raw | ConvertFrom-Json -DateKind String}) @($current | ForEach-Object {[IO.Path]::GetDirectoryName($_.receipt)})
         }
         if($gameplay) {

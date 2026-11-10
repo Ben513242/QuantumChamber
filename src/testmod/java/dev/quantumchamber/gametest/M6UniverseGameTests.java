@@ -12,6 +12,12 @@ public final class M6UniverseGameTests implements FabricGameTest {
         context.complete();
     }
 
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_profile", tickLimit=1200)
+    public void toggle_owner_settings_match_both_frozen_presets(TestContext context) throws Exception {
+        M6ProfileProbePhases.verifyToggleOwnerSettingsGameTest(context.getWorld().getServer());
+        context.complete();
+    }
+
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_same_seed", tickLimit=1200)
     public void same_seed_owner_settings_match_frozen_snapshots(TestContext context) throws Exception {
         M6ProfileProbePhases.verifyOwnerSettingsGameTest(context.getWorld().getServer());
@@ -27,7 +33,7 @@ public final class M6UniverseGameTests implements FabricGameTest {
         var policy = dev.quantumchamber.candidate.M6CandidatePolicySelector.forNewSession(server).freeze(-1,
                 entropy.entropyFingerprint(), new dev.quantumchamber.candidate.SourceFamilyRef.Vanilla(
                         net.minecraft.world.World.OVERWORLD, dev.quantumchamber.universe.DimensionRole.OVERWORLD));
-        context.assertEquals(2, policy.policyVersion(), "selectorFreezesPolicyTwoForNewSession");
+        context.assertEquals(policy.policyVersion(), 3, "selectorFreezesPolicyThreeForNewSession");
         context.assertEquals(0, policy.familyCapabilityVersion(), "新 session 固定 family0");
         context.complete();
     }
@@ -354,6 +360,27 @@ public final class M6UniverseGameTests implements FabricGameTest {
         context.assertEquals(0, acquireCalls[0], "SOURCE／EXISTING／legacy與未知NEW拒絕都不偷取得lease");
     }
 
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_profile", tickLimit=100000)
+    public void formal_entry_freezes_policy_three_without_changing_older_sessions(TestContext context) {
+        if (!com.sun.jna.Platform.isWindows()) { context.complete(); return; }
+        var fixture = new M2CorridorGameTests.NativeEntry(context, 1);
+        context.runAtTick(2, () -> {
+            fixture.power();
+            var initial = fixture.record();
+            context.assertTrue(initial != null, "真拉桿入場須同步寫入 ARMING");
+            // 先走既有正式收尾；預期policy斷言失敗不得留下活動fixture。
+            fixture.trustedTeardown(3, () -> {
+                var policy = initial.candidateContext().orElseThrow();
+                context.assertEquals(dev.quantumchamber.superposition.SessionState.ARMING, initial.state(), "正式 ARMING");
+                // 舊checked policy1/2的磁碟不升版由SessionJournalSchemaFiveTest具名守住；本案驗正式current入口。
+                context.assertEquals(policy.policyVersion(), 3, "FORMAL_ENTRY_POLICY_THREE：正式新session必須凍結policy3");
+                context.assertEquals(0, policy.familyCapabilityVersion(), "固定 family0");
+                context.assertTrue(initial.candidateLedger().isEmpty(), "ARMING 不偷產 snapshot");
+                context.complete();
+            });
+        });
+    }
+
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_random", tickLimit=100000)
     public void formal_entry_freezes_policy_two_on_flat(TestContext context) {
         if (!com.sun.jna.Platform.isWindows()) { context.complete(); return; }
@@ -365,8 +392,8 @@ public final class M6UniverseGameTests implements FabricGameTest {
             fixture.trustedTeardown(3, () -> {
                 context.assertEquals(dev.quantumchamber.superposition.SessionState.ARMING, initial.state(), "正式 ARMING");
                 var policy = initial.candidateContext().orElseThrow();
-                context.assertTrue(policy.isM6(), "FORMAL_ENTRY_POLICY_TWO：新玩家 session 必須凍結 M6 policy2");
-                context.assertEquals(2, policy.policyVersion(), "固定 policy2");
+                context.assertTrue(policy.isM6(), "FORMAL_ENTRY_POLICY_THREE：新玩家 session 必須凍結 M6 policy3");
+                context.assertEquals(policy.policyVersion(), 3, "固定 policy3");
                 context.assertEquals(0, policy.familyCapabilityVersion(), "固定 family0");
                 context.assertTrue(initial.candidateLedger().isEmpty(), "ARMING 不偷產 snapshot");
                 context.complete();

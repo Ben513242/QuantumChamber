@@ -530,7 +530,18 @@ W12 已驗證第二次 SEALED 的退避加倍：`INITIAL_TICKS＋6 < d ≤ 2×IN
 
 ### M6 Task12：正式玩家 random NEW 與原生鏈驗證入口
 
-`m6-universe-probe.ps1 -AllEnabled` 目前宣告七條鏈、21 個 phase：`native-seed-diagnostic`（2，仍為 DIAGNOSTIC）、`catalog-readback`（4）、`native-seed-functional`（2）、`intent-allocation`（3）、`partial-overworld`（4）、`same-seed-restart`（3）、`same-seed-amplified-restart`（3）。後六條為 FUNCTIONAL；合計 DIAGNOSTIC 2／FUNCTIONAL 19。各鏈使用自己的全新 owned root，不跨 root 拼接同一個 intent。`run-all.ps1` 的 SUMMARY 依實際 `native.phases` 各模式計數，不硬編 phase 數。
+`m6-universe-probe.ps1 -AllEnabled` 現在宣告九條鏈、27個phase：原七鏈21phase（`native-seed-diagnostic` 2、`catalog-readback` 4、`native-seed-functional` 2、`intent-allocation` 3、`partial-overworld` 4、`same-seed-restart` 3、`same-seed-amplified-restart` 3）全部保留，新增 `profile-restart`（normal→amplified）與 `profile-amplified-restart`（amplified→normal），各 `source,new,restart` 三phase。DIAGNOSTIC2／FUNCTIONAL25；每鏈獨立fresh owned root。這是Task14候選宣告，尚非本機／CI通過紀錄。`run-all.ps1` 依實際 `native.phases` 動態計數。
+
+Task14的新session採policy3/family0，random／same-seed／toggle依固定hash等權重取餘數；既有checked policy1/2不升版。兩toggle鏈保留真玩家入口與兩端凍結權威；actual CARVERS仍固定chunk1024,1024的1440 rows，跨preset block須有差異、各側new→restart block與stored biome exact。原same-seed兩鏈仍跨側exact。toggle不要求跨preset biome／structure bbox相等，各側structure非空及重啟exact；final FEATURES完整rows/hash/差格只診斷。target native consumer exact、canonical source僅既有seed/settings/runtime identity/CARVERS coverage，不冒雙側consumer。新增兩鏈SelfTest保留原277案例並增加新負控；精確新count由當次summary採計，CI原300秒不變。
+
+新增focused命令（每次新label；正式native須clean candidate pin）：
+
+```powershell
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_profile -Label t14-profile
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite Probe -Chain profile-restart -ExpectedMode FUNCTIONAL -Label t14-normal-toggle
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite Probe -Chain profile-amplified-restart -ExpectedMode FUNCTIONAL -Label t14-amplified-toggle
+```
+
 
 正式玩家鏈請直接執行：
 
@@ -553,7 +564,7 @@ IA 為 `intent,allocation,restart`；PO 為 `intent,catalog,partial,restart`。�
 
 `-VerifySummary` 只讀已保存收據，不啟動 JVM；核 exact chain／phase／mode／schema、PID/startupNonce、exit、receipt/preservation hash、跨 phase frozen identity 與 partial 重啟證據。`-SelfTest` 使用記憶體副本破壞 manifest、receipt、restore 和 hash，確認同一份 oracle 拒絕。`run-all.ps1` 與獨立 Windows `m6-native` CI job 都呼此入口；`ci-rule-check.ps1 -M6NativeSummary ... -NativeMutation mode|schema|chain|phase|receipt|restore|hash` 在 fixture 複本執行 workflow 原文，不能把本機 fixture 當遠端 CI 結果。
 
-flat GameTest 的 `m6_universe_random` 分別驗正式 ARMING policy1／family0、未知來源 NEW 的確切拒因與安全返還，以及 resolver 的 SOURCE／EXISTING／legacy 控制組；不冒 normal source snapshot 或玩家跨 JVM 功能證據。NEW 診斷只輸出 DoorKey、bucket 與 CandidateId 再 SHA-256 fingerprint，不輸出 raw CandidateId、entropy、material 或 seed。
+flat GameTest 的 `m6_universe_random` 分別驗正式 ARMING policy3／family0（Task14；歷史policy1/2案例ID保留）、未知來源 NEW 的確切拒因與安全返還，以及 resolver 的 SOURCE／EXISTING／legacy 控制組；不冒 normal source snapshot 或玩家跨 JVM 功能證據。NEW 診斷只輸出 DoorKey、bucket 與 CandidateId 再 SHA-256 fingerprint，不輸出 raw CandidateId、entropy、material 或 seed。
 
 ### M6 Task7：原生seed/settings診斷（DIAGNOSTIC，歷史範圍）
 
@@ -618,7 +629,7 @@ schema5 一旦可能已 atomic move、同次 readback 卻未確認，該 instanc
 
 ## Task12 normal 選門／故障回歸 scope
 
-`pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M4NormalGameTest -Label normal` 執行13個 `m4_normal_*` batch；`-Batch m4_normal_m4_select_first_wins` 可保留單案focused證據。它們使用原測試方法與真玩家／故障路徑，只驗當次新 session 的 M6 policy2/family0 回歸；舊凍結 policy1 Context 讀回不升版，不宣稱歷史 M4 schema1 活選門。
+`pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M4NormalGameTest -Label normal` 執行13個 `m4_normal_*` batch；`-Batch m4_normal_m4_select_first_wins` 可保留單案focused證據。它們使用原測試方法與真玩家／故障路徑，只驗當次新 session 的 M6 policy3/family0 回歸；舊凍結 policy1 Context 讀回不升版，不宣稱歷史 M4 schema1 活選門。
 
 `gameTestM4Normal` 以 exact `quantumchamber.gametest.m4NormalOnly=true` 在既有 testmod Redirect 選 vanilla normal holder，獨立 `run/gametest-m4-normal`／`build/gametest-m4-normal-results.xml`；default以exact `defaultNormal=true`、M5以 `m5Only=true`＋`m5Normal=true`亦使用normal，legacy、M6仍flat，scope flags互斥。新run沿用 Move-Fresh／Restore-Root、當次XML exact集合、M4 boundary及逐案收據；`run-all.ps1` 的default／legacy／normal收據分流核對。新session與來源preset須通過runtime斷言，不能以flag或名稱冒稱normal。
 

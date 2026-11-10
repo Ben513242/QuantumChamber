@@ -32,6 +32,86 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class CandidateResolverTest {
+
+    @Test void toggleChangesOverworldNotNetherEnd() throws Exception {
+        var entropy=entropy();
+        var policy=new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"),3,2,5,20,75,-1,4096,entropy.entropyFingerprint(),SOURCE,0);
+        try(var fixture=settingsFixture()) {
+            var registry=builtinRegistry();var lease=new Lease(fixture.registries());
+            var resolver=new CandidateResolver(entropy,registry,()->lease);
+            for(String preset:List.of("normal","amplified"))for(boolean structures:new boolean[]{false,true}) {
+                var source=registry.createSnapshot("quantumchamber:vanilla_"+preset+"_v1",1,parameters(preset,structures),lease);
+                var original=source.toNbt();var seen=new java.util.HashSet<String>();
+                for(int i=0;i<128;i++) {
+                    var candidate=resolver.resolve(key(i),policy,List.of(),()->new SourceGenerationSnapshot(Long.MIN_VALUE,source));
+                    if(!(candidate instanceof QuantumCandidate.New fresh))continue;
+                    var intent=fresh.intent();seen.add(intent.profileId());
+                    assertEquals(original,source.toNbt());assertEquals(original,intent.sourceSettingsSnapshot().toNbt());
+                    if(!NewUniverseIntent.TOGGLE_AMPLIFIED_PROFILE_ID.equals(intent.profileId()))continue;
+                    assertEquals(Long.MIN_VALUE,intent.rootWorldSeed(),"TOGGLE_SOURCE_ROOT_SEED");
+                    var target=intent.targetSettingsSnapshot();String opposite=preset.equals("normal")?"amplified":"normal";
+                    assertEquals("quantumchamber:vanilla_"+opposite+"_v1",target.providerId());
+                    assertEquals(parameters(opposite,structures),target.parameters());
+                    var before=registry.resolve(source,lease);var after=registry.resolve(target,lease);
+                    assertEquals(before.generateStructures(),after.generateStructures());
+                    var ops=net.minecraft.registry.RegistryOps.of(net.minecraft.nbt.NbtOps.INSTANCE,fixture.registries());
+                    for(var role:List.of(DimensionRole.NETHER,DimensionRole.END)) {
+                        var a=net.minecraft.world.dimension.DimensionOptions.CODEC.encodeStart(ops,before.roles().get(role)).getOrThrow();
+                        var b=net.minecraft.world.dimension.DimensionOptions.CODEC.encodeStart(ops,after.roles().get(role)).getOrThrow();
+                        assertEquals(a,b,"toggle不改Nether/End設定");
+                    }
+                    var targetCopy=target.parameters();targetCopy.putString("OverworldPreset",preset);
+                    assertEquals(opposite,target.parameters().getString("OverworldPreset"));
+                    assertEquals(candidate,resolver.resolve(key(i),policy,List.of(),()->new SourceGenerationSnapshot(Long.MIN_VALUE,source)));
+                }
+                assertEquals(java.util.Set.of(NewUniverseIntent.RANDOM_PROFILE_ID,NewUniverseIntent.SAME_SEED_PROFILE_ID,NewUniverseIntent.TOGGLE_AMPLIFIED_PROFILE_ID),seen);
+            }
+        }
+    }
+
+
+    @Test void policyThreeUsesFixedThreeProfileVectors() {
+        // 獨立 Python hashlib 固定向量；首 byte 0/1/2，其餘31 bytes皆零。
+        String[] expected = {"quantumchamber:same_seed_fresh_v1", "quantumchamber:random_vanilla_v1",
+                "quantumchamber:same_seed_toggle_amplified_v1"};
+        for (int first = 0; first < expected.length; first++) {
+            byte[] raw = new byte[32]; raw[0] = (byte) first;
+            var material = new CandidateBytes(raw);
+            assertEquals(expected[first], assertDoesNotThrow(() -> NewUniverseIntent.selectedProfileId(3, material),
+                    "POLICY_THREE_FIXED_CHOICE：正式選擇器必須接受policy3"));
+        }
+    }
+
+    @Test void policyThreeContextKeepsSchemaWeightsAndCapability() {
+        var policy = assertDoesNotThrow(() -> new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"),
+                3, 2, 5, 20, 75, -1, 4096, entropy().entropyFingerprint(), SOURCE, 0),
+                "POLICY_THREE_CONTEXT：合法policy3不應被strict owner拒絕");
+        assertEquals(3, policy.policyVersion()); assertEquals(2, policy.candidateSchemaVersion());
+        assertEquals(0, policy.familyCapabilityVersion()); assertEquals(4096, policy.maxCandidateEntries());
+    }
+
+    @Test void toggleIntentKeepsSourceSeedAndRejectsMalformedTarget() {
+        byte[] raw = new byte[32]; raw[0] = 2;
+        var material = new CandidateBytes(raw);
+        for (String preset : List.of("normal", "amplified")) for (boolean structures : new boolean[] {false, true}) {
+            var source = structuralSnapshot(preset, structures);
+            String opposite = preset.equals("normal") ? "amplified" : "normal";
+            var target = structuralSnapshot(opposite, structures);
+            var accepted = assertDoesNotThrow(() -> new NewUniverseIntent(bytes(), material, 3,
+                    "quantumchamber:same_seed_toggle_amplified_v1", 1, Long.MIN_VALUE, source, target, 0),
+                    "TOGGLE_INTENT_ACCEPTED：合法兩方向toggle必須接受");
+            assertEquals(Long.MIN_VALUE, accepted.rootWorldSeed(), "TOGGLE_SOURCE_ROOT_SEED");
+            assertEquals(source.toNbt(), accepted.sourceSettingsSnapshot().toNbt());
+            assertEquals(target.toNbt(), accepted.targetSettingsSnapshot().toNbt());
+            for (var badTarget : List.of(source, structuralSnapshot(opposite, !structures)))
+                assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, 3,
+                        "quantumchamber:same_seed_toggle_amplified_v1", 1, Long.MIN_VALUE, source, badTarget, 0));
+            for (int oldPolicy : new int[] {1, 2})
+                assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, oldPolicy,
+                        "quantumchamber:same_seed_toggle_amplified_v1", 1, Long.MIN_VALUE, source, target, 0));
+        }
+    }
+
     @Test void policyTwoCopiesExactSourceAndKeepsRandomDerivation() throws Exception {
         var entropy = entropy();
         var policy = new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"),
@@ -119,7 +199,7 @@ class CandidateResolverTest {
         changed.putByteArray("OutputFingerprint", fingerprint);
         assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, 2,
                 "quantumchamber:same_seed_fresh_v1", 1, 42, source, GenerationSettingsSnapshot.fromNbt(changed), 0));
-        for (int version : new int[] {1,3}) assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, version,
+        for (int version : new int[] {1,4}) assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, version,
                 "quantumchamber:same_seed_fresh_v1", 1, 42, source, source, 0));
         assertThrows(IllegalArgumentException.class, () -> new NewUniverseIntent(bytes(), material, 2,
                 "quantumchamber:random_vanilla_v1", 1, 42, structuralSnapshot("normal", true), structuralSnapshot("normal", true), 0));
@@ -206,7 +286,7 @@ class CandidateResolverTest {
     }
 
     @Test void m6PolicyRejectsFutureVersionsAndWrongCapability() {
-        for (int version : new int[] {0, 3, 4}) assertThrows(IllegalArgumentException.class,
+        for (int version : new int[] {0, 4, 5}) assertThrows(IllegalArgumentException.class,
                 () -> new CandidatePolicySnapshot(Identifier.of("quantumchamber:m6_profiles_v1"), version, 2,
                         5, 20, 75, -1, 4096, bytes(), SOURCE, 0));
         for (int capability : new int[] {-1, 1, 2}) assertThrows(IllegalArgumentException.class,

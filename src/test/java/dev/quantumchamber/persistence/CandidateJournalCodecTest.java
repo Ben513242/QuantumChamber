@@ -6,6 +6,23 @@ import net.minecraft.nbt.*;
 import org.junit.jupiter.api.Test;
 
 class CandidateJournalCodecTest {
+
+    @Test void policyThreeToggleRoundTripsAndRejectsContextMismatch() {
+        var row=SessionRecoverySchema3Test.record(SessionRecoverySchema3Test.fixture(false,false)).copy();
+        row.put("Collapse",new NbtCompound());var context=m6Context();context.putInt("PolicyVersion",3);row.put("CandidateContext",context);
+        var entry=m6Entry(row.getUuid("SessionUuid"));var intent=entry.getCompound("Candidate").getCompound("Intent");
+        byte[] material=new byte[32];material[0]=2;intent.putByteArray("GenerationSeedMaterial",material);
+        intent.putInt("PolicyVersion",3);intent.putString("ProfileId","quantumchamber:same_seed_toggle_amplified_v1");
+        var entries=new NbtList();entries.add(entry);row.put("CandidateLedger",entries);
+        var record=SessionRecoveryRecord.fromNbt(row,5);assertEquals(row,record.toNbt(5));
+        var selected=((dev.quantumchamber.candidate.QuantumCandidate.New)record.candidateLedger().getFirst().candidate()).intent();
+        assertEquals(42,selected.rootWorldSeed());
+        for(int old:new int[]{1,2}) {
+            var bad=row.copy();bad.getCompound("CandidateContext").putInt("PolicyVersion",old);
+            assertThrows(IllegalArgumentException.class,()->SessionRecoveryRecord.fromNbt(bad,5));
+        }
+    }
+
     @org.junit.jupiter.api.io.TempDir java.nio.file.Path root;
 
     /** 可攜的 strict codec fixture；不冒稱歷史真玩家 journal。 */
@@ -67,7 +84,7 @@ class CandidateJournalCodecTest {
     @Test void unknownOrExtraNewFieldsAreRejected() {
         var row = m6Entry(UUID.randomUUID()); row.getCompound("Candidate").getCompound("Intent").putInt("Extra", 1);
         assertThrows(IllegalArgumentException.class, () -> CandidateJournalCodec.entry(row));
-        var context = m6Context(); context.putInt("PolicyVersion", 3);
+        var context = m6Context(); context.putInt("PolicyVersion", 4);
         assertThrows(IllegalArgumentException.class, () -> CandidateJournalCodec.context(context));
         var futureFamily = m6Context(); futureFamily.putInt("FamilyCapabilityVersion", 1);
         assertThrows(IllegalArgumentException.class, () -> CandidateJournalCodec.context(futureFamily));
