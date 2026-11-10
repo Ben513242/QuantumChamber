@@ -1,5 +1,9 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
+**2026-11-10 最新裁示續行：SelfTest900秒／8-H A兩案清理已targeted通過，Task14仍OPEN。** user改SelfTest預算900秒，CI m6-native唯一SelfTest5→15分鐘，本機沿inline owned readonly wrapper900，不刪479反例、不再perf優化；一席選撤5ef兩效能改，原PS功能恢復cdb045。原598.8306秒與300deadline兩BUDGET_FAIL根原判不改。M2 offline同UUID真重連正式返還、pin-cap自身清理與全overflow唯一space；維持原unique batch、71M2宣告／default166／所有案例名期待tickLimit/timeout/production容量。最後combined2/2 PASS，兩案space/lease/protectedSlots均0且releaseAck；原primary/partialspawn控制保FAIL並清自己。單席本輪code review C0/I0/M0（050d0e…8c39），900完整回放/CI與Task14原production mutation、雙focused、fullENDALL0、spec/quality兩席及同SHA三job仍待。僅checkpoint不當結案，未新R/其他8H/client/main/tag/人工。TaskR若加native鏈須先估SelfTest>900先報，不能自調。以下較早停止／300不可改均是當時原判與歷史裁示，不覆最新user900授權。
+
+**2026-11-10 最新交回：Task14 OPEN，SelfTest 預算兩次未達，停止後續 gate。** 使用者要求的 Task R 三文件修正已 commit／push `e366571`，CI42756204211 三 job 真成功，T13 既有結案維持。Task14 已依授權開工：本機未 push 候選 `cdb589eb6f84ae8eaccb4aa634cbfb1d5e319540`，六 production owner 完成 policy3／toggle；前置118 JUnit／8 M6 GameTest／13 M4 normal 與完整九鏈27 phase均 PASS，但不能結案。完整 SelfTest479（原277＋202）首輪598.8306253秒超原300，原 BUDGET_FAIL 保留；只 PS1 兩處等價窄修經一席 C0/I0/M0 後，唯一唯讀回放仍在300.0827308秒標 BUDGET_FAIL並停止 exact 自有子程序，wrapper終局300.3782108秒、outer1；無終局輸出，完成 case／首末 baseline UNKNOWN。沒有第三次嘗試或後續 mutation／雙focused／full／兩席 code 審／Task14 CI。PS1修正停未提交 WIP（SHA5efbaeca…67b1），這三份交回文件也保未提交，不為狀態 push 另觸發 CI。九 root 鎖可獨占、最終 Java0，原426原件／舊 FAIL不改判；27 runtime ending 正確為18正常exit0＋9原表預定halt77，不能稱27全部正常停服。R未實作、8-H A/B容量方案仍待使用者裁示，無client／人工／main／tag。最精確原件在 ignored STATUS首段／progress末筆及本輪兩份delivery index。以下較早「最新」均為歷史快照。
+
 **2026-11-10 最新範圍已採用：宇宙只有主世界。** Nether／End 共用原版，T15–T19、T21 不排 M6 或 M7，只在 plan 留未排程構想；未物化 descriptor／維度 key 待辦取消，現有 code／catalog 不改，c7d／e1d 原 FAIL 為歷史。M6 順序 T13→T14→宇宙內重生（取代 T20）→依只有主世界重提 8-H→收尾。U 主世界死亡同 U 有效床優先，否則原版 spawn 同 XZ 的同 U 安全處；U 不可用退 canonical 並記錄，其他維度死亡原版，重啟登入仍同 U。兩個 proposed production 注入點已列 plan 並先回報，尚未實作。人工清單新增共用維度回 canonical 的行為與死亡重生一輪，未執行。B+C 流程／資料安全仍有效；本輪唯一窄審終局 C0／I0／M0 已採用（SHA256 `062ac1acd07c6f073517c50f3cf69adfbaac7ab47ef6bad3e31ec13eb27cff3c`），T13 的 4e600a6 CI 仍獨立追蹤，沒有改判或新 runtime。以下早期移交 M7 等均為歷史快照。
 
 **2026-11-10 T13 候選結案：待本 commit CI，仍 OPEN。** B+C 的 spec v1.5／plan 與三份交接文件已經唯一獨立窄審 C0／I0／M0 採用（審查 SHA256 `938656a1beec0f9eb25034d94fcc28dc9a0de4d155db0ad26636a55f79c82315`）。本次只改五份文件；production／testmod／驗證腳本／build／workflow 不變。採計 0abd50e 最終 17 focused 與同 SHA 三 job CI42675304922、既有 code／final-data 審查；依新 C 不新增本機 full 或 mutation，80f9／f308 原 full／CI FAIL 不改判、已用重跑次數不重置。這份候選文件的同 SHA 三 job CI 真成功後，才在 ignored STATUS／ledger 與交付記 T13 closed，停 T14 前；若 FAIL 仍按止損回報，不提前宣告完成。M6 僅 Overworld／capability0，T15–T21 移 M7，8-H 與 M6 收尾及人工／main／tag 門檻照下方 B+C 有效條款。
@@ -165,6 +169,8 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 - 任何文件不得提前寫「已合併 main」「已 push」「人工驗收已通過」。
 
 ## 8. 交回紀錄
+
+- 2026-11-10：R三docs修正e366571/CI42756204211三job真success，之後已開始T14。未push候選cdb589e的118/8/13與9鏈27phase真PASS，但479-SelfTest首輪598.8306253s BUDGET_FAIL；一席已審純PS窄修後唯一回放300.0827308s立FAIL／安全停止owned唯讀child，終局300.3782108s／完成數UNKNOWN。停第三次/其他gate，Task14OPEN，PS1與交回docs保WIP不push；原FAIL/426原件/9locks/Java0保，R/8H候選不碼。
 
 - 2026-11-10 B+C 唯一窄審 C0／I0／M0 已採用；本次五 docs 是 T13 候選結案，待本 commit CI、仍 OPEN。未改 source／腳本，不新 local full／mutation；等本 commit 三 job 真綠才 ignored STATUS／ledger 記 closed，停 T14 前。原 full／CI FAIL 及重跑次數不洗。
 

@@ -532,7 +532,7 @@ W12 已驗證第二次 SEALED 的退避加倍：`INITIAL_TICKS＋6 < d ≤ 2×IN
 
 `m6-universe-probe.ps1 -AllEnabled` 現在宣告九條鏈、27個phase：原七鏈21phase（`native-seed-diagnostic` 2、`catalog-readback` 4、`native-seed-functional` 2、`intent-allocation` 3、`partial-overworld` 4、`same-seed-restart` 3、`same-seed-amplified-restart` 3）全部保留，新增 `profile-restart`（normal→amplified）與 `profile-amplified-restart`（amplified→normal），各 `source,new,restart` 三phase。DIAGNOSTIC2／FUNCTIONAL25；每鏈獨立fresh owned root。這是Task14候選宣告，尚非本機／CI通過紀錄。`run-all.ps1` 依實際 `native.phases` 動態計數。
 
-Task14的新session採policy3/family0，random／same-seed／toggle依固定hash等權重取餘數；既有checked policy1/2不升版。兩toggle鏈保留真玩家入口與兩端凍結權威；actual CARVERS仍固定chunk1024,1024的1440 rows，跨preset block須有差異、各側new→restart block與stored biome exact。原same-seed兩鏈仍跨側exact。toggle不要求跨preset biome／structure bbox相等，各側structure非空及重啟exact；final FEATURES完整rows/hash/差格只診斷。target native consumer exact、canonical source僅既有seed/settings/runtime identity/CARVERS coverage，不冒雙側consumer。新增兩鏈SelfTest保留原277案例並增加新負控；精確新count由當次summary採計，CI原300秒不變。
+Task14的新session採policy3/family0，random／same-seed／toggle依固定hash等權重取餘數；既有checked policy1/2不升版。兩toggle鏈保留真玩家入口與兩端凍結權威；actual CARVERS仍固定chunk1024,1024的1440 rows，跨preset block須有差異、各側new→restart block與stored biome exact。原same-seed兩鏈仍跨側exact。toggle不要求跨preset biome／structure bbox相等，各側structure非空及重啟exact；final FEATURES完整rows/hash/差格只診斷。target native consumer exact、canonical source僅既有seed/settings/runtime identity/CARVERS coverage，不冒雙側consumer。新增兩鏈SelfTest保留原277案例並增加新負控；現完整479反例（277＋202）與末baseline皆保留。2026-11-10裁示：CI SavedSummary SelfTest步驟改900秒（15分鐘）；本機主控既有inline owned-child wrapper同步900秒、每次新nonce保存launch／來源SHA／elapsed／exit及完整結果，超時保FAIL。run-all直接呼叫本身沒有內建300或900秒guard，不新增tracked wrapper。兩次原300秒BUDGET_FAIL保原根原判；兩處效能WIP已撤回，維持cdb功能版，不再效能優化。Task R若新增native鏈先估整套SelfTest，超900先回報，不自行加時。
 
 新增focused命令（每次新label；正式native須clean candidate pin）：
 
@@ -696,3 +696,7 @@ pwsh -NoProfile -File scripts/verification/run-all.ps1
 producer 子 shell 固定總上限 10 分鐘，內層 PhaseMinutes=8、IdleSeconds=90。timeout 保存 process/stdout/stderr 與新 root，停止整鏈；無法精確歸屬的程序不殺、不接續 import。每輪以啟動前後 root/evidence 集合辨認唯一新增 nonce，不看 mtime。import 部分失敗或已存在 attempt/result/FAIL 時不得補拷或重送；下一輪重新產新 nonce。已消費 `625a9f816af14087bc50e66896bd137b-w10` 封存原件不可重用。
 
 舊 checkout 與所有新舊 root 保留至 controller 明確處置。它不適用已退役 `.worktrees/m5-collapse` 的免備份例外；退役前須依 AGENTS 一般規則搬出世界、外部備份 run/證據、SHA256 manifest、可讀性與 lock/owner/reparse 核對。CI 目前未執行 M5 跨 JVM W10；遠端 job success 只證實其實跑 scope，不能稱 CI W10 PASS。
+
+### 2026-11-10 M2 offline／pin-cap 自身清理候選
+
+兩案仍各自唯一batch `m2_native_offline`／`m2_pin_capacity`，沒有JVM隔離或新增runner接線；default完整166案仍含兩案。以既有 `gates.ps1 -Mode GameTest -Label <fresh>` 配合process-local `JAVA_TOOL_OPTIONS=-Dquantumchamber.gametest.onlyBatches=<batch>` 可跑單案，逗號連接兩batch可核合併exact XML。`-Batch` 參數只支援M6／M4normal，對本兩案會在launch前拒絕，不能當功能RED。環境只改本process：保存原值、拒重複onlyBatches、append所需選項、finally精確還原，不改OS／setx；後續full／CI不帶subset並核default166與兩案皆在當次XML。offline保原斷言後同UUID真重連、正式返還與release/ack；pin-cap先在原等待界線內等待全Space admission，再核overflow全窗口只含自己，保256合法／257拒、物品真返還與原timeout。`M2_CAPACITY_CLEAN` 僅證當次自有space／租約／journal清除、release已ack；附總liveSpaces／protectedSlots便於核對，不冒full最大slot或已證4096根因。失敗只清自己，原primary與cleanup錯保留，無法安全收尾即停。本機單案與合併targeted已通過；admission與prepare共用原10秒deadline後再核2/2。兩個testmod故意失敗控制保留原錯並完成自身清理，原FAIL不改判；獨立審查／CI與T14完整出口仍待。

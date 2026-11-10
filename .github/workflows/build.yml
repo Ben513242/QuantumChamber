@@ -28,7 +28,7 @@ jobs:
           New-Item -ItemType Directory -Path build -Force | Out-Null
           Copy-Item -LiteralPath $summaries[0].FullName -Destination build/m6-native-summary.json
       - name: 確認 Windows M6 原生鏈精確收據
-        timeout-minutes: 5
+        timeout-minutes: 15
         shell: pwsh
         run: |
           & ./scripts/verification/m6-universe-probe.ps1 -VerifySummary build/m6-native-summary.json -ExpectedHead $env:GITHUB_SHA -SelfTest

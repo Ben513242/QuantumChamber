@@ -2028,24 +2028,117 @@ public final class M2CorridorGameTests implements FabricGameTest {
     public void native_staging_disconnect_keeps_frozen_offline_participant_windows(TestContext context) {
         // 平台契約：入場預檢在非 Windows 受控拒絕，無法建立 ARMING；該平台改由 unsupported_checkpoint_platform_rejects_start_without_residue 覆蓋。
         if(!Platform.isWindows()) { context.complete(); return; }
-        var fixture=new NativeEntry(context,2);
-        context.waitAndRun(2,fixture::power);
-        when(context,3,() -> fixture.record()!=null,tick -> {
-            var initial=fixture.record(); var disconnected=fixture.players.remove(1); var absent=disconnected.player().getUuid();
-            disconnected.close();
-            context.assertTrue(fixture.server.getPlayerManager().getPlayer(absent)==null && context.getWorld().getEntity(absent)==null,
-                    "第二位真離線，不以returned flag或mock冒充");
-            when(context,tick+1,fixture::returning,ignored -> {
-                try {
-                    context.assertEquals(initial.participants(),fixture.record().participants(),"失去online玩家仍保留完整原cohort來源快照");
-                    context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"offline staging保持KEEP_CURRENT");
-                    context.assertEquals(0L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"offline不得publish");
-                    context.assertTrue(fixture.players.getFirst().player().getServerWorld()==context.getWorld()
-                            && fixture.players.getFirst().player().hasStatusEffect(ModEffects.QUANTUM_STATE),"在線者保持來源與效果");
-                    fixture.assertProtected(); context.complete();
-                } finally { fixture.close(); }
+        new OfflineCapacityCase(context).start();
+    }
+    /** 僅離線案例：原斷言完成後真重連，所有出口都保留原錯並完成自身返還。 */
+    private static final class OfflineCapacityCase {
+        private final TestContext context;
+        private NativeEntry fixture;
+        private com.mojang.authlib.GameProfile absentProfile;
+        private UUID sid;
+        private Throwable primary;
+        private boolean cleaning,verified,terminal;
+        private OfflineCapacityCase(TestContext context) {this.context=context;}
+        private void start() {
+            guard(() -> {
+                fixture=new NativeEntry(context,2);
+                schedule(2,fixture::power);
+                await(3,() -> fixture.record()!=null,tick -> {
+                    var initial=fixture.record();sid=initial.sessionUuid();
+                    var disconnected=fixture.players.get(1);absentProfile=disconnected.player().getGameProfile();
+                    disconnected.close();fixture.players.remove(disconnected);
+                    var absent=absentProfile.getId();
+                    context.assertTrue(fixture.server.getPlayerManager().getPlayer(absent)==null && context.getWorld().getEntity(absent)==null,
+                            "第二位真離線，不以returned flag或mock冒充");
+                    await(tick+1,fixture::returning,ignored -> {
+                        context.assertEquals(initial.participants(),fixture.record().participants(),"失去online玩家仍保留完整原cohort來源快照");
+                        context.assertTrue(!fixture.record().restoreEntryEffectOnReturn(),"offline staging保持KEEP_CURRENT");
+                        context.assertEquals(0L,fixture.pages.currentMappings(initial.sessionUuid()).epoch(),"offline不得publish");
+                        context.assertTrue(fixture.players.getFirst().player().getServerWorld()==context.getWorld()
+                                && fixture.players.getFirst().player().hasStatusEffect(ModEffects.QUANTUM_STATE),"在線者保持來源與效果");
+                        fixture.assertProtected();cleanup();
+                    });
+                });
             });
-        });
+        }
+        private void guard(Runnable action) {
+            if(terminal)return;
+            try {action.run();}
+            catch(RuntimeException | Error failure) {
+                remember(failure);
+                if(cleaning){stop();return;}
+                try {cleanup();}catch(RuntimeException | Error cleanup){remember(cleanup);stop();}
+            }
+        }
+        private void remember(Throwable failure) {
+            if(primary==null)primary=failure;
+            else if(primary!=failure && java.util.Arrays.stream(primary.getSuppressed()).noneMatch(old -> old==failure))primary.addSuppressed(failure);
+        }
+        private void rethrow() {if(primary instanceof RuntimeException failure)throw failure;throw (Error)primary;}
+        private void stop() {
+            terminal=true;
+            try {context.getWorld().getServer().stop(false);}catch(RuntimeException | Error failure){remember(failure);}
+            rethrow();
+        }
+        private void schedule(int tick,Runnable action) {
+            context.runAtTick(tick,() -> guard(action));
+        }
+        private void await(int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready) {
+            await(tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10));
+        }
+        private void await(int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready,long deadline) {
+            schedule(tick,() -> {
+                if(condition.getAsBoolean())ready.accept(tick);
+                else {context.assertTrue(tick<90000 && System.nanoTime()<deadline,"offline原有限等待逾時");await(tick+1,condition,ready,deadline);}
+            });
+        }
+        private void cleanup() {
+            cleaning=true;
+            context.assertTrue(fixture!=null && fixture.record()!=null,"offline沒有可確認的自身session，不能假收尾");
+            if(sid==null)sid=fixture.record().sessionUuid();
+            context.assertEquals(sid,fixture.record().sessionUuid(),"offline只收尾自己的SID");
+            if(absentProfile!=null) {
+                context.assertTrue(fixture.server.getPlayerManager().getPlayer(absentProfile.getId())==null,"離線UUID不得以另一個live玩家替代");
+                var rejoined=new ConnectedGameTestPlayer(context.getWorld(),absentProfile);
+                fixture.players.add(rejoined);
+                context.assertEquals(absentProfile.getId(),rejoined.player().getUuid(),"真重連保留UUID");
+                absentProfile=null;
+            }
+            var hooks=new TestHooks();
+            if(primary!=null)hooks.prefer(primary);
+            // trustedTeardown稍後登記的close先執行；本動作最後才可完成GameTest。
+            hooks.add(() -> {
+                if(!verified) {
+                    remember(new IllegalStateException("offline正式返還未完成"));
+                    var preferred=hooks.preferred();if(preferred!=null)remember(preferred);
+                    stop();return;
+                }
+            });
+            fixture.trustedTeardown(Math.toIntExact(context.getTick())+1,() -> {
+                try {
+                    capacityReleased(context,fixture.pages,sid,"offline-before-close");
+                    verified=true;
+                    // 在complete前同步消費收尾清單；close的任何失敗仍由本owner停止並保存。
+                    hooks.release();
+                    capacityReleased(context,fixture.pages,sid,"offline");
+                } catch(RuntimeException | Error failure) {remember(failure);stop();return;}
+                terminal=true;
+                if(primary!=null)rethrow();
+                context.complete();
+            },hooks);
+        }
+    }
+    /** 兩案共用唯讀終局檢核：Space內含pending/provisional/retiring租約，不能以pin0代替。 */
+    private static Map<?,?> capacitySpaces(CorridorPageManager manager) {
+        return (Map<?,?>)M4CandidateTestAccess.get(manager,"spaces");
+    }
+    private static void capacityReleased(TestContext context,CorridorPageManager manager,UUID sid,String name) {
+        var journal=SessionRecoveryState.get(context.getWorld().getServer());
+        context.assertTrue(!capacitySpaces(manager).containsKey(sid) && !manager.releaseComplete(sid)
+                && !journal.records().containsKey(sid) && !journal.flushedRecords().containsKey(sid),"自身space／租約／journal已清且release已ack");
+        org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info(
+                "M2_CAPACITY_CLEAN case={} sid={} ownSpaces=0 ownLeases=0 releaseAck=true liveSpaces={} protectedSlots={}",
+                name,sid,capacitySpaces(manager).size(),((Map<?,?>)M4CandidateTestAccess.get(manager,"protectedLeases")).size());
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_cohort_change",tickLimit=100000)
     public void native_staging_extra_occupant_rejects_without_shortening_journal_windows(TestContext context) {
@@ -2702,36 +2795,86 @@ public final class M2CorridorGameTests implements FabricGameTest {
             org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("平台略過：Windows 原生managed entity pin cap正向");
             context.complete(); return;
         }
-        var fixture=new TrustedSpace(context,Direction.NORTH,1); fixture.prepare();
-        when(context,1,() -> fixture.manager.ready(fixture.prepared),tick -> {
-            fixture.commit();
-            var items=new java.util.ArrayList<net.minecraft.entity.ItemEntity>();
-            for(int i=0;i<255;i++) {
-                var item=itemAt(fixture.target,fixture.manager.toPhysical(fixture.session,3.5,1,10.5+2*i),1);
-                context.assertTrue(fixture.target.spawnEntity(item),"建立精確256個managed pins"); items.add(item);
-            }
-            var permitted=fixture.manager.prepareRemap(fixture.session,1,Set.of(0L));
+        new PinCapacityCase(context).start();
+    }
+    /** 僅容量案例，重用既有自有資源收尾；業務等待仍是原10秒／90000 tick界線。 */
+    private static final class PinCapacityCase {
+        private final TestContext context;
+        private final TrustedSpaceRun run;
+        private final CorridorPageManager manager;
+        private TrustedSpace fixture;
+        private CorridorPageManager.PreparedMappings permitted;
+        private CorridorPageManager.RetiredMappings retired;
+        private boolean overflow,done;
+        private PinCapacityCase(TestContext context) {
+            this.context=context;run=new TrustedSpaceRun(context,"pin-capacity");
+            manager=CorridorPageManager.forServer(context.getWorld().getServer());
+        }
+        private void start() {
+            // admission與prepare共用原10秒期限，不清他案，也不額外延長等待。
+            long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+            await(1,() -> capacitySpaces(manager).isEmpty(),tick -> {
+                context.assertTrue(capacitySpaces(manager).isEmpty(),"容量case admission全Space空集合");
+                org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info("M2_CAPACITY_ADMISSION liveSpaces=0 protectedSlots={}",
+                        ((Map<?,?>)M4CandidateTestAccess.get(manager,"protectedLeases")).size());
+                fixture=new TrustedSpace(context,Direction.NORTH,1,SessionSemantics.LEGACY_FORWARD_CONSUMED,true,run);
+                run.ownHandle(this::retirePermitted);
+                fixture.prepare();
+                await(tick+1,() -> manager.ready(fixture.prepared),this::exercise,deadline);
+            },deadline);
+        }
+        private void exclusive() {
+            context.assertTrue(fixture!=null && capacitySpaces(manager).keySet().equals(Set.of(fixture.session)),
+                    "容量overflow窗口不得存在其他live/pending/provisional/retiring Space");
+        }
+        private void await(int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready) {
+            await(tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10));
+        }
+        private void await(int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready,long deadline) {
+            run.guarded(() -> context.runAtTick(tick,() -> run.guarded(() -> {
+                if(overflow)exclusive();
+                if(condition.getAsBoolean())ready.accept(tick);
+                else {context.assertTrue(tick<90000 && System.nanoTime()<deadline,"pin-cap原有限等待逾時");await(tick+1,condition,ready,deadline);}
+            })));
+        }
+        private void retirePermitted() {
+            if(permitted!=null) {retired=manager.cancelPrepared(permitted);permitted=null;}
+            if(retired!=null) {manager.retire(retired);retired=null;}
+        }
+        private void spawn(double z) {
+            exclusive();
+            var item=itemAt(fixture.target,manager.toPhysical(fixture.session,3.5,1,z),1);
+            run.ownEntity(item,fixture.initial.participants().getFirst().sourcePosition().add(10,0,0));
+            context.assertTrue(run.spawn(item),"建立精確managed pins並登記每個有價物品");
+        }
+        private void exercise(int tick) {
+            exclusive();fixture.commit();exclusive();
+            for(int i=0;i<255;i++)spawn(10.5+2*i);
+            permitted=manager.prepareRemap(fixture.session,1,Set.of(0L));
             context.assertTrue(permitted!=null,"255 items加1玩家的256 pins仍可準備");
-            fixture.manager.retire(fixture.manager.cancelPrepared(permitted));
-            var excess=itemAt(fixture.target,fixture.manager.toPhysical(fixture.session,3.5,1,520.5),1);
-            context.assertTrue(fixture.target.spawnEntity(excess),"第257個managed pin"); items.add(excess);
-            context.runAtTick(tick+2,() -> {
-                try {
-                    context.assertEquals(SessionState.RETURNING,fixture.state.flushedRecords().get(fixture.session).state(),
-                            "即使occupied頁不變，下一tick也必須偵測超出256並安全返還");
-                    context.assertEquals(1L,fixture.manager.currentMappings(fixture.session).epoch(),"超量不發布新映射");
-                } finally {
-                    for(var item : items) {
-                        var moved=item.teleportTo(new net.minecraft.world.TeleportTarget(context.getWorld(),fixture.initial.participants().getFirst().sourcePosition().add(10,0,0),
-                                Vec3d.ZERO,0,0,net.minecraft.world.TeleportTarget.NO_OP));
-                        context.assertTrue(moved instanceof net.minecraft.entity.ItemEntity && ((net.minecraft.entity.ItemEntity)moved).getStack().getCount()==1,
-                                "超量仍逐個保留有價物品，不得刪除");
-                    }
-                    fixture.returnTrusted();
-                }
-                when(context,tick+3,() -> fixture.manager.releaseComplete(fixture.session),ignored -> { fixture.assertComplete(); context.complete(); });
-            });
-        });
+            retirePermitted();exclusive();
+            spawn(520.5);overflow=true;
+            monitor(tick+1);
+            run.guarded(() -> context.runAtTick(tick+2,() -> run.guarded(() -> {
+                exclusive();
+                context.assertEquals(SessionState.RETURNING,fixture.state.flushedRecords().get(fixture.session).state(),
+                        "即使occupied頁不變，下一tick也必須偵測超出256並安全返還");
+                context.assertEquals(1L,manager.currentMappings(fixture.session).epoch(),"超量不發布新映射");
+                for(var entity:run.entities.values())entity.returnOwned();
+                exclusive();overflow=false;
+                fixture.returnTrusted();
+                await(tick+3,() -> manager.releaseComplete(fixture.session),ignored -> {
+                    fixture.assertComplete();capacityReleased(context,manager,fixture.session,"pin-capacity");
+                    done=true;context.complete();
+                });
+            })));
+        }
+        private void monitor(int tick) {
+            run.guarded(() -> context.runAtTick(tick,() -> {
+                if(done || !overflow || run.cleanupStarted || run.terminal)return;
+                run.guarded(() -> {exclusive();monitor(tick+1);});
+            }));
+        }
     }
 
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m2_far_mapping", tickLimit = 100000)
