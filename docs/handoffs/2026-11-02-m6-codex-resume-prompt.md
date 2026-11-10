@@ -1,5 +1,9 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
+**2026-11-10最新裁示：80f9符合Windows原子移動AccessDenied已知限制，本輪准新nonce完整full一次。** 80f9原root/FAIL不改；不修production、不改Defender／索引／OS。先提交並push本次四份失敗交回文件，核code與0abd50e完全相同，再以該乾淨文件HEAD完整run-all；80f9在m5-gametest後未執行的gate一律不能沿用。這次任何AccessDenied或其他FAIL均停報、不再重跑。END ALL0與同SHA三jobCI都過才做結案文件；結案文件先寫「待本 commit CI」，其CI真正通過才算T13結案。仍停T14前，不啟新canonical＋U／U-only／client；每commit／push／gate終局更新ignored STATUS首段。下方較早止損是當時快照，本條例外僅限已確認簽章。
+
+**2026-11-10最新交回：T13 OPEN，依止損停下，未結案。** 程式pin0abd50e92592e9d50a1c2fa0fe1c944409608c95已push；17個最終focused與同SHA CI42675304922三job均PASS，但本機Windows新full80f9ddf169964559a7a787101133cd9d在M5 GameTest60案中1FAIL：`m5universeprojectiongametests.prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection`。原atomic move projections.dat.<nonce>.tmp→projections.dat拋AccessDeniedException，checkedWrite回WRITE_FAILED，fixture的index.confirmed嚴拒；outer1／無ENDALL，M6及後續未啟。這不屬指定Windowsdefault十案，不自行歸偶發／waiver／rerun，不改M5／production／Defender／索引／retry。來源只讀查證已完成，鎖持有者原因未證；原全FAIL保。完整資料在本plan ignored STATUS首段及full-explicit-utf8-supplement-index，T14仍等使用者、新CU-Uonly-client未准。本次只交回失敗事實，沒有結案文件commit；以下較早可定版／待C4等為當時快照。
+
 **2026-11-10目前：M2兩席code C/I已清，最終C4待驗。** 最終候選source `51fbf9198f1732dc604698fd73eb4afad35ba760b03c6fa15b5b2d2cd359c17e`，PS1 f12固定、1100compiled exact；fix4正常9／唯一default166真PASS與fix5正常9真PASS各依原source pin分列，不冒最終C4。原finish logger I1由fresh第5輪最小+9/-7修正，兩席限定複審C0／I0／M0；所有原FAIL／UNRESOLVED與scope-tainted控制／checker SETUP原判保。接著只定版此source，最終同乾淨pin原雙focused／完整full／同SHA三jobCI待，T13仍OPEN；結案文件commit另先寫「待本 commit CI」，其CI真過才閉，嚴守最新止損與T14等使用者。
 
 **2026-11-09最新止損裁示（優先於下方較早流程）：** 本輪只完成已審七案，七案外10案不修、不新設計或加觀測。最終固定pin完整full與同SHA三jobCI全過，才依原門檻收尾；若失敗僅Windows default該10案或同類偶發，保原件、列平台／job／具名測試／失敗特徵後停等使用者裁示，不重跑湊綠；其他失敗停查、不得歸偶發。T13結案文件commit先寫「待本 commit CI」，該commit CI通過才算結案，不預寫closed或在CI過後再遞迴發狀態commit。每次commit、push、gate終局更新本plan ignored `STATUS.md`首段（現在已補正，後文舊快照保留）；T14開工仍須使用者回覆，新canonical＋U／U-only／client未授權，全部舊FAIL原判保留。
@@ -153,6 +157,8 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 - 任何文件不得提前寫「已合併 main」「已 push」「人工驗收已通過」。
 
 ## 8. 交回紀錄
+
+- 2026-11-10最新（使用者AccessDenied裁示）：80f9指定AccessDenied atomic move簽章視為2026-10-21已知限制，從先前「其他失敗停查」排除；原FAIL保留不改，無production或OS變更。准先四docs提交push並證code等同0abd50e，再於該cleanHEAD新nonce完整full一次，同SHA3CI必過；這次任何FAIL停報不重跑。結案docs先待本commitCI，CI過才閉。T14–T21同codepin若full唯一為此簽章，可自動freshnonce重跑一次，第二次停報；混有其他FAIL不適用。T14與新控制仍等另行授權。
 
 - 2026-11-09最新（使用者M2新增授權）：使用者已明確回覆「授權此 M2 testmod 窄修」，範圍只限M2CorridorGameTests.java這批TrustedSpace等待／正式失敗cleanup，先一份設計與獨立窄審C/I0後實作，保原ready／功能斷言，以原tickLimit內條件等待，不production／外部observer。15案是否同因未證。controller派fresh設計者先寫唯一ignored設計，未准碼；PS1 fix3已兩席0，將先checkpoint提交，待M2受審候選完成後在最終固定pin跑原C4／同SHA CI，不以舊d0或checkpoint結果代最終驗收。
 

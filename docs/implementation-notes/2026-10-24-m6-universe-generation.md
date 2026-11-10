@@ -1812,3 +1812,27 @@ M2 source `51fbf9198f1732dc604698fd73eb4afad35ba760b03c6fa15b5b2d2cd359c17e`，�
 此前M2固定codepacket `m2-trusted-fix4-20261109/delivery-0f1cd6e8-20261110/index.json` SHA `c79b424ac8a8dcbd4f6288021dab41843da6f62227aec11df06ff7fb108c7f80`，原source0f1正常9與唯一default166均真PASS；其source不同，不冒新51fb或最終C4的default/full。source69要求的retained entity witness已依同spec源證落實，不推論c8f028消失原因；所有七內原normalFAIL與controlledRED／UNRESOLVED保持，HANDLE只讀target補證仍不改原checker。
 
 目前只准定版這個候選並跑最終同乾淨pin的原雙focused／完整full／同SHA三jobCI與final-data兩席，tracked在C4凍結。T13保持OPEN，結案文件commit必先「待本 commit CI」、該commitCI真過才閉；Windowsdefault該10/同類偶發停報user，其他fail停查不歸偶發，不rerun湊綠，不擴七外10，不開T14／新CU-Uonly-client。每commit/push/gate更新STATUS首段。
+
+
+### 2026-11-10：最終C4真FAIL後止損交回（T13 OPEN，未結案）
+
+來源pin `0abd50e92592e9d50a1c2fa0fe1c944409608c95` 已正常push／remote exact。17focused全actualPASS、來源/554tracked/1100classes/env exact，sameSHA CI42675304922三job成功（真SelfTest246秒／277／原300內）及兩席focused/CI部分data審C0/I0/M0都保原判，但不能代完整full。
+
+原full8f190 w10-preflight SOURCE_PIN FAIL/outer1/noENDALL原判保留；只讀同Hidden child對照（default Console950導Gitdiff patch904c，起始UTF8原54993與其他4pin全exact，producer runnerbytes6036相同）確認啟動編碼設定缺失。只修互動launch UTF8、新root原full80f9ddf169964559a7a787101133cd9d未繞原guard，W10/default166/normal13/legacy1與JUnit1107(執行1105、Windows既有skip2、fail/error0)自然通過。
+
+新full在本機Windows M5 GameTest正式60case/1failure/0skip，唯一 `m5universeprojectiongametests.prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection`。UTF8原log03:36:58顯示projections.dat.<nonce>.tmp→projections.dat的 `java.nio.file.AccessDeniedException`；CheckedNbtFile.write:70原Files.move(ATOMIC_MOVE,REPLACE_EXISTING)失敗，CollapseAuthorities.checkedWrite/rollForward保未確認current與退避並回WRITE_FAILED，test1070將PENDING傳index.confirmed，被原只接受WRITTEN/UNCHANGED/ALREADY_COMPLETE的守門嚴拒。本案是在建立fixture另一艙PENDING時失敗，尚未驗實際projection overlap conflict；不冒衝突行為已測。
+
+全域較早03:35:47另有AUTHORITY_CORRUPT錯，不與目標case混因。原件不足確定哪個process持鎖，不推Defender／索引／另一測試或外因。既有M5 AccessDenied已知限制紀錄不構成本輪CI/full waiver；依最新user『其他失敗停下查』停止，無M6後續、無ENDALL／outer1。不rerun湊綠、不改M5/production/OS/retry、不擴七案外十案。M5世界exactRestored、locks可獨占，test結束來源/compiled/env/no非daemonJava均已核。
+
+證據共同SDD前綴，`final-c4-evidence-0abd50e-20261110/result-index.json` SHA `0e60b81a3924f0558632249efde25eaf9a599e097813a42e593b6b785735950d` 保原17focused與第一fullFAIL；`diagnostic-delivery-index.json` SHA `5a980c7d7b9a8ce32fdf51d76c14a72d7a7b41cc0a9bec429310563edce88bcc` 保編碼只讀對照；`full-explicit-utf8-supplement-index.json` SHA `d0b74389e4064d684d884eff0c4acb6bc9ca2d2bd6c9304b11a1e14e70d3dd0d` 保新full4011原件SHA/launch/actualexit/sourcepostpin/scope/XMLfresh/restore/locks/具名stack/report快照。正式M5 XML SHA `ced900ad3aa367f55aab26d53434c7a0ff92ff05a709291d118300fbb2c51578`。不覆原index或任何原判；producerfinal UNRESOLVED亦不回填。
+
+T13維持OPEN，沒有T13結案文件commit；四份本次失敗交回文件先保WIP，不為狀態觸發另一輪CI。STATUS首段已按事件即時更新，交回時controller接管。後續等待使用者裁示，不進T14／新CU-Uonly-client。
+
+
+### 2026-11-10：80f9 AccessDenied已知限制裁示／准一次新full（尚未執行）
+
+使用者確認80f9的Windows原子移動AccessDenied屬2026-10-21既有已知限制，production維持fail-closed／退避，不修production、不改OS／Defender／索引。原80f9 full FAIL及所有原件不回判。先提交並push四份失敗交回文件，核除docs外全部code與0abd50e相同，再於該cleanHEAD新nonce完整run-all一次；這次再遇AccessDenied或任何其他failure都停報，不再重跑。
+
+80f9停在m5-gametest，其後M6 safety/GameTest、main-only、M3、recovery、collapse、native、ci-rule及summary等都沒跑，本次不能沿用。僅完整自然ENDALL0／outer0與該SHA三jobCI成功、所需獨審C/I0齊後才做結案docs；先寫「待本 commit CI」，該commitCI真過才結案，仍停T14前。每commit/push/gate後即更新STATUS首段，T13目前OPEN，不預寫新full/CI已通過。
+
+通用T14–T21規則同時記入AGENTS與plan：某codepin full唯一為本簽章且無其他FAIL，可保原root、freshnonce重跑一次不必再問；同pin第二次發生停報，不藉純docs SHA重置次數，不改正式判定或production/OS。其他未授權控制、T21與舊FAIL界線維持。

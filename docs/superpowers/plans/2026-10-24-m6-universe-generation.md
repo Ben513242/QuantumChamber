@@ -1015,3 +1015,21 @@ PS1 fix3可先作獨立checkpoint；M2受審候選完成後在最終固定code p
 **2026-11-10第5輪I1已閉，最終C4待驗：** M2 candidate `51fbf9198f1732dc604698fd73eb4afad35ba760b03c6fa15b5b2d2cd359c17e` 相對0f1只finish／private requestStop +9/-7；TERMINAL logger與末failure logger的RTE/Error均nonclean＋fenced stop一次、完整visible Throwable附同original primary並stop-before-dispatch，其他69支路/原正常路徑/預算不變。兩席限定複審I1 ADDRESSED、C0/I0/M0：spec `7576d425caa288e5cff7d167cd055ea731c8cfe2a6307b5ee2aa0f9f14d97f93`，quality `517afc24e9caaeaf5914b15c6dfd201c16f502fe53a8b068b8bcea3c1dc9ca47`。固定index `5894216cd575d5df3aa25763761e3526884c431a7c116b5659c3ab78b394ff2c`，有效2RED/5GREEN/1精確scopedKILLED、fresh9/9零badskip、source/1100class/env/world/locks exact。原682e temporary替換誤碰milk同字行，原patch/oracle保並標scope-tainted，不採精確scope證明；exact owner-only202c新控制獨立補證。extra checker期待SUCCESS首SETUP保、依原runner EXIT_ZERO只讀補核不rerun。
 
 下一步controller精確M2＋狀態文件定版後，只在同一乾淨pin完成原C4雙focused（四JUnit各雙、M6owner-selector雙、七案＋原milk/noEntrance雙、normal/amp兩鏈各雙fresh3phase）、完整run-all自然ENDALL0/outer0、final-data兩席C/I0、同SHA三jobCI。舊0f1候選default166 PASS與e338 checkpoint CI不替最終pin。C4期間全部tracked凍結只ignored報告，任何failure照最新止損停報/查，不midrun改source、無新七外10觀測。T13仍OPEN；後續結案docs commit先「待本 commit CI」，不預寫closed。
+
+
+**2026-11-10最終C4止損交回：** sourcepin0abd50e本地17focused與同SHA CI42675304922三job PASS，不等於full完成。原full8f190 W10_SOURCE_PIN/outer1保FAIL；只讀Hidden child對照證實預設Console950解碼Git diff出錯hash904c、起始UTF8同算法原5pin全exact，未改producer/tag/config/guard。僅修啟動encoding的新full80f9ddf169964559a7a787101133cd9d原w10exit0、default166/normal13/legacy1與JUnit1107(1105執行+既有skip2)均PASS，但M5 60中唯一 `m5universeprojectiongametests.prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection` 真FAIL，AccessDenied原子替換→WRITE_FAILED被fixture確認守門拒絕，outer1/noENDALL，M6及後續未啟。
+
+依user其他失敗停查規則停止：只讀CheckedNbtFile:70／CollapseAuthorities.checkedWrite→rollForward／M5test:1070確認鏈，未確定持鎖process，不稱Windowsdefault偶發，不重跑／新設計／M5或OS修正。原全FAIL與資料索引不改；T13/C出口仍OPEN，不製作結案commit，不進T14。交回文件此時未commit/push，避免以狀態push觸發無關CI；即時事實見ignored STATUS首段。
+
+
+### 2026-11-10最新AccessDenied裁示與本輪單次重跑
+
+使用者確認80f9的Windows atomic move AccessDenied屬2026-10-21已知限制；不修production、不改OS／Defender／索引、不更動fail-closed／退避。80f9原root/FAIL仍保，不回判；先前「其他失敗停查」不含本指定簽章。
+
+1. 精確四份失敗交回docs先commit／push；用Git tree差異與逐檔bytes證明code／測試／harness／build／workflow相對0abd50e無變。當前提交不是T13結案，T13仍OPEN。
+2. 於新乾淨文件HEAD，用新nonce完整跑一次原run-all，使用已驗明的UTF8啟動／安全filecapture／原短預設EvidenceRoot；不加filter，不省80f9未到的M6/main/recovery/native/ci-rule/summary等後續gate。舊focused與80f9前段只是歷史，本次full各段依實際完整新輸出採計。
+3. 這次任何AccessDenied或其他failure都立即停報，不重跑、不改oracle／source或猜偶發。原root與原receipt/status保留。
+4. 本輪自然END ALL exit0／outer0且同SHA build／windows-native／m6-native三job成功、兩席所需final-data檢核C/I0，才可寫結案docs；該文件commit先「待本 commit CI」，其CI真通過才算T13閉，然後停T14前。每commit／push／gate終局更新STATUS首段，liveSTATUS/progress不進immutable證據引用。
+5. T14–T21通用：同code pin的full若唯一失敗為Windows atomic move AccessDenied，production維持fail-closed／退避、沒有其他FAIL，保原root可新nonce重跑一次而不必問；同pin第二次此簽章或其他failure即停報。文件SHA變動不重置同code重跑額度，不為湊綠換pin；不授權production或OS修正。
+
+七案外十案、T21 exact、舊FAIL及新CU/U-only/client等其餘界線不擴。這次是80f9後的一次已明確授權完整重跑，不因未改code而省後半gate，也不把既有CI綠代新HEAD。

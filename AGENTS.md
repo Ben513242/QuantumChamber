@@ -67,6 +67,8 @@ milestone implementation → automated gates → required manual smoke → task�
 
 ## 開發與 review 流程
 
+**T14–T21 Windows atomic-move AccessDenied單次重跑規則（使用者2026-11-10）：** 某code pin的full唯一失敗為Windows原子移動AccessDenied簽章，production仍fail-closed／退避且沒有其他FAIL時，保原root/FAIL，用新nonce可重跑一次、不必再問；同一pin第二次發生立即停報，不再重跑。其他簽章或混有其他FAIL不適用。只docs變更不重置相同code的重跑次數，不得以換docs SHA迴避止損。這不授權改production／OS／oracle，也不豁免完整full與同SHA CI。
+
 1. 先讀 binding spec、implementation plan、SDD ledger，以及「目前接手入口」指定的文件。`docs/handoffs/` 是歷史紀錄；除非接手入口明確指向，否則不作為接手依據。
 2. 使用 Subagent-Driven Development：一個 implementer完成一個task或fix round，之後必有獨立task reviewer。
 3. 不得在未關閉 Critical／Important finding 前進到下一task。
@@ -100,6 +102,10 @@ M4只完成候選門與選擇權威：
 M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 teleport，也不建立 Projection、Nether／End family 或 client renderer。M4單獨完成時，門仍關閉且玩家不換世界。
 
 ## 目前接手入口
+
+**2026-11-10最新裁示：80f9符合Windows原子移動AccessDenied已知限制，本輪准新nonce完整full一次。** 80f9原root/FAIL不改；不修production、不改Defender／索引／OS。先提交並push本次四份失敗交回文件，核code與0abd50e完全相同，再以該乾淨文件HEAD完整run-all；80f9在m5-gametest後未執行的gate一律不能沿用。這次任何AccessDenied或其他FAIL均停報、不再重跑。END ALL0與同SHA三jobCI都過才做結案文件；結案文件先寫「待本 commit CI」，其CI真正通過才算T13結案。仍停T14前，不啟新canonical＋U／U-only／client；每commit／push／gate終局更新ignored STATUS首段。下方較早止損是當時快照，本條例外僅限已確認簽章。
+
+**2026-11-10最新交回：T13 OPEN，依止損停下，未結案。** 程式pin0abd50e92592e9d50a1c2fa0fe1c944409608c95已push；17個最終focused與同SHA CI42675304922三job均PASS，但本機Windows新full80f9ddf169964559a7a787101133cd9d在M5 GameTest60案中1FAIL：`m5universeprojectiongametests.prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection`。原atomic move projections.dat.<nonce>.tmp→projections.dat拋AccessDeniedException，checkedWrite回WRITE_FAILED，fixture的index.confirmed嚴拒；outer1／無ENDALL，M6及後續未啟。這不屬指定Windowsdefault十案，不自行歸偶發／waiver／rerun，不改M5／production／Defender／索引／retry。來源只讀查證已完成，鎖持有者原因未證；原全FAIL保。完整資料在本plan ignored STATUS首段及full-explicit-utf8-supplement-index，T14仍等使用者、新CU-Uonly-client未准。本次只交回失敗事實，沒有結案文件commit；以下較早可定版／待C4等為當時快照。
 
 **2026-11-10目前：M2兩席code C/I已清，最終C4待驗。** 最終候選source `51fbf9198f1732dc604698fd73eb4afad35ba760b03c6fa15b5b2d2cd359c17e`，PS1 f12固定、1100compiled exact；fix4正常9／唯一default166真PASS與fix5正常9真PASS各依原source pin分列，不冒最終C4。原finish logger I1由fresh第5輪最小+9/-7修正，兩席限定複審C0／I0／M0；所有原FAIL／UNRESOLVED與scope-tainted控制／checker SETUP原判保。接著只定版此source，最終同乾淨pin原雙focused／完整full／同SHA三jobCI待，T13仍OPEN；結案文件commit另先寫「待本 commit CI」，其CI真過才閉，嚴守最新止損與T14等使用者。
 
