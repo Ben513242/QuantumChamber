@@ -1917,3 +1917,39 @@ offline原真離線/cohort/KEEP_CURRENT/epoch0/效果/保護斷言後sameGamePro
 M6Compile與兩正常單案、combined、最終共用deadlinecombined皆PASS；最後root f241f848a7a44fb797f220a415846936 XML2/2零bad/outer0/default166/exactrestore，兩案CLEAN ownSpaces/ownLeases/liveSpaces/protectedSlots0、releaseAcktrue。兩testmod有界失敗路徑控制保原M2_OFFLINE_CONTROL_PRIMARY／M2_PIN_PARTIAL_CONTROL_PRIMARY FAIL，且正式自清理；控制屬EC6C4950較早source，final僅共用deadline3處變更後combined重驗，不冒控制在final重跑。全部原件索引dd4d2ec4f94440d816dd66e3ca491ab78c025f64ad2f74906f4ab0e10d9b969a。
 
 本輪測試CI片唯一獨立review C0/I0/M0，報告SHA050d0e5128834874cc18758c5a8359630730ba00e29565438895c56a78ab8c39，核final source M2 1b5a3dcd25a26f4783133c3135e0eee756a1af6eff94ad17144f552b9aa972c1、final28 M2 classes、正常/controlled scope與原件。root亦核5source/7gate所列SHA，single seat不代Task14 production總出口：900回放、雙focused、必要production mutation、同pin full自然ENDALL0／outer0、最後spec/quality兩席、push與同SHA三job仍待，Task14OPEN。R未實作、其他8H待原triage，無client/人工/main/tag。
+
+
+### 2026-11-10：Task14 本機出口及最終兩席完成，待本 commit CI
+
+**2026-11-10 Task14 候選結案：本機原門檻與兩席審查完成，待本 commit CI，仍 OPEN。** 最終 code pin `5ab3aa4fe6f4ddb63e0469b7c2148b56b8f1b9ff`（本輪 code range `e366571..5ab3aa4`）；同 pin 雙 focused、八個 production mutation 具名 KILLED 並 byte-exact REVERT，完整 `run-all-a45fe11f8f8b4ff8bf5218966b65bf1f` 自然 `END ALL exit=0`／outer0。spec C0/I0/M1、quality C0/I0/M0；M1 只涉及 toggle GameTest 的 nested preset 診斷標籤，實際 parameters/provider/FP 與 native 權威不受影響，保留原碼並入 ledger 待裁示。full 的 default166／normal13／legacy1／M5 60／M6 21、JUnit1115（零 failure/error，2 個既定 NonWindows skip）、recovery25／collapse69／main-only／artifact 與九鏈27 phase／479反例均通過；本機 ci-rule fixture 不當成遠端 CI。首 full `e0165a45b6fe4b7f9bd7b4e978dbbbea` 因 M5 overlap 的原子移動 AccessDenied 保留 FAIL；唯一同 code 重跑額度已用 1/1，文件 SHA 不洗額度。Java0、六個正式 restore exact、58 個 owned root 鎖可獨占已核；CI 三 job 真全綠後才在 STATUS／ledger／接手入口記 T14 closed。只完成 T14 即停，不開 Task R、8-H triage、client、人工 smoke、main 合併或 tag；舊 FAIL／UNRESOLVED 全保。
+
+正式設計與產品內容仍是 policy3 的 random／same-seed／toggle 三類、Overworld only／capability0。舊 policy1/2 checked 權威不升版不重抽；toggle 保 source root seed、source snapshot 不變，只翻 builtin preset/provider、保 GenerateStructures 並重算 FP。沒有 production registry/factory/mixin/schema 變更。
+
+同 clean 5ab 雙 focused 每輪118 JUnit／8 M6／13 M4normal／四條 native 12 phase，案例集合 exact。交付 `task14-focused-5ab-20261110/phase4-delivery-index.json` SHA `80d283a48260f097a4f05dfa7297ce44dcd1a35b9297775f201f3c761702705e`；主控逐項核2512原件hash及raw XML／24phase receipt。
+
+| Production mutation | 結果 | 新root（均位於本plan SDD的 task14-mutations-5ab-20261110/） |
+| --- | --- | --- |
+| M1 selector退2 | KILLED／source、owner全nested class與jar byte-exact REVERT | `m1-selector-de9c2b909e7f49229eb29ac57239d356` |
+| M2 policy版本拒絕撤除 | KILLED／source、owner全nested class與jar byte-exact REVERT | `m2-policy-5d1f26fb2afd4888ae230842eca04916` |
+| M3 toggle誤用random seed | KILLED／source、owner全nested class與jar byte-exact REVERT | `m3-rootseed-ab7bb994328a4970baae201f3c28e71a` |
+| M4 resolver不翻preset | KILLED／source、owner全nested class與jar byte-exact REVERT | `m4-preset-212ba1ae3c7c41939f656a7dd23e47f3` |
+| M5 resolver覆蓋GenerateStructures | KILLED／source、owner全nested class與jar byte-exact REVERT | `m5-structures-711b22abb642484887c8259f5688ca94` |
+| M6 intent放行非法target | KILLED／source、owner全nested class與jar byte-exact REVERT | `m6-intent-496f857c48f54dc5a29e5aeeccdfbc3b` |
+| M7 allocation放行非法policy/profile | KILLED／source、owner全nested class與jar byte-exact REVERT | `m7-allocation-677ae5c45257412c9b0798d71a63fc98` |
+| M8 catalog忽略provider/preset配對 | KILLED／source、owner全nested class與jar byte-exact REVERT | `m8-catalog-8e40953163614c92861c694e1f56fc83` |
+
+八個具名殺手分別命中正式selector入口、直接policy constructor、已合法建立intent後的root seed、合法source經resolver的preset/flag、直接intent／allocation／catalog constructor；沒有拿compile/SETUP或前層遮蔽冒殺。總交付 `task14-mutations-5ab-20261110/phase5-delivery-index.json` SHA `dc7a6f0ad797c3ea366aa64a5b46a41e9f0bfe951a8f38fba9cff063c6bf34cb`，原件index SHA `5631a895afd2991275d69eb46762683cc57b75bce96138ef4977c1f733c1d051`；主控獨核raw XML／actual mutant hash及555 source／1102 compiled class還原。工具端M2 launcher replacement曾於變更source前parser SETUP，原錯保留，純語法修正後新nonce，未算KILLED或full重跑。
+
+首 full `run-all-e0165a45b6fe4b7f9bd7b4e978dbbbea` 在Windows m5-gametest失敗、outer1／無END ALL；60案僅 `prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection` 失敗。同case/SID與stack指向 CheckedNbtFile.write 原子移動 projections.dat.tmp→dat 的 AccessDenied，production維持fail-closed／200tick退避。已過的前段不抵免後續；原root永久FAIL。依使用者一次fresh full例外，保留原件／restore與Java0後在同5ab從頭重跑一次；counter已用1/1，之後任何正常FAIL停報，pure docs不重置。首失敗交付SHA `9ca07889db139fe096b9fb4111bd14f28452dc24022f937d427d1f72006fa018`，主控精確簽章ruling SHA `d886fa0955af3bbb06c01ce95a05622ca19c502e6522e23b9686b049623b7986`。
+
+唯一重跑 `run-all-a45fe11f8f8b4ff8bf5218966b65bf1f` 於20:37:18+08自然 `END ALL exit=0 HEAD=5ab3aa4...`／outer0，實耗4220.4702249秒。正式 summary SHA `ed95056b87951def18b18d37adadd03dcef1b4d80cc0c5fe7d3a5854ff1e48c5`；console SHA `83153e12c8bf8a2db0d6958826631d1fdcad4e2197aa8558d84136da508e9cb5`。default166、normal13、legacy1、M5 60、M6 21原XML零failure/error/skip；JUnit1115零failure/error，僅2個原oracle明許NonWindows skip；M3 4+5、recovery25、collapse69、main-only PASS、release/sources testmodHits0。兩M2 case各一次，三CLEAN及一ADMISSION全own/live/lease/protected slot0、releaseAck；全default最高slot4≤歷史PASS5，仍不把4096因果記為已證。
+
+本次 native producer `beb0ae46b81e46cd8e412ba05e002ffb`／HEAD5ab：九鏈27phase PASS、DIAGNOSTIC2／FUNCTIONAL25，18正常exit0＋9預期halt77，27 lockReleased真；summary SHA `504a0443c880fef5edb4038b02473281b1be68f0c6f9b7e62cf966aa4cbc5f04`。ci-rule native-green與最後原summary均真479（277+202）及末baseline PASS，不拿本機CI規則fixture冒遠端CI。summary整段壁鐘382.812531秒，沒有個別SelfTest Stopwatch，不能把此值冒精確SelfTest耗時；既有900秒owned唯讀回放自然544.3705029秒採舊cdb producer、5ab reader，界線保留。
+
+最小full交付 `task14-full-5ab-retry1-d73435c7399542848bb1b06e55646a13/full-delivery-index.json` SHA `636f6f694d219c8f49d41518ad41b6a3856a8f3447acbd025b6da2c18ddecd89`（46原件links/hash）；555 source exact、6正式restore manifest exact、58個owned root鎖可獨占／bytes不變；本次唯一自有GradleDaemon經identity核對正常--stop，最終Java0／porcelain空。未複製全root或另製生成world manifest。
+
+最終兩席：spec C0/I0/M1，`task14-final-spec-review-20261110.md` SHA `f3f2330803e5bc629bf4afd2cf697bf54c920a72016334efa4b36c06345536b3`；quality Approved C0/I0/M0，`task14-final-quality-review-20261110.md` SHA `b89921263f0493614960bfd2374090bc27de63a584361b29239b10d9c4f9f68a`。M1為 M6ProfileProbePhases.java:986 的target nested preset診斷標籤仍取source值；actual parameters/provider/FP與native嚴格判定不受影響，未見consumer據該tag決定PASS。controller保留精確5ab full pin，記待後續使用者裁示，不宣稱已修、不拿該tag作preset證據。
+
+兩席已讀final完整rows／差格：兩toggle各261個actual CARVERS差格，兩原same-seed跨側CARVERS exact，各側重啟exact。本次same-amplified final一差(521,24,524) granite/andesite，新hash `427ce479bd879cac0edf8b8d1a6f44efea9334fbaf231dde85a27a5c18dd0239`；toggle final各167差。全部reviewItems維持UNRESOLVED／NOT_CLASSIFIED，不建立baseline/容差，不推論feature writer根因；canonical source native consumer仍NOT_COVERED／target-only，SHALLOW_V1與其他覆蓋限制不外推。
+
+**本節候選狀態：待本 commit CI，T14 OPEN。** 正常push後必核該SHA的build、windows-native、m6-native三job真success，再於STATUS／ledger／接手入口記closed；不得沿用e366的CI或把本機fixtures當遠端。C/I已清零，不因M1新增fix/gates。本輪僅T14，TaskR／8-H triage／client／人工smoke／main／tag均未開工；所有舊FAIL/UNRESOLVED及本次e016原判保留。
