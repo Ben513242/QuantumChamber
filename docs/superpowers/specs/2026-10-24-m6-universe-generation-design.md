@@ -1,6 +1,15 @@
-# M6 宇宙生成多樣性與完整維度家族：binding spec（v1.4）
+# M6 Overworld 宇宙生成多樣性：binding spec（v1.5）
 
 日期：2026-10-24。基準：`0d05f889da6f8b82b97af756aaa50066b3d42854`。本文定義 M6 的新行為；未明列變更的 M4／M5 checked 權威與遊戲行為維持原約定。本文尚非實作或驗收結果。
+
+### v1.5 有效範圍與流程（2026-11-10 使用者裁示「可以B+C」）
+
+本段及 §8 優先於本文與 plan 較早的 M6 範圍／流程；既有證據、舊 FAIL 與歷史完成狀態不回寫。本次唯一範圍修訂已經獨立窄審 C0／I0／M0 採用（報告 SHA256 `938656a1beec0f9eb25034d94fcc28dc9a0de4d155db0ad26636a55f79c82315`），可接續 T13；這不是 T13 或 M6 結案。
+
+- M6 僅交付 Overworld 宇宙：完成 T13、T14 normal↔amplified mutation 後，進入 8-H triage 與縮範圍 T22。`FamilyCapabilityVersion` 全程維持 0，既有 frozen intent／Context 不升版。
+- T15–T21 整段移交 M7：三 role family、Nether／End storage、portal／gateway／respawn、同 role 艙與 U→U 全量比較。下文保留的未實作三 role 契約是 M7 待辦，不是 M6 關卡或功能宣稱；既有三 role snapshot 的資料形狀不因本裁示改寫，也不物化新 role。
+- M6 只出 `SHALLOW_V1`。8-H 在 M6 收尾前依 Overworld／SHALLOW_V1 提出必要項與明確 waiver，交使用者裁示；沒有自動 waiver。M7 literal branch／snapshot 仍未授權。
+- M6 收尾須完整回歸、整分支審查、docs truth、CI，以及單人／多人各一輪人工 smoke：從艙選 NEW 進不同 seed 的 U、重進不重抽、重啟仍同一 U。清單明列 SHALLOW_V1 與傳送門回原版世界。合併 main、tag、人工代操作各自另問使用者，本裁示不授權立即啟 client。
 
 狀態（v1.4，2026-11-02）：依使用者 2026-11-02 裁示「我想先裁示縮 Task 8 範圍，至少本模組功能都完成後才修必須的任務切片」。為落實裁示，**controller 設計預設（非使用者原話）**：新增 §3.1.3 `SHALLOW_V1` 最小閉包並把 §3.1.1 完整閉包綁定到 ProviderVersion≥2（Task 8-H），§3.1.2 增 8-core 最小 lifecycle，§3.1／§3.2／§4／§8／§9 相應調整；M6 正式版是否只出 `SHALLOW_V1`，在 §8 的 8-H triage 交使用者裁示。**v1.4 已採用**：首輪獨立 spec review C0/I4/M11（SHA256 `c1ab9ec35a6e6c9dfba14f7f9532a2dfcca655019c974446c4ecf41df0963be8`）、plan review C0/I5/M11（SHA256 `5aa3302026c10312b9d1c415b471d44db7bd18b5a5789e2d823f1ba719120e12`）、窄複審一 C0/I1/M3（`ff9ae0b788bc9ba4b2704c25166db6ba87f24e93149c815eac0a1007388868f1`）、窄複審二 C0/I1/M2（`e52e6a80755a7faceb6d193242010f951be0d0d792f02194702376e2f2a0c920`）、窄複審三 C0/I0/M0（`943626daecfb517da91a74828d02412c4866c2c81e2f702e8d75c30ccb04ebb2`）；全部 Important 關閉後採用，本檔採用版 SHA256 記於 plan 第 11 行與 M6 note 2026-11-02 條目。v1.3 以下內容、既有 8A／8B 局部結案證據與所有 retained FAIL 原判不變。
 
@@ -8,7 +17,7 @@
 
 ## 1. 目標、來源與交付順序
 
-**使用者已確認**完整 M6，依序為：①測試腳本安全與生成競態；②random seed；③same-seed fresh／generation profile；④完整 Nether／End family、portal／gateway、respawn。每段單獨驗收；spec 與 plan 經獨立 review、Critical／Important 歸零後直接實作。`StrongholdGenerator`、`NetherFortressGenerator`、`EndCityGenerator` 的共享可變狀態各自調查與修正。M7 literal branch／snapshot 不在範圍。
+M6 依序交付①測試腳本安全與生成競態、②random seed、③same-seed fresh／generation profile（僅 Overworld，T13／T14）；④family 整段延後 M7。已完成的三類結構競態防護與原始證據保留，不因縮範圍撤回。驗證流程依 §8 的 B+C 分流，C／I 清零才前進。
 
 **主控設計預設的具體預設**在 §4 標明；設計 §7.4 的 50／30／20 是示例，使用者尚未選定權重，也未指定 mutation 類型。M6 不改目前 `SOURCE`／`EXISTING`／`NEW` 的候選權重，不改選門後的候選身分；只讓新產生的 `NEW` 意圖可選 M6 profile。兩項獨立 harness Minor：`probe-common.ps1:17–24` 的 `run/` 祖先 canonical／reparse 守門，以及 `gates.ps1:80–102` 的 Move-Fresh「move 成功、建 fresh root 失敗」可復原且保留原錯誤；各自 RED／GREEN、獨立 commit，不能混進生成 production commit。
 
@@ -17,7 +26,7 @@
 | ①安全與競態 | fresh root 失敗仍可 exact 還原；三類結構並行生成無共享狀態污染，原版單世界輸出不變 | native 1.21 路徑盤點、三類各自定向 RED |
 | ②random | 兩個 `NEW` 可有不同 terrain／biome／structure seed，重啟與重訪不變；舊世界不變。原版 portal／死亡仍可能非正規回到 canonical，沿 M5 已知限制 | §3 schema／seed owner 與提交鏈 |
 | ③same-seed／profile | 新 UUID、空白歷史、同 seed 地形；至少一種可量測的原版 profile mutation；registry 查詢能回報精確 id／version／參數。原版 portal／死亡非正規回程仍未修 | ②、原版 preset 與 worker 實證 |
-| ④family | 每個 U 有獨立三 role；家族內 portal／gateway／死亡正確且不漏回 canonical；同 role 艙投影／跨越 | ③、三 role storage 與 routing gate |
+| ④family（移 M7） | 三 role、portal／gateway／respawn、同 role 艙及 U→U 全量比較留待 M7；M6 不宣稱這些能力 | M7 開工前重新確認 spec 與 gate |
 
 不做 M7、玩家可控制的權重 UI、複雜 renderer、目的地預覽、雙向量子通道、全域 eager 投影、世界池卸載或版本升級。固定 Minecraft 1.21／Yarn `1.21+build.9`／Loader `0.17.2`／API `0.102.0+1.21`／Loom `1.7.4`／Java 21。AccessDenied 維持既有 fail-closed／退避；不宣稱原版 playerdata 吞下 IOException 已解決。
 
@@ -200,13 +209,13 @@ source seed 與**來源**各 role settings 在候選生成時按 exact source fa
 使用者原話：「U→U 全量比較移 Task21；T13 保留 canonical→U 真玩家鏈與雙平台 owner／設定測試（建議）」。`SAME_SEED_FRESH_V1` 的同 seed、同已驗設定、新 UUID／空 storage、來源玩家建築不存在與後續修改互不影響之產品契約仍依上表。2026-11-09 最新裁示只將 **Task13** 地形驗收分為下列嚴格 CARVERS 層與完整 final 診斷層；不修改 Task21 原文或任何舊 FAIL 判決。
 
 - **Task 13**：保留 policy2 resolver／codec／正式入口的具名 RED、嚴格選擇／持久化、新 session 的 `FamilyCapabilityVersion=0` 與舊 policy1 不升版。Windows 既有 `m6-native` job 的 canonical normal 與 canonical amplified 兩條獨立真玩家鏈，各自從正式來源艙的 checked `MEASURED+SELECTED` 走 source→new→restart。相同 datapack／mod 配置下，seed、frozen source／target settings、provider id／version／Parameters／fingerprint、biome、非空正例 structure、來源建築不複製、雙向修改隔離、UUID／catalog／allocation 及重啟權威全部維持嚴格。兩世界另在離 FULL 影響範圍足夠遠的未生成區，原生只請求到 `CARVERS`，固定 1440 點的 **actual block states 逐格 exact**；NOISE／SURFACE／CARVERS 的 `blockStateWriteRadius` 必各為 0，實際依賴半徑、virgin halo 與最近 FULL 距離須有收據；不以 density、容差或 hash 集合替代。原 final 1440 點、完整 rows、全部差格及四階段收據保留作診斷，final block pairwise／跨重啟 hash 不再是 full 回歸關卡；新 final hash 標 `UNRESOLVED` 送審，不自動學習 baseline。Ubuntu `build` 與 Windows `windows-native` 的 `m6_universe_same_seed` GameTest 各自具名驗 normal／amplified 的 direct catalog fixture：來源與目標的 exact frozen seed、provider id／version、preset、Parameters、fingerprint，以及實際 noise／biome／structure owner 與 frozen 設定一致；此雙平台測試不在 Task 13 對 direct catalog U→U 斷言全量 terrain／biome 相同。拆分後須以 testmod-only 錯 frozen seed／owner 負控具名殺 `SAME_NATIVE_CONSUMER_EXACT` 並逐位元還原，確保 owner-only oracle 仍有效。正式入場的 policy2 凍結、舊 policy1 與錯配拒絕仍須由具名測試守住；原 U→U c7d/e1d FAIL 不充當 Task 13 的 RED。
-- **Task 21**：用既有 direct catalog U→U helper，恢復來源與目標同樣本、同成熟度、同 datapack／mod 配置下的全量 exact 比較：固定 1440 方塊與 biome、非空正例 structure、來源玩家建築不存在、雙向修改互不影響。原 `c7d973d...`／`e1d1826...` 的 seagrass／water FAIL 與 raw MCA、階段收據保持原判，作為本項尚未通過的起點；新 RED、GREEN 與 mutation 須以新 root 證明，不以 Task 13 canonical→U 的 PASS 抵銷。
+- **Task 21（整段移 M7，以下保留原待辦）**：用既有 direct catalog U→U helper，恢復來源與目標同樣本、同成熟度、同 datapack／mod 配置下的全量 exact 比較：固定 1440 方塊與 biome、非空正例 structure、來源玩家建築不存在、雙向修改互不影響。原 `c7d973d...`／`e1d1826...` 的 seagrass／water FAIL 與 raw MCA、階段收據保持原判，作為本項尚未通過的起點；新 RED、GREEN 與 mutation 須以新 root 證明，不以 Task 13 canonical→U 的 PASS 抵銷。
 
-Task 21 的 U→U 是 **testmod 直接 catalog 建立的測試控制**，不是正式 U-origin 玩家入場。§6 延後動態 U 內真正 Origin 的 activation／registry；本裁示與 Task 21 均不開啟該玩法。Task 13／21 的實作白名單、未發現測試方法的保留方式與各平台 gate 以 plan 相應最新補充為準。
+T21 不再是 M6 出口；其 oracle 須在 M7 開工時另行裁定並採分層設計，下列舊 final exact 文句不構成新授權，不把 T13 裁示擅套 T21。Task 21 的 U→U 是 **testmod 直接 catalog 建立的測試控制**，不是正式 U-origin 玩家入場。§6 延後動態 U 內真正 Origin 的 activation／registry；本裁示與 Task 21 均不開啟該玩法。Task 13／21 的實作白名單、未發現測試方法的保留方式與各平台 gate 以 plan 相應最新補充為準。
 
 ### 4.2 Task 13 分層 CARVERS 驗收（2026-11-09 最新裁示；取代本節較早的候選停點）
 
-順序固定為 A→B→C。一份設計與一次獨立窄審 Critical／Important 0 後直接實作，不另加核可流程。**A** 先只改既有 `M6ProfileProbePhases.java`／`M6UniverseRecoveryProbe.java`，沿既有 owned-phase 互動入口做 canonical normal／amplified 各十個 fresh root／獨立 JVM；seed `20260921`、原 pack／mod 配置、只請求遠區中心至 CARVERS，直接從 actual Chunk 取固定 1440 方塊與 biome。每 preset 的 CARVERS block hash 必單一；任一不單一立即保留全部原件並停止回報，不調 oracle、座標或 seed 求綠。背景 startup FULL 如實記錄，不稱純 vanilla。**B** 僅 A 的兩 preset 均成立才接既有 T13 正式兩條 native 鏈與具名負控。**C** 走原雙 focused、完整 `run-all`、獨立 spec／quality 及同 SHA CI。T21 另裁；新增 canonical＋U、U-only、client 實驗未授權，既有正式 T13 native 鏈與 run-all 仍按原授權執行。
+順序固定為 A→B→C。一份設計與一次獨立窄審 Critical／Important 0 後直接實作，不另加核可流程。**A** 先只改既有 `M6ProfileProbePhases.java`／`M6UniverseRecoveryProbe.java`，沿既有 owned-phase 互動入口做 canonical normal／amplified 各十個 fresh root／獨立 JVM；seed `20260921`、原 pack／mod 配置、只請求遠區中心至 CARVERS，直接從 actual Chunk 取固定 1440 方塊與 biome。每 preset 的 CARVERS block hash 必單一；任一不單一立即保留全部原件並停止回報，不調 oracle、座標或 seed 求綠。背景 startup FULL 如實記錄，不稱純 vanilla。**B** 僅 A 的兩 preset 均成立才接既有 T13 正式兩條 native 鏈與具名負控。**C** 依 §8 分流：production 仍守原雙 focused／完整回歸／獨立 spec 與 quality／同 SHA CI；僅測試、腳本、文件則一席審查、針對性驗證與 CI，不新增 mutation 或本機 full。歷史 A／B／C 證據與舊 FAIL 均保留。T21 另裁；新增 canonical＋U、U-only、client 實驗未授權，既有正式 T13 native 鏈與 run-all 仍按原授權執行。
 
 遠區中心採設計預設 chunk `(1024,1024)`，相對 x／z 為 0,3,6,9,12,15，y=-64..<256 step8，索引順序 x→z→y；不得因失敗換點。由固定依賴讀 `ChunkGenerationSteps.GENERATION` 的 CARVERS／FULL accumulated dependency 半徑與各 stage 寫入半徑，建立保守隔離 halo。生成前 halo 全部無 live／unloading holder 及 raw entry；唯讀掃 holder 所見最近 FULL 與 halo raw 證明共同排除 FULL 影響。請求只用 `getChunk(x,z,CARVERS,true)`；直接 `Chunk.getBlockState` 取樣，取樣前後皆須 exact CARVERS，halo 不得升至 FEATURES 或更後 stage。不新增 mixin、production hook、驗證腳本、observer 或 job。
 
@@ -228,7 +237,7 @@ final 診斷保存兩側原 1440 rows／hash、全部差格及 new→restart 全
 
 交付「證據→可支持結論→未排除假設→驗收契約候選」。若提出分層oracle，seed、frozen settings、biome、可證noise／density、structure authority仍嚴格一致，final FEATURES差異逐格保留分類，允許範圍必須有獨立控制證據；建築、修改隔離、UUID／catalog／restart不降低。「同seed／同preset的canonical-only基線集合」納入候選評估，T13與T21分開，含分類身份、反例、§4.1／本節影響及獨審計畫；候選不生效、不實作、不訂數字容差。任何正式acceptance改動須先交使用者裁定並經獨立spec review，不能由本次實驗直接改判。T13原完整回歸／兩席審查／同版CI未真正滿足前仍OPEN，不進T14。
 
-## 5. 完整 family 與 routing
+## 5. 完整 family 與 routing（T15–T20 移 M7）
 
 身份 `(Universe UUID, DimensionRole)`，role 恰為 `OVERWORLD|NETHER|END`；keys 為 `quantumchamber:universe/<uuid>/overworld|the_nether|the_end`，各有獨立 region／entities／POI storage、持久化、ticket 與 lifecycle。End dragon fight、gateway、結束後狀態與 End portal 資料由同 U:END 所有；不得共用 canonical End 或另一 U 的持久 state。原版 1.21 `ServerWorld.<init>` 會讀全域 `SaveProperties.getDragonFight()`，`saveLevel()` 會寫回全域 `setDragonFight()`；custom End 必須把兩端導向同 U 的獨立 persistent owner，canonical End 無 context 時仍原版。原版傳入非 null `RandomSequencesState` 會直接共用；M6 新 U 各 role 應交由自己的 persistent state manager 建立／存回，禁止傳 canonical instance；schema1 舊 Overworld 行為另守相容。世界共用 global player inventory 等既有玩家資料政策照舊，但位置／目前 U 身分與 respawn 綁定精確 role。runtime index 必須雙向驗 exact key→U/role→同一活 world instance，unknown／stale key fail closed。
 
@@ -238,7 +247,7 @@ final 診斷保存兩側原 1440 rows／hash、全部差格及 new→restart 全
 
 `RespawnRoutingService` 依玩家**死亡時所屬 U**及其持久位置／角色紀錄查 bed 或 anchor：有效 bed／anchor 依原版 role 規則在同一 U 的對應 role 重生；失效、耗盡或不存在時退到 `U:OVERWORLD` 安全 spawn。canonical 玩家照原版；若 U authority 未確認、role 不可物化或玩家 U 身分損壞，保持 fail closed／待人工復原，不默默放到 canonical spawn。跨 U 通道的 `Crossed` checked 後沿用 M5 立即呼叫 playerdata 存檔，但原版吞 IOException 的限制仍在：重啟時實際玩家位置以最後一次成功保存的 playerdata 為準，不能憑 `Crossed` 聲稱保證落在目的 U。死亡、斷線、重連、停服重啟、床被拆、錨耗盡與玩家處於 Nether／End 的組合都要驗。
 
-## 6. 量子艙相容與版本界線
+## 6. 量子艙相容與版本界線（新 role／T21 移 M7）
 
 新建立的、具 M6 profile／family 的 session，可在**既有 vanilla Overworld／Nether／End Origin**選 `SOURCE`／`NEW`／`EXISTING`；候選與來源必同 `DimensionRole`，EXISTING 要具相同 role 且 gameplay eligible。目的地只在同 role 的同 XYZ 投影並走 M5 PREPARE／PASSAGE 原有 checked、碰撞、封存與關門語意；投影仍 inert，不加入 Origin registry，不因家族啟動新艙。其他 role 不會因這次艙自動投影。**動態 U 內新建並啟動真正 Origin（Catalog Origin）仍延後**；本輪只讓 vanilla 三 role Origin 使用 M6 family，不打開動態世界 activation／renderer／Origin registry 的額外範圍。`SOURCE` 仍原世界一般開門；沒有正規回程；portal／死亡是另一套原版入口，不改通道單向性。
 
@@ -250,17 +259,21 @@ M5 的 Nether／End 選門拒絕與 M4 舊 `MEASURED` 的 NEW／EXISTING 安全�
 
 防護以每次生成 invocation 私有狀態為首選；如需 ThreadLocal，必證 worker 任務／遞迴／同執行緒序列任務安全重設與 `finally` 清除；如需鎖，明列鎖階序、可重入與 server thread／worker 等待關係，禁止引入 `/place` 或 shutdown 死鎖。不得以 H5 chunk unload、H6 template cache、H8 mapping eager init 當作三類已修。各自 RED→窄修改→兩次同乾淨 HEAD GREEN，單世界原版 seed 的 structure layout／計數回歸與跨世界並行 smoke；必要時再做多世界 cross-JVM 重啟。
 
-## 8. 驗證與交付門檻
+## 8. 驗證與交付門檻（B+C 為有效流程）
 
-每個 task／fix round 有有界派工、RED、兩次同乾淨 code HEAD 的 focused GREEN、完整回歸與 commit range；每個風險批次 full，fix round 必有 full。JUnit 驗 codec／seed determinism／exact 身分／race；GameTest 驗 role storage、投影／passage、portal、respawn、dragon／gateway 可觀察狀態；cross-JVM 驗 intent→allocation→catalog→partial role→重啟與損壞／rollback 窗口；人工 smoke 分四段實際遊玩，與自動證據分開。失敗 root／receipt 原封保留，修正另用 nonce/root，不覆蓋判決。先更新 `scripts/verification/` 的正式 gate 與 oracle，單一時間只允許一個 Gradle／gate。不能以 GameTest runtime 冒充 main-only；release／sources JAR 不得含 testmod、gametest、fault mixin，production `ModPresenceProbe` 例外；main-only 核 Fabric mod list、classpath／argfiles／DLI 與 class-load。
+1. **資料安全不減**：世界移動前核 canonical／non-reparse／owned root、無 live Java owner、session.lock 已釋放；fresh world 可恢復 move 與逐檔 hash 還原照守，失敗 root／receipt 原封保存、修正用新 nonce。testmod 不進 release／sources，main-only 必獨立核 Fabric mod list、classpath／argfiles／DLI 及 class-load，GameTest 不冒 main-only。任何時間只一個 Gradle／gate。
+2. **production 改動**：原有 RED、必要 mutation、同乾淨 code HEAD 雙 focused、完整 run-all、獨立 spec／quality C／I 清零、docs truth 與同 SHA CI 全保；不以切成文件 commit 規避程式關卡。
+3. **僅測試／腳本／文件**：一席獨立審查，不做 mutation，不跑本機完整回歸；按變更需要做針對性驗證，CI 照常。純文件 commit 的 CI 若只因已知偶發失敗，不重開已結 task；CI 原 FAIL 仍保留，不寫成 PASS，也不據此把尚 OPEN 的 task 自動結案。
+4. **已知偶發**：Windows 原子移動 AccessDenied；走廊容量連坐在根因修正完成前亦列入。同一 code pin 可保留原 root，以新 nonce 重跑一次，第二次就停下回報；文件 SHA 不重置既有次數，不以多次重跑湊綠。有其他失敗則不能用本項概括。
+5. **設計與 oracle**：一份設計、一次獨立窄審，C／I 清零後就做；同一問題不另加多輪觀測。受原版非確定性影響的判定從一開始就分層，最終 FEATURES 方塊不作逐格相等關卡。T13 保留 §4.1／§4.2 嚴格 CARVERS／權威與完整 final 診斷；T14 在實作前定義比較層級，T21 延後 M7 另裁。既有反例與 FAIL 全保，不追加本輪 mutation。
 
-**Task 8 拆分與 8-H triage（v1.4）**：Task 8 分為 8-core（§3.1.3 `SHALLOW_V1`、§3.1.2 8-core 最小 lifecycle、`createSnapshot`／`resolve` 真路徑、mod init 接線）與 8-H（§3.1.1 完整閉包 ProviderVersion≥2、正式 source／refresh seal／consumer 證明、8B3-F 三 bundle、完整 reload GameTests）。8-core 通過本節每 task 協定（具名 RED、mutation-only＋REVERT、同乾淨 HEAD 雙 focused、完整回歸、獨立 spec／quality C0/I0、docs truth、push、雙平台 CI）後即可進 Task 9；8-H 不是 Task 9–21 的前置。Task 21 完成後、Task 22 之前，須做一次 8-H triage：列出每項當時狀態，經獨立 review 提案「M6 合併 `main` 前必須」或「明確 gate waiver 移 M7」，交使用者裁示；只實作裁示為必須者，waiver 項在 Task 22 人工清單與 AGENTS 接手入口明列，標示 `main` 為開發快照時的相應限制。所有 retained FAIL 不因延後而改判。
+**8-H triage**：8-core 已完成部分及歷史 8-H 證據保留。T13／T14 完成後、M6 收尾前，按「僅 SHALLOW_V1、僅 Overworld」逐項提出 H1 完整閉包、H2 lifecycle、H3 三 bundle、H4 reload、H5 reserved journal slot、H6 foreign owner setter 的當時狀態、必要性及 waiver 候選，交使用者裁定。只實作裁示為必須者；waiver 不改原 FAIL，須列於人工清單、接手入口與 M7 待辦。
 
-既有 M5 本機基準是 code `6b116e6` 的 `run-all` `END ALL exit=0`，CI 是 `f99ce66` 雙平台成功，兩者不是 M6 證據。新的 full 依 `pwsh -NoProfile -File scripts/verification/run-all.ps1`，比對 SUMMARY、精確 testcase class/name、release／sources、WARN／ERROR、pin、worldgen 例外與 CI；純 docs 只查 diff／`git diff --check`，不重跑舊 code 基準。每段獨立 spec 與 quality review，Critical／Important 關閉才前進；最後 automated gates → required manual smoke（tracked note）→ whole-branch review → docs truth → feature push／雙平台 CI。正常 push 依既有持續授權；M6 合併 main、建立 tag、退役 worktree 另守各自門檻，不建立 PR／LICENSE，也不在 main 實作。
+**縮範圍 T22**：M6 收尾仍須在最終程式 pin 完成本範圍完整回歸（run-all 自然 END ALL exit=0、必要 M6 原生鏈、M5／legacy、main-only／artifact isolation）、整分支審查、docs truth 與 CI。單人、多人各一輪人工 smoke 依 §1 清單保存實際版本、世界、操作者與 receipt／log；未實玩不得填通過。合併 main、建立 tag、人工代操作分別另問使用者；正常 push 仍依持續授權，不建立 PR／LICENSE。此處 milestone 完整回歸不因逐次測試／文件免本機 full 而省略。
 
 ## 9. 實作前驗證與支援界線
 
 1. 主控設計預設的三類等量預設與 `SAME_SEED_TOGGLE_AMPLIFIED_V1`，不是使用者指定的平衡規則；如原版 1.21 registry gate 不成立，須明列替代 mutation 再 review。
 2. schema1 舊世界首次升級前若存檔 seed 曾被外部變更，舊 catalog 沒有 seed 副本，無法純靠它證明歷史 seed；須在 native／fixture gate 確認可採的證據與 fail-closed 條件。
-3. Bed／anchor、dragon／gateway 的原版 owner 與資料格式、非玩家 portal 路徑先以固定版本 source／runtime 核實，不能由高層設計推稱已有 API。
+3. （移 M7）Bed／anchor、dragon／gateway 的原版 owner 與資料格式、非玩家 portal 路徑先以固定版本 source／runtime 核實，不能由高層設計推稱已有 API。
 4. v1.4 `SHALLOW_V1`（controller 設計預設）下，datapack／mod 改寫任何被引用 registry 元素的內容（dimension type、noise settings、density function、noise parameters、biome、structure set、tag、template、loot、component、world preset）不會改變 FP；三種內建 profile 的「已驗設定」與 same-seed／toggle 的地形相符保證都以兩端 datapack／mod 配置相同為前提，Task 22 人工清單須如實標示，Task 8-H H1 才補完整偵測。

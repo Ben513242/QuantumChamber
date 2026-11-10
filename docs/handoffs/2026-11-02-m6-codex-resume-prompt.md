@@ -1,5 +1,11 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
+**2026-11-10 T13 候選結案：待本 commit CI，仍 OPEN。** B+C 的 spec v1.5／plan 與三份交接文件已經唯一獨立窄審 C0／I0／M0 採用（審查 SHA256 `938656a1beec0f9eb25034d94fcc28dc9a0de4d155db0ad26636a55f79c82315`）。本次只改五份文件；production／testmod／驗證腳本／build／workflow 不變。採計 0abd50e 最終 17 focused 與同 SHA 三 job CI42675304922、既有 code／final-data 審查；依新 C 不新增本機 full 或 mutation，80f9／f308 原 full／CI FAIL 不改判、已用重跑次數不重置。這份候選文件的同 SHA 三 job CI 真成功後，才在 ignored STATUS／ledger 與交付記 T13 closed，停 T14 前；若 FAIL 仍按止損回報，不提前宣告完成。M6 僅 Overworld／capability0，T15–T21 移 M7，8-H 與 M6 收尾及人工／main／tag 門檻照下方 B+C 有效條款。
+
+**2026-11-10 最新裁示：M6 採 B+C，僅交付 Overworld。** 使用者原話「可以B+C」：T13 收尾與 T14 normal↔amplified mutation 完成後，提前進行 8-H triage 及縮範圍 T22；T15–T21 整段移交 M7，`FamilyCapabilityVersion` 維持 0。8-H 依只出 `SHALLOW_V1`／Overworld 提必要項與 waiver，由使用者裁定。production 原門檻不變；僅測試／腳本／文件採一席審查、免 mutation 與本機完整回歸，CI 照常，純文件 CI 若僅已知偶發失敗不重開 task。資料安全關卡及舊 FAIL 全保；同 code pin 的已知 AccessDenied／走廊容量連坐最多保留原根後重跑一次，文件 SHA 不重置額度。先改 spec／plan 並經一次獨立窄審 C／I 清零，再接續 T13；目前 T13 仍 OPEN，未啟 T14。M6 收尾仍須完整回歸、整分支審查、CI 及單人／多人 smoke 各一輪；main 合併、tag、人工代操作須分別另獲授權。以下較早「最新」均為歷史快照。
+
+**2026-11-10最新止損交回：本次一次完整重跑已FAIL，T13仍OPEN，不再重跑。** 四docs已commit/push `f30853a2ca6429050e890568cb35dc5ef1501af0`，除四docs外550tree entries對0abd50e全exact。新full50cee6a578f8476f81e1bc1ef10a11bf原w10exit0，但default runtime逾時、stdin stop未完成、Restore因liveowner拒絕，outer1／無ENDALL／後續gate未啟；default新XML缺席，不造166或完整fail數。live具名trusted_publish_checkpoint_failure_preserves_false_windows及east_complete_doors_require_checked_ledger_windows皆AABB容量不足，更早pin>256只列特徵。sameSHA CI42732476087亦終局FAIL（Windows default／缺defaultXML連帶step9，south prepareRemap與north constructor容量錯），build/native成功不抵銷。已依user本輪任何failure停報；無再gate／source／OS修正，原80f9及所有FAIL不改。唯一owned orphan已精確身分核對後收尾，failedfresh完整保留、鎖釋放，原harness restore拒絕不改成exact restore。最新細節在ignored STATUS與本輪兩份index；下方准一次重跑等是當時裁示，額度已使用。T14仍等使用者、新CU-Uonly-client未准，未製作結案commit。
+
 **2026-11-10最新裁示：80f9符合Windows原子移動AccessDenied已知限制，本輪准新nonce完整full一次。** 80f9原root/FAIL不改；不修production、不改Defender／索引／OS。先提交並push本次四份失敗交回文件，核code與0abd50e完全相同，再以該乾淨文件HEAD完整run-all；80f9在m5-gametest後未執行的gate一律不能沿用。這次任何AccessDenied或其他FAIL均停報、不再重跑。END ALL0與同SHA三jobCI都過才做結案文件；結案文件先寫「待本 commit CI」，其CI真正通過才算T13結案。仍停T14前，不啟新canonical＋U／U-only／client；每commit／push／gate終局更新ignored STATUS首段。下方較早止損是當時快照，本條例外僅限已確認簽章。
 
 **2026-11-10最新交回：T13 OPEN，依止損停下，未結案。** 程式pin0abd50e92592e9d50a1c2fa0fe1c944409608c95已push；17個最終focused與同SHA CI42675304922三job均PASS，但本機Windows新full80f9ddf169964559a7a787101133cd9d在M5 GameTest60案中1FAIL：`m5universeprojectiongametests.prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection`。原atomic move projections.dat.<nonce>.tmp→projections.dat拋AccessDeniedException，checkedWrite回WRITE_FAILED，fixture的index.confirmed嚴拒；outer1／無ENDALL，M6及後續未啟。這不屬指定Windowsdefault十案，不自行歸偶發／waiver／rerun，不改M5／production／Defender／索引／retry。來源只讀查證已完成，鎖持有者原因未證；原全FAIL保。完整資料在本plan ignored STATUS首段及full-explicit-utf8-supplement-index，T14仍等使用者、新CU-Uonly-client未准。本次只交回失敗事實，沒有結案文件commit；以下較早可定版／待C4等為當時快照。
@@ -157,6 +163,12 @@ controller 解讀（非使用者原話；Codex 在 spec／plan 修訂時若認�
 - 任何文件不得提前寫「已合併 main」「已 push」「人工驗收已通過」。
 
 ## 8. 交回紀錄
+
+- 2026-11-10 B+C 唯一窄審 C0／I0／M0 已採用；本次五 docs 是 T13 候選結案，待本 commit CI、仍 OPEN。未改 source／腳本，不新 local full／mutation；等本 commit 三 job 真綠才 ignored STATUS／ledger 記 closed，停 T14 前。原 full／CI FAIL 及重跑次數不洗。
+
+- 2026-11-10 B+C 新裁示：M6 僅 Overworld，T13→T14→8-H triage→縮範圍 T22；T15–T21 移 M7、capability 0。先一次 spec／plan 窄審，通過才繼續 T13；測試／腳本／文件一席、免 mutation／本機 full，CI 與安全門檻照守。8-H waiver、人工代操作、main／tag 仍須使用者各自裁定。已知偶發只保根重跑一次，舊次數與 FAIL 不洗。
+
+- 2026-11-10本輪最新（一次重跑已耗用）：四docs f30853a已commitpush、程式對0abd全同；一次新full50cee原default timeout/stdinStop未完/原restore拒liveowner，outer1/noENDALL/後續未啟。defaultXML缺席只報live兩具名AABB錯，不造fail數；CI42732476087 Windows default/缺XMLguard亦FAIL，rawsouth/north容量錯分列。已止損不重跑；唯一owned orphan精確雙核後只殺本MC，Gradle鏈自然退，failedworld663檔22目錄lossless保gate/world-fresh，原manifest/backup缺席與非自然restore界限分列。source不改、oldFAIL保，T13OPEN/T14未准。這四份新交回文件保WIP，不再commitpush觸發另一CI。
 
 - 2026-11-10最新（使用者AccessDenied裁示）：80f9指定AccessDenied atomic move簽章視為2026-10-21已知限制，從先前「其他失敗停查」排除；原FAIL保留不改，無production或OS變更。准先四docs提交push並證code等同0abd50e，再於該cleanHEAD新nonce完整full一次，同SHA3CI必過；這次任何FAIL停報不重跑。結案docs先待本commitCI，CI過才閉。T14–T21同codepin若full唯一為此簽章，可自動freshnonce重跑一次，第二次停報；混有其他FAIL不適用。T14與新控制仍等另行授權。
 

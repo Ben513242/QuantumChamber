@@ -1836,3 +1836,38 @@ T13維持OPEN，沒有T13結案文件commit；四份本次失敗交回文件先�
 80f9停在m5-gametest，其後M6 safety/GameTest、main-only、M3、recovery、collapse、native、ci-rule及summary等都沒跑，本次不能沿用。僅完整自然ENDALL0／outer0與該SHA三jobCI成功、所需獨審C/I0齊後才做結案docs；先寫「待本 commit CI」，該commitCI真過才結案，仍停T14前。每commit/push/gate後即更新STATUS首段，T13目前OPEN，不預寫新full/CI已通過。
 
 通用T14–T21規則同時記入AGENTS與plan：某codepin full唯一為本簽章且無其他FAIL，可保原root、freshnonce重跑一次不必再問；同pin第二次發生停報，不藉純docs SHA重置次數，不改正式判定或production/OS。其他未授權控制、T21與舊FAIL界線維持。
+
+
+### 2026-11-10：f308一次授權完整重跑失敗，止損交回
+
+第一步已完成：四份失敗交回文件（含最新明確裁示）commit／push `f30853a2ca6429050e890568cb35dc5ef1501af0`，remoteexact/porcelain空；Git tree排四docs後550項mode/type/blob對0abd全exact，code-equality-before-push.json存本plan ignored full-retry-f30853a-20261110/。source M2 51fb／PS1f12不變。新full與新sameSHA CI均只本輪資料，未沿用80f9的M5後半。
+
+唯一full `run-all-50cee6a578f8476f81e1bc1ef10a11bf`：UTF8啟動，原W10 preflight exit0，default原runner09:03:08開始、MC09:04:41；執行至09:24:08 timeout、stdin stop未完成，fullchild09:24:12 outer1。RestoreRoot拒liveowner，原gate/execution/locks-after保持FAIL，無ENDALL／任何後續gate。正式default GameTest XML缺席，不填最終166或fail數；先行JUnit fresh91XML=1107/0failure/error、既有Windows skip2。原liveUTF8 log09:14:20具名trusted_publish_checkpoint_failure_preserves_false_windows、09:14:42 east_complete_doors_require_checked_ledger_windows各InvocationTargetException caused by AABB容量不足；09:11:21 pin>256只是更早特徵，不推共因、不擴source/觀測。
+
+安全收尾：原execution已送stdin stop未完，當下雙核唯一MC PID58156／Parent12036／CreationUTC01:04:41.158957／完整本repo DLIreport+defaultNormal+argfile，root授權retainedHandle只kill此owned orphan並確認退出；非自然stop、不改測試原判，Gradle64216/12036隨後自然退出、未另kill。兩輪Java0/lockexclusive後，再驗canonical工作區界線與祖先nonreparse/current存在/backup與fresh目標均absent，只losslessMove失敗world至原gate/world-fresh，663檔SHA與22目錄前後exact。原beforemanifest與算法backup缺席，不能冒原harness exactrestore；新manual-owned-cleanup-preservation.json分列sourceflow inference、當前runtime world path absent與保留world。原world-restore.json未造、原FAIL收據不覆。
+
+sameSHA CI `42732476087` 終局FAIL：build success、m6-native真187秒／7鏈21phase／277原300秒內success，但Windows主job step6/default failure、step9缺build/gametest-results.xml連帶fail。原artifact沒有default XML，不以oracle副本補；normal13/M560/M619/legacy1 freshXML0bad0skip，JUnit1107/0failerror/skip2。raw lateral-south第一primary是AABB容量不足（reserve807→prepareRemap541→lateralRemap311）；north constructor/reserveInitial同容量拒、RESERVATION_UNCONFIRMED/STOP。只記具名stack/cleanup與stop差異，不認定與local共因。AccessDenied在T12_FINAL_FLUSH_DIAG/HANDLE背景不當獨立unexpected IO簽章；明示模擬readback fault亦分開。
+
+本次新證據：local `full-retry-f30853a-20261110/index.json` SHA `0a7d6873843b8fef51a753bb3becff767cd521e975f5154a4c32ebff05f44ed1`，1053原件SHA／source+compiled/env／forced-owned-cleanup與manual保留界限俱在。CI `ci-once-f30853a-42732476087-20261110-a7e62390/ci-terminal-stop-audit.json` SHA `efb60ce57c099aa00531b1f4c55cc55b40101e68d1eb1a3db87c024bcb34bc05`；最小case/scope audit SHA `9c2b78ac2908d8ddb28c9554a42506041c01693a337d54d0d15e88fde3571daf`；1289檔capture manifest SHA `d8feba6187b89ce87201f7982eb249bcd886c4b97137a87637dc673ab9c67b1b`。全部原0abd三index與80f9FAIL仍exact，不回判。
+
+使用者本次一次額度已使用，因真FAIL已停下、不再重跑；不套T14–T21一般規則給本輪更多嘗試、不修七外10或production/OS、不新設計/觀測。T13仍OPEN，沒有結案文件commit；四份新的失敗交回記錄先保未提交WIP，避免以狀態push自動觸發另一輪CI。STATUS首段已即時更新，runner/CI collector全交回controller並停止；T14與新CU-Uonly-client仍未授權，等待使用者後續裁示。
+
+
+### 2026-11-10：AABB 原件調查止損與 B+C 範圍／流程新裁示
+
+先前有界原件調查只核既有六份 default log 與四份本機終局 journal，沒有新 runtime 或 source 修改。global managed pin 超 256 會連帶 fail 其他符合條件的 space；offline 的離線 cohort 可繼續保留。但四份終局 `Records` 均只有指定 offline SID，指定 pin-capacity SID 全部缺席，四個有正式 XML 的樣本該 pin-capacity case 均 PASS，推翻兩 SID 都長期保留到終局的概括。journal 缺席不代表當刻 allocator 無租約；max slot 5／6 只有關聯，首個 AABB 當刻完整 live／provisional／pending bounds 不足，未證實或否定 4096 expanded chunk union 耗盡。依原裁示停在這個證據邊界，不繼續設計或修 M2。
+
+既有原件索引 `.superpowers/sdd/2026-10-24-m6-universe-generation/default-aabb-crossrun-original-audit-20261110/index.json` SHA256 `6d84464c4bb13e070bae78015cf5c6af8a9c9a7d78beb27826ffbc8c78c1261d`；報告 SHA256 `6ecccaae3d5d26241df18d5dea8186da6e709c87951bb4b65fbd26059c133db9`。獨立 owning-source 只讀報告 `task13-pin-capacity-owning-source-readonly-20261110.md` SHA256 `e422f5a9d5ad484634e95ffd51eab460d19b24de505bbe531fa1f2a51692869e`。皆為 ignored 證據，原 log／NBT／FAIL 不改。
+
+後續使用者另裁示「可以B+C」。本次只將新範圍與流程寫進同一份 spec／plan：M6 僅 Overworld，T13／T14 後進行 8-H triage 與縮範圍 T22；T15–T21 移 M7、FamilyCapabilityVersion 固定 0。8-H 依 SHALLOW_V1／Overworld 提必要項與 waiver 給使用者裁定，沒有自動 waiver。測試／腳本／文件一席審查、免 mutation／本機 full，CI 照常；production 與資料安全門檻全保。已知偶發 AccessDenied／走廊容量連坐適用同 code pin 最多一次新 nonce 重跑，純文件 SHA 不重置既有次數，第二次停報。純文件 CI 僅因已知偶發失敗不重開 task，原 CI FAIL 不改判、不當 PASS。
+
+目前範圍變更待一次獨立窄審 C／I 清零後才接續 T13；T13 仍 OPEN。本次無新的測試／完整回歸／CI 結果，不稱 M6 或 T13 已結案。收尾仍須本範圍完整回歸、整分支 review、docs truth、CI、單人與多人 smoke 各一輪；清單須載明 SHALLOW_V1 與傳送門回原版世界，main 合併／tag／人工代操作另行詢問。
+
+
+### 2026-11-10：唯一 B+C 窄審採用／T13 候選結案待本 commit CI
+
+五文件凍結 patch SHA256 `195b3f8c7018225b8242c874ced04386bf9760aa1c5e41ceac160694588ba1f8` 經唯一獨立窄審 C0／I0／M0，無必要修正；報告 `.superpowers/sdd/2026-10-24-m6-universe-generation/task13-bc-scope-independent-review-20261110.md` SHA256 `938656a1beec0f9eb25034d94fcc28dc9a0de4d155db0ad26636a55f79c82315`。本段僅轉錄採用狀態及審查允許的出口，不新增設計、觀測或 source 變更。
+
+本次五文件是 T13 候選結案文件，**待本 commit CI，T13 仍 OPEN**。production／client／build／workflow 自 `d0aafb47d574f5fff24f712246bbf3508ec2a635` 無差；其後僅 M2 testmod 與既有 M6 verifier PS1 增量。程式 pin `0abd50e92592e9d50a1c2fa0fe1c944409608c95` 的最終 focused index SHA `0e60b81a3924f0558632249efde25eaf9a599e097813a42e593b6b785735950d`：17 步 PASS，JUnit92、owner4、M2九案雙輪18、native12 phase；CI42675304922 三 job 真 success，CI audit SHA `6771e1dfe37673d2b4e23aa8b92c7ebf6ae20a352a28925b2fee44beef549ed4`。final-data／focused／CI quality 獨審 C0/I0/M0 報告 SHA `738e682dc258619724b2d55f6c1394965ae3e47bacab8b847f40b990bd0f05d6` 仍可採，normal-r2 三格 final 差異的完整 rows／diff 與 UNRESOLVED 診斷不改。
+
+依 B+C 對本次測試／腳本／文件增量不另跑本機 full 或 mutation。原 d0 full 是既有 production 基準，0abd focused／CI 與本次文件 CI 各依其 SHA 分列；80f9、f308 的所有 FAIL 仍原判，不能稱本次已重跑 full 通過。正常 commit／push 後等此文件 SHA 的 build／windows-native／m6-native 三 job 真全綠，才在 ignored STATUS／ledger 及交付記 T13 closed；不為更新這個狀態再遞迴發文件 CI。若仍 FAIL，保持 T13 OPEN 並依既有重跑次數止損回報。T14 未啟，8-H、M6 T22 與人工／main／tag 門檻仍待。
