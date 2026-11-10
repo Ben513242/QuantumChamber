@@ -1,14 +1,16 @@
-# M6 Overworld 宇宙生成多樣性：binding spec（v1.6）
+# M6 Overworld 宇宙生成多樣性：binding spec（v1.7）
 
 日期：2026-10-24。基準：`0d05f889da6f8b82b97af756aaa50066b3d42854`。本文定義 M6 的新行為；未明列變更的 M4／M5 checked 權威與遊戲行為維持原約定。本文尚非實作或驗收結果。
 
-### v1.6 有效範圍（2026-11-10：宇宙只有主世界）
+### v1.7 有效範圍（2026-11-10：宇宙只有主世界）
 
 使用者原話：「宇宙只有主世界，Nether／End 共用原版，意思就是平行宇宙共用原有的Nether／End」「在宇宙裡死亡（沒有床）要去哪裡:留在宇宙這樣才符合量子艙的概念」。本版優先於較早 B+C 範圍快照；B+C 的流程與資料安全關卡保留。本次唯一範圍修訂已經獨立窄審（同席定向關閉殘留 active family 承諾 I1，終局 C0／I0／M0）採用，報告 SHA256 `062ac1acd07c6f073517c50f3cf69adfbaac7ab47ef6bad3e31ec13eb27cff3c`；尚非重生實作或人工通過。
 
-- M6 依序 T13 收尾→T14 normal↔amplified→宇宙內重生（取代 T20）→8-H triage→收尾。`FamilyCapabilityVersion` 維持 0，僅物化 U:OVERWORLD。
+**Task R 開工前修訂已採用（2026-11-10）**：本次只修 spec／plan／人工清單，唯一獨立窄審 C0／I0／M0，報告 SHA256 `1a40624a243630e9d832cecadc967b41a05785cae6ee4e328401bcdf45fe9ee0`。T13 結案不變；本輪窄審已清零，可依使用者本次授權開始 T14，Task R 尚未實作。
+
+- T13 已結案，`270ea3f` 已核對；本輪三檔修正經唯一窄審 C／I 清零後，依使用者授權開始 T14。M6 依序 T14 normal↔amplified→宇宙內重生（取代 T20）→8-H triage→收尾。`FamilyCapabilityVersion` 維持 0，僅物化 U:OVERWORLD。
 - T15–T19、T21 暫時排除，不排 M6 或 M7；不再承諾三 role family、專屬 Nether／End、portal／gateway routing、同 role 艙或 U→U 全量比較。只在 plan 保留一段未排程構想。catalog 未物化 Nether／End descriptor 的處理、維度 key 不一致待辦一併取消；不改程式、不刪改現有 catalog／ledger／frozen snapshot。c7d／e1d 及所有原 FAIL 均為保留的歷史，不是未來 T21 關卡。
-- 宇宙共用原版 Nether／End。從 U 經地獄門／終界門進到共用原版維度，回程預期落在原版主世界，沒有返回出發 U 的家族路由；這是 spec 與人工清單的明列行為，不宣稱本輪已實測。相關原版 End credits／床點組合須在實作前核對，若不符預期先回報，不藉此重開取消的 portal task。
+- 宇宙共用原版 Nether／End。地獄門回程一律落在原版主世界；終界出口照原版看床，床在 U 就回 U，沒床回原版主世界，不加 portal hook。這是明列的預期行為，尚非本輪實測結果。
 - M6 只出 SHALLOW_V1。8-H 依「只有主世界」重新提必要項與 waiver，交使用者裁示。收尾仍完整回歸、整分支審查、docs truth、CI，單人／多人 smoke 各一輪並加一輪宇宙內死亡重生。合併 main、tag、人工代操作各自另問。
 
 狀態（v1.4，2026-11-02）：依使用者 2026-11-02 裁示「我想先裁示縮 Task 8 範圍，至少本模組功能都完成後才修必須的任務切片」。為落實裁示，**controller 設計預設（非使用者原話）**：新增 §3.1.3 `SHALLOW_V1` 最小閉包並把 §3.1.1 完整閉包綁定到 ProviderVersion≥2（Task 8-H），§3.1.2 增 8-core 最小 lifecycle，§3.1／§3.2／§4／§8／§9 相應調整；M6 正式版是否只出 `SHALLOW_V1`，在 §8 的 8-H triage 交使用者裁示。**v1.4 已採用**：首輪獨立 spec review C0/I4/M11（SHA256 `c1ab9ec35a6e6c9dfba14f7f9532a2dfcca655019c974446c4ecf41df0963be8`）、plan review C0/I5/M11（SHA256 `5aa3302026c10312b9d1c415b471d44db7bd18b5a5789e2d823f1ba719120e12`）、窄複審一 C0/I1/M3（`ff9ae0b788bc9ba4b2704c25166db6ba87f24e93149c815eac0a1007388868f1`）、窄複審二 C0/I1/M2（`e52e6a80755a7faceb6d193242010f951be0d0d792f02194702376e2f2a0c920`）、窄複審三 C0/I0/M0（`943626daecfb517da91a74828d02412c4866c2c81e2f702e8d75c30ccb04ebb2`）；全部 Important 關閉後採用，本檔採用版 SHA256 記於 plan 第 11 行與 M6 note 2026-11-02 條目。v1.3 以下內容、既有 8A／8B 局部結案證據與所有 retained FAIL 原判不變。
@@ -26,7 +28,7 @@ M6 依序交付①測試腳本安全與生成競態、②random seed、③same-s
 | ①安全與競態 | fresh root 失敗仍可 exact 還原；三類結構並行生成無共享狀態污染，原版單世界輸出不變 | native 1.21 路徑盤點、三類各自定向 RED |
 | ②random | 兩個 `NEW` 可有不同 terrain／biome／structure seed，重啟與重訪不變；舊世界不變。原版 portal／死亡仍可能非正規回到 canonical，沿 M5 已知限制 | §3 schema／seed owner 與提交鏈 |
 | ③same-seed／profile | 新 UUID、空白歷史、同 seed 地形；至少一種可量測的原版 profile mutation；registry 查詢能回報精確 id／version／參數。原版 portal／死亡非正規回程仍未修 | ②、原版 preset 與 worker 實證 |
-| 宇宙內重生（取代 T20） | U 主世界死亡有效同 U 床點優先，否則同 U 安全位置；U 無法使用則 canonical 主世界並記錄 | §5 的兩個 production 注入點先回報，原 production gate |
+| 宇宙內重生（取代 T20） | 床／錨依原版優先；exact live U 主世界死亡且原版 canonical fallback 才改同 U 安全位置，無解沿原版並記錄 | §5 的 getRespawnTarget 兩個 canonical fallback 呼叫窄調整先回報，原 production gate |
 
 不做 M7、玩家可控制的權重 UI、複雜 renderer、目的地預覽、雙向量子通道、全域 eager 投影、世界池卸載或版本升級。固定 Minecraft 1.21／Yarn `1.21+build.9`／Loader `0.17.2`／API `0.102.0+1.21`／Loom `1.7.4`／Java 21。AccessDenied 維持既有 fail-closed／退避；不宣稱原版 playerdata 吞下 IOException 已解決。
 
@@ -65,7 +67,7 @@ schema1 factory 用 canonical `DimensionOptions.OVERWORLD`、存檔的 generator
 
 **journal 格式界線**：M6 新意圖使用上表 schema5 的完整 exact 欄位，legacy intent 仍以舊 exact 欄位解碼；schema5 可同時容納兩者，不改原 `CandidateId`、`DoorKey`、SELECTED 與 MEASURED。首次 schema5 checked 寫出前，先確認 M5 ledger 初始化且沒有未確認寫入；寫出後不可降回 schema4。目前只產生 `FamilyCapabilityVersion=0`，不開 Nether／End 量子艙；`NEW` 的 intent 欄位仍須與 Context exact 一致。保留 codec 編碼範圍不代表啟用 capability 1，不從程式版本補舊 frozen 能力。
 
-**Task 9 journal 原生 slot 權威與已知限制（2026-11-05 使用者縮範圍裁示）**：`quantumchamber_sessions.dat` 的正式首次載入仍須由本模組對同一份 compressed bytes 做版本探測與 schema5 有界解碼，不得先借 `PersistentStateManager.get/getOrCreate` 的未快取 unlimited 檔案路徑。新 `PersistentStateManagerJournalCacheMixin` 本片只以 `@Shadow loadedStates` 提供不外洩 mutable map 的唯讀 ABSENT／PRESENT_NULL／SAME／OTHER 四態與私有 fence；State 首次只在 ABSENT 登記 LOADING，安裝前再核 ABSENT、用原生 `set` 安裝、安裝後核 SAME 才標 INSTALLED。首次遇已佔槽（含 null）拒而不覆寫；後續本模組每次 get 與 owned save 先核 exact manager／slot SAME，不符即拒回、拒寫並停止本模組寫入，不丟 dirty／current／flushed／pending。弱 binding、LOADING 重入拒、雙 server 隔離仍守。此模式**不在當下攔截**其他 mod 對同一保留 id 的公開 `set`，也不攔其以其他 type 的公開 `get` 回填；本模組只在下一次 get/save 發現後 fail closed。在那之前，原生 autosave 可能已把 foreign state 寫進同名檔，此為使用者本次明確接受的風險，不能宣稱事前保護已成立。只有其他 mod 碰此保留 id 才可觸發的三個原生 hook（get HEAD／set Map.put／get回填 Map.put）與專用真 intermediary/JDI gate 移到 Task 8-H H5，Task21後與H1–H4一起triage，不預先waiver。既有 M4 獨立空schema3冷載測試仍只准testmod在全空／無未確認權威時精確撤自己的舊 slot/binding，再經正式有界 reader重載；不提供 production 任意 reset/adopt。此只讀 mixin 依 compile／remapJar、具名 GameTest、完整run-all及雙平台CI驗證，不另設Task9 production intermediary gate；不以這些驗證冒稱 H5 已完成。
+**Task 9 journal 原生 slot 權威與已知限制（2026-11-05 使用者縮範圍裁示）**：`quantumchamber_sessions.dat` 的正式首次載入仍須由本模組對同一份 compressed bytes 做版本探測與 schema5 有界解碼，不得先借 `PersistentStateManager.get/getOrCreate` 的未快取 unlimited 檔案路徑。新 `PersistentStateManagerJournalCacheMixin` 本片只以 `@Shadow loadedStates` 提供不外洩 mutable map 的唯讀 ABSENT／PRESENT_NULL／SAME／OTHER 四態與私有 fence；State 首次只在 ABSENT 登記 LOADING，安裝前再核 ABSENT、用原生 `set` 安裝、安裝後核 SAME 才標 INSTALLED。首次遇已佔槽（含 null）拒而不覆寫；後續本模組每次 get 與 owned save 先核 exact manager／slot SAME，不符即拒回、拒寫並停止本模組寫入，不丟 dirty／current／flushed／pending。弱 binding、LOADING 重入拒、雙 server 隔離仍守。此模式**不在當下攔截**其他 mod 對同一保留 id 的公開 `set`，也不攔其以其他 type 的公開 `get` 回填；本模組只在下一次 get/save 發現後 fail closed。在那之前，原生 autosave 可能已把 foreign state 寫進同名檔，此為使用者本次明確接受的風險，不能宣稱事前保護已成立。只有其他 mod 碰此保留 id 才可觸發的三個原生 hook（get HEAD／set Map.put／get回填 Map.put）與專用真 intermediary/JDI gate 移到 Task 8-H H5，M6 收尾前與 H1–H4 一起 triage，不預先waiver。既有 M4 獨立空schema3冷載測試仍只准testmod在全空／無未確認權威時精確撤自己的舊 slot/binding，再經正式有界 reader重載；不提供 production 任意 reset/adopt。此只讀 mixin 依 compile／remapJar、具名 GameTest、完整run-all及雙平台CI驗證，不另設Task9 production intermediary gate；不以這些驗證冒稱 H5 已完成。
 
 ### 3.1.1 完整設定資料閉包與執行相容性
 
@@ -172,7 +174,7 @@ Context publication必以固定Fabric／Minecraft的真實生命週期證據釘�
 **未知來源 preset 的持續供電拒絕（2026-11-06 Task12 full 根因）**：flat 或其他無法精確重建的來源，只有 M6 `NEW` bucket 在求來源 snapshot 時拒絕，`SOURCE`／`EXISTING` 照原規則。該 session 仍經正式安全返還與租約清理；若持續 HIGH，返還後不得立刻再建立下一個相同的新 session。只有核實同一原艙及已載入供電鄰域、實際讀到 LOW，才解除這次未知 preset 專用的重試阻擋；其後再次 HIGH 可重新嘗試。正常成功、一般 IO／provider 錯誤、其它拒絕與 M5 終局不得套用此阻擋，亦不得藉 presence `NONE`、load sync 或保存的 `wasPowered` 清除。阻擋以原艙 Controller NBT 正常保存／載入，但未完成存檔前的任意 crash 不保證持久；不得冒稱 checked journal durability。缺 callback 或 owner 身分不符不得假稱已設阻擋，也不得阻斷當前 session 的安全返還。
 **角色物化政策**：只物化 checked catalog 對應的 U:OVERWORLD，開服／按需物化沿既有 lifecycle 契約。未物化的 Nether／End descriptor 不啟用，處理 descriptor／維度 key 不一致的待辦已取消；本次不改資料格式／既有 row，也不遷移 schema1。所有目前 U 的 storage／UUID／live owner 仍須 exact，失敗世界不得刪除或假裝 rollback。
 
-即使 catalog／snapshot 現有形狀保留三個 role 資料，也只啟用主世界；所有新 session／intent 的 FamilyCapabilityVersion 持續為 0，不排家族物化或升 capability 1。U 經門使用共用原版 Nether／End 並預期回 canonical 主世界；只有 §5 的 U 主世界死亡與登入套用新重生 task，其他維度死亡仍原版。
+即使 catalog／snapshot 現有形狀保留三個 role 資料，也只啟用主世界；所有新 session／intent 的 FamilyCapabilityVersion 持續為 0，不排家族物化或升 capability 1。U 經門使用共用原版 Nether／End；地獄門回程一律落在原版主世界，終界出口照原版看床。只有 §5 的 exact live U 主世界死亡 fallback 套用新重生 task，登入與其他維度死亡仍沿既有路徑。
 
 ## 4. 生成策略與選擇（主控設計預設）
 
@@ -196,7 +198,7 @@ source seed 與**來源**各 role settings 在候選生成時按 exact source fa
 
 **Task11 原版結構定位 consumer 窄補（2026-11-06 使用者裁示）**：固定 1.21／Yarn build.9 的 `ServerWorld.locateStructure(TagKey,BlockPos,int,boolean)` 在進入 `ChunkGenerator` 之前另讀全域 `GeneratorOptions.shouldGenerateStructures()`，false 直接回 null。原版 `EnderEyeItem`、探索地圖 loot、村民售圖與海豚尋寶會走此入口；`/locate structure` 直接呼 `ChunkGenerator`，不能拿它的成功冒稱此入口已修。若 canonical global=false／新 U frozen=true，既定 constructor／worker 注入即使讓結構正確生成，原版眼睛／地圖仍被提早拒；反向 global=true／frozen=false 會執行本應立即拒絕的定位搜尋，既有 structure start 可能被回傳。使用者同意在 Task11 原計畫已有的 `ServerWorldUniverseSeedMixin` **新增恰一處** `ServerWorld.locateStructure` 內 `GeneratorOptions.shouldGenerateStructures()Z` 呼叫的包裝；只在已由 checked catalog 綁定 exact server＋world key＋descriptor＋live instance 的 schema2 `NEW_M6` 回其 frozen `GenerateStructures`，無匹配、canonical 與 schema1 原呼叫照走，不改全域 `SaveProperties` 或定位演算法。owner 必在 world 對外發布前建立且建構失敗 `finally` 清理；建構期暫時 context 不能作此長期查詢的唯一來源。原 Task15 的遷移與新增 role 待辦已取消，不改既有 Task11 owner 或舊 Overworld 相容保證。Task11 須以 global/frozen 兩方向、可定位的真結構正控制、原版眼睛或地圖至少一條整合 witness、canonical/schema1/雙 U／重啟反控制與具名 mutation 證明此唯一 callsite；`require=1` 的精確命中、compile／remapJar、真 native consumer 與完整回歸缺一不結片。不新增第三個 mixin class、驗證腳本或外部 JVM observer；其他 plan 外 production 注入點仍依 2026-11-05 裁示先請使用者決定。
 
-**Task11 外部 mod 直接安裝 owner 的已知限制（2026-11-06）**：本模組正式 factory 只在 exact 建構 context 安裝 `WorldGenerationOwnerAccess` 的 `GenerationOwner`；原版與本模組正常路徑不會對 canonical world 安裝它。若**其他 mod** 在原本為 null 的 public setter 先造出並裝入同 server／world key／live instance 的偽 owner，現行後續 exact 檢查可能採到錯誤 frozen seed／結構旗標。Task11 不為此 mod-only 碰撞新增事前 setter 攔截或專用 runtime oracle；依使用者 2026-11-05「只有其他 mod 才觸發者先推主線」裁示，列 Task8-H H6 於 Task21 後 triage。這不表示此殘餘已受保護，也不放寬本模組／原版可達的 exact owner 與世界表並行驗收。
+**Task11 外部 mod 直接安裝 owner 的已知限制（2026-11-06）**：本模組正式 factory 只在 exact 建構 context 安裝 `WorldGenerationOwnerAccess` 的 `GenerationOwner`；原版與本模組正常路徑不會對 canonical world 安裝它。若**其他 mod** 在原本為 null 的 public setter 先造出並裝入同 server／world key／live instance 的偽 owner，現行後續 exact 檢查可能採到錯誤 frozen seed／結構旗標。Task11 不為此 mod-only 碰撞新增事前 setter 攔截或專用 runtime oracle；依使用者 2026-11-05「只有其他 mod 才觸發者先推主線」裁示，列 Task8-H H6 於 M6 收尾前 triage。這不表示此殘餘已受保護，也不放寬本模組／原版可達的 exact owner 與世界表並行驗收。
 
 ### 4.1 Task 13 same-seed 驗收與 U→U 比較取消
 
@@ -229,19 +231,21 @@ final 診斷保存兩側原 1440 rows／hash、全部差格及 new→restart 全
 
 交付「證據→可支持結論→未排除假設→驗收契約候選」。若提出分層oracle，seed、frozen settings、biome、可證noise／density、structure authority仍嚴格一致，final FEATURES差異逐格保留分類，允許範圍必須有獨立控制證據；建築、修改隔離、UUID／catalog／restart不降低。「同seed／同preset的canonical-only基線集合」納入候選評估，T13與T21分開，含分類身份、反例、§4.1／本節影響及獨審計畫；候選不生效、不實作、不訂數字容差。任何正式acceptance改動須先交使用者裁定並經獨立spec review，不能由本次實驗直接改判。T13原完整回歸／兩席審查／同版CI未真正滿足前仍OPEN，不進T14。
 
-## 5. 宇宙內重生（取代原 T20）
+## 5. 宇宙內重生（取代原 T20；2026-11-10 開工前裁示）
 
-只處理死亡發生於 exact-owned U:OVERWORLD 的玩家。有效重生點屬同一 U 時，依原版床點安全判定在床邊重生；重啟後該 U 尚未載入，先依 checked catalog／UUID／world key 安全物化，再判床點。其他 U 或 canonical 的床不當作本 U 的有效重生點，不為此消耗外世界的錨或改其方塊。
+有效的床或重生錨不論位於哪個世界，一律優先依原版結果；不另做床合法性判斷，不改重生錨消耗。僅在 `ServerPlayerEntity.getRespawnTarget(boolean, TeleportTarget.PostDimensionTransition)` 內原版要走兩個 `getOverworld()` fallback，且死亡當下世界為 checked authority 對應的 exact live U:OVERWORLD，才將 fallback 目標窄調整為同一 U。
 
-沒有有效重生點時，在同一 U 主世界取 **原版主世界出生點相同的 block XZ**，於該 column 有界尋找可站立、頭部空間足夠的安全 Y，不挪用原版出生點 Y、不隨機換 XZ、不改全域 spawn。U 不可用（權威不健康、disabled／物化拒絕或安全落點無法建立）時，退回原版主世界並記錄玩家、請求 U／key、原因及實際目標；不假造原 U 可用。安全 column 無解的策略須在實作前回報，不擅自造平台或破壞方塊。
+該 U 使用**原版主世界 spawn 相同的 block XZ**，在同 column 有界尋找可站立且頭部空間足夠的安全 Y；不任意改 XZ、不改全域 spawn、不造平台或破壞方塊。若同一 U 權威／可用性或安全落點不成立，保留原版 fallback 並記玩家、U key、原因、實際目標。安全搜尋策略須在實作前回報。
 
-原版主世界與共用 Nether／End 的 **死亡** 照原版，不能僅因床點指向 U 就攔其死亡；credits／非死亡換維度與死亡分開驗。重啟後玩家仍登入同一 U：讀保存的 dimension key 時，在原版 fallback 前按 checked authority 物化同 U；U 無法使用才 canonical fallback 並記錄。持久 UUID／catalog／frozen seed／settings 與既有 playerdata 存檔限制不變，不把原版吞 IOException 的情況說成已解決。
+原版主世界與共用 Nether／End 死亡保持原版。End→主世界本來走 `getRespawnTarget(false)`，不能以 boolean 當死亡／End 出口的區別；必須以死亡當下 exact live U 主世界條件隔開 canonical End。終界出口照原版看床，床在 U 就回 U，沒床回原版主世界，不加 portal hook。
 
-plan 先列兩個 proposed production 注入點並回報：`ServerPlayerEntity.getRespawnTarget(boolean, TeleportTarget.PostDimensionTransition)` 與 `PlayerManager.onPlayerConnect` 內 `MinecraftServer.getWorld(RegistryKey)` 呼叫。固定 1.21 bytecode 已定位原版床點 lookup／fallback 及登入 fallback 順序；尚未注入、未宣稱 gate 通過。T14 後開此 task，新增或改變注入點必先回報，不順帶實作 portal／gateway／family。
+刪除原提案注入點 2（`PlayerManager.onPlayerConnect`），Task R 不改 `UniverseLifecycleService`。既有 `SERVER_STARTED` bootstrap 會物化全部 `EAGER_ENABLED` U，執行中不卸載（`UniverseLifecycleService.java:449–464`）；重啟登入仍在同一 U、床點有效，由測試涵蓋此既有路徑。`DISABLED` U 不在登入時物化，避免繞過 M5 §8.3，維持既有行為。UUID／catalog／frozen seed／settings 與 playerdata IO 限制不變。
+
+唯一 production 提案範圍為上述 method 內兩個 canonical fallback 呼叫的窄 target 調整；不做整個 method 的獨立床政策 wrapper。固定 1.21 native gate 先核 descriptor、兩個 callsite、caller 與 exact live 判斷；未實作、未宣稱通過。T14 後開 Task R，新增或改變注入位置仍先回報，不擴 portal／gateway／family。
 
 ## 6. 共用原版維度與量子艙界線
 
-平行宇宙只有主世界。Nether／End 共用 `minecraft:the_nether`／`minecraft:the_end`，不為每 U 配專屬維度，不開 capability 1 或 Nether／End 的同 role 量子艙；既有舊收據與 inert projection 的安全規則維持。從 U 經門進共用 Nether／End 後，回程預期到原版主世界，不回出發 U；人工清單須分別驗 Nether 回程與 End 出口／credits，不能只驗進門。這是明列的產品行為，原生回程與 U 床點若有衝突先回報，再裁定最小做法，不重開已取消的完整 T19。
+平行宇宙只有主世界。Nether／End 共用 `minecraft:the_nether`／`minecraft:the_end`，不為每 U 配專屬維度，不開 capability 1 或 Nether／End 的同 role 量子艙；既有舊收據與 inert projection 的安全規則維持。地獄門回程一律落在原版主世界；終界出口照原版看床，床在 U 就回 U，沒床回原版主世界。人工清單分別驗 Nether 回程與 End 出口／credits，End 出口因 U 床返回 U 是預期行為，不加 portal hook 或重開 T19。
 
 ## 7. 並行 worldgen 防護
 
@@ -254,10 +258,13 @@ plan 先列兩個 proposed production 注入點並回報：`ServerPlayerEntity.g
 1. **資料安全不減**：世界移動前核 canonical／non-reparse／owned root、無 live Java owner、session.lock 已釋放；fresh world 可恢復 move 與逐檔 hash 還原照守，失敗 root／receipt 原封保存、修正用新 nonce。testmod 不進 release／sources，main-only 必獨立核 Fabric mod list、classpath／argfiles／DLI 及 class-load，GameTest 不冒 main-only。任何時間只一個 Gradle／gate。
 2. **production 改動**：原有 RED、必要 mutation、同乾淨 code HEAD 雙 focused、完整 run-all、獨立 spec／quality C／I 清零、docs truth 與同 SHA CI 全保；不以切成文件 commit 規避程式關卡。
 3. **僅測試／腳本／文件**：一席獨立審查，不做 mutation，不跑本機完整回歸；按變更需要做針對性驗證，CI 照常。純文件 commit 的 CI 若只因已知偶發失敗，不重開已結 task；CI 原 FAIL 仍保留，不寫成 PASS，也不據此把尚 OPEN 的 task 自動結案。
-4. **已知偶發**：Windows 原子移動 AccessDenied；走廊容量連坐在根因修正完成前亦列入。同一 code pin 可保留原 root，以新 nonce 重跑一次，第二次就停下回報；文件 SHA 不重置既有次數，不以多次重跑湊綠。有其他失敗則不能用本項概括。
+4. **已知偶發**：Windows 原子移動 AccessDenied；Windows default 的 AABB／走廊容量連坐在 testmod 處理完成前亦列入。同一 code pin 可保留原 root，以新 nonce 重跑一次，第二次就停下回報；文件 SHA 不重置既有次數，不以多次重跑湊綠。有其他失敗則不能用本項概括。
 5. **設計與 oracle**：一份設計、一次獨立窄審，C／I 清零後就做；同一問題不另加多輪觀測。受原版非確定性影響的判定從一開始就分層，最終 FEATURES 方塊不作逐格相等關卡。T13 保留 §4.1／§4.2 嚴格 CARVERS／權威與完整 final 診斷；T14 在實作前定義比較層級，T21 已取消排程，舊比較結果只作歷史。既有反例與 FAIL 全保，不追加本輪 mutation。
 
-**8-H triage**：8-core 已完成部分及歷史 8-H 證據保留。T13／T14／宇宙內重生完成後、M6 收尾前，按「只有主世界、共用原版 Nether／End、SHALLOW_V1」逐項提出 H1 完整閉包、H2 lifecycle、H3 三 bundle、H4 reload、H5 reserved journal slot、H6 foreign owner setter 的當時狀態、必要性及 waiver 候選，交使用者裁定。只實作裁示為必須者；waiver 不改原 FAIL，須列於人工清單及接手入口；是否排後續 milestone 由使用者裁定，不自動新增 M7 排程。
+**8-H triage**：8-core 已完成部分及歷史 8-H 證據保留。T13／T14／宇宙內重生完成後、M6 收尾前，按「只有主世界、共用原版 Nether／End、SHALLOW_V1」逐項提出 H1 完整閉包、H2 lifecycle、H3 三 bundle、H4 reload、H5 reserved journal slot、H6 foreign owner setter、Windows default AABB／走廊容量連坐的 testmod 處理方案之當時狀態、必要性及 waiver 候選，交使用者裁定。只實作裁示為必須者；waiver 不改原 FAIL，須列於人工清單及接手入口；是否排後續 milestone 由使用者裁定，不自動新增 M7 排程。
+
+
+**Windows default AABB／走廊容量候選（待使用者裁示、未實作）**：既有只讀原件支持 global pin overflow 可連坐其他 space、offline case 完成後可留 pending；不證明後段 AABB 的當刻 4096 expanded coverage 已滿。四個 local 終局 NBT 僅見 offline SID，pin-cap SID 不在 Records，不能稱兩 SID 永久持有，也不能由最高 slot6 推定根因。候選 A 為 testmod 自身清理修正（來源可達的清理缺口候選，並非已證 AABB 根因）：`m2_native_offline` 保留原 cohort／KEEP_CURRENT／epoch0／保護等全部斷言後，以同 GameProfile／UUID 真重連，走正式返還、releaseComplete 與 ack 後才 complete；pin-cap 保留 256 合法／257 拒絕原斷言與原 timeout，只補自身全段失敗清理及 overflow 窗口的無其他 live space 檢核，不清他案。僅可用既有 `M4CandidateTestAccess.get(pages,"spaces")` 唯讀檢核，不能 mutate map／reset／dropSpace，且須覆蓋整個 overflow 窗口而非單次空集合。候選 B 為將原 offline／pin-cap case 隔離到專用 batch，保留每個 case／期待／timeout，default scope 仍完整執行它們並核 XML 集合，不能減案求綠。A 的預計 testmod 白名單為 `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`，若確需共用 helper 才另裁 `src/testmod/java/dev/quantumchamber/gametest/ConnectedGameTestPlayer.java`／`M4CandidateTestAccess.java`；B 除同一 case 檔的 batch 標註外，若需 runner／build／harness 接線，先列 exact 路徑與完整 scope 證明再請使用者裁示，不在本次授權。兩候選均不改 production 容量／行為、原案例與 timeout、old FAIL，不新增觀測或 observer；裁示及窄審後才可實作。T22 最終 full 必自然 `END ALL exit=0`，同 pin 最多重跑一次，第二次停報。
 
 **縮範圍 T22**：M6 收尾仍須在最終程式 pin 完成本範圍完整回歸（run-all 自然 END ALL exit=0、必要 M6 原生鏈、M5／legacy、main-only／artifact isolation）、整分支審查、docs truth 與 CI。單人、多人各一輪並加一輪宇宙內死亡重生的人工 smoke 依 §1／§5 清單保存實際版本、世界、操作者與 receipt／log；未實玩不得填通過。合併 main、建立 tag、人工代操作分別另問使用者；正常 push 仍依持續授權，不建立 PR／LICENSE。此處 milestone 完整回歸不因逐次測試／文件免本機 full 而省略。
 
@@ -265,5 +272,5 @@ plan 先列兩個 proposed production 注入點並回報：`ServerPlayerEntity.g
 
 1. 主控設計預設的三類等量預設與 `SAME_SEED_TOGGLE_AMPLIFIED_V1`，不是使用者指定的平衡規則；如原版 1.21 registry gate 不成立，須明列替代 mutation 再 review。
 2. schema1 舊世界首次升級前若存檔 seed 曾被外部變更，舊 catalog 沒有 seed 副本，無法純靠它證明歷史 seed；須在 native／fixture gate 確認可採的證據與 fail-closed 條件。
-3. 宇宙內重生先驗原版床點／fallback 與登入維度 lookup 的固定版本路徑；共享維度的死亡／credits 是反控制，不能把新死亡規則套上所有維度。
+3. 宇宙內重生只先驗 getRespawnTarget 的兩個 canonical fallback 與 exact live 死亡世界條件；床／錨及 End 出口沿原版。登入／重啟床點驗既有 EAGER_ENABLED bootstrap，不增加登入物化 hook 或修改 lifecycle。
 4. v1.4 `SHALLOW_V1`（controller 設計預設）下，datapack／mod 改寫任何被引用 registry 元素的內容（dimension type、noise settings、density function、noise parameters、biome、structure set、tag、template、loot、component、world preset）不會改變 FP；三種內建 profile 的「已驗設定」與 same-seed／toggle 的地形相符保證都以兩端 datapack／mod 配置相同為前提，Task 22 人工清單須如實標示，Task 8-H H1 才補完整偵測。

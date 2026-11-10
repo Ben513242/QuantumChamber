@@ -4,7 +4,7 @@
 
 **Goal:** 保留既有收據與世界語意，M6 僅交付 Overworld 的持久 random、same-seed fresh（T13）及 normal↔amplified mutation（T14）；僅 Overworld 並加宇宙內重生；T15–T19／T21 不排 M6 或 M7，FamilyCapabilityVersion 維持 0。
 
-**Architecture:** frozen candidate intent → checked allocation/catalog → exact U:OVERWORLD runtime identity。每 U frozen seed／settings 與 legacy schema1 舊路徑維持；不排 family 遷移或 custom Nether／End。宇宙內重生只處理 exact U 主世界死亡與保存維度登入，其他維度死亡原版。
+**Architecture:** frozen candidate intent → checked allocation/catalog → exact U:OVERWORLD runtime identity。每 U frozen seed／settings 與 legacy schema1 舊路徑維持；不排 family 遷移或 custom Nether／End。宇宙內重生只窄調 exact live U 主世界死亡的原版 canonical fallback；床／錨、登入與其他維度死亡沿原版／既有 bootstrap。
 
 **Tech Stack:** Minecraft 1.21、Yarn `1.21+build.9`、Fabric Loader `0.17.2`、Fabric API `0.102.0+1.21`、Loom `1.7.4`、Java 21、Gradle 8.8、PowerShell 7；JUnit／Fabric GameTest／跨 JVM probe。
 
@@ -12,13 +12,15 @@
 
 ## 2026-11-10 最新範圍：宇宙只有主世界（B+C 流程維持）
 
+**本輪 Task R 修正已採用**：spec v1.7、plan 與人工清單唯一窄審 C0／I0／M0（SHA256 `1a40624a243630e9d832cecadc967b41a05785cae6ee4e328401bcdf45fe9ee0`），無必要修法；T13 結案與 270ea3f 維持。之後依本次明確授權開工 T14；AABB 候選仍待使用者裁示、Task R 未實作。
+
 使用者原話：「宇宙只有主世界，Nether／End 共用原版，意思就是平行宇宙共用原有的Nether／End」「在宇宙裡死亡（沒有床）要去哪裡:留在宇宙這樣才符合量子艙的概念」。本段優先於所有較早 M7／family／T21 範圍快照；這一份 spec／plan 修訂已經唯一獨立窄審終局 C0／I0／M0 採用，I1 僅同席定向修正；不改 source，尚非 Task R 實作。
 
-1. 順序：T13→T14→宇宙內重生（取代 T20）→8-H triage→M6 收尾。M6 僅 U 主世界、FamilyCapabilityVersion=0；T15–T19、T21 不排 M6 或 M7，原 U→U 全量比較取消，c7d／e1d 原 FAIL 永保歷史。
+1. T13 已結案且 `270ea3f` 已核對；本輪三檔修正唯一窄審 C／I 清零後已獲使用者授權開工 T14。順序：T14→宇宙內重生（取代 T20）→8-H triage→M6 收尾。M6 僅 U 主世界、FamilyCapabilityVersion=0；T15–T19、T21 不排 M6 或 M7，原 U→U 全量比較取消，c7d／e1d 原 FAIL 永保歷史。
 2. catalog 未物化 Nether／End descriptor 與維度 key 不一致待辦一併取消；不改 UniverseKeys／catalog／ledger／frozen snapshot，不建新 role、不升 capability。
 3. 8-H 依「只有主世界、共用原版 Nether／End、SHALLOW_V1」重提必要項與 waiver，交使用者裁定；不自動豁免或移排 M7。
-4. B+C 不變：production 原門檻；僅測試／腳本／文件一席審查、必要 targeted 驗證與 CI，免 mutation／本機 full。所有世界移動／逐檔還原、lock、owned root、testmod隔離、main-only、old FAIL全保；known AccessDenied／根因修正前走廊容量連坐同 code pin 最多一次新 nonce，第二次停，純文件 SHA 不洗次數；已結 task 不因 pure-docs known CI 失敗重開。非決定性從一開始分層，不逐格比較 final 方塊；一份設計一次窄審 C/I0 後做，不另加多輪觀測。
-5. 收尾保完整回歸／整分支審查／docs truth／CI，單人與多人各一輪，另加一輪宇宙內死亡重生。人工代操作／main 合併／tag 各自另問；目前不啟 client。現有 T13 候選 commit 4e600a6 的 CI 獨立採計，仍待三 job 真綠，不因這份新 scope 文件改寫原判。
+4. B+C 不變：production 原門檻；僅測試／腳本／文件一席審查、必要 targeted 驗證與 CI，免 mutation／本機 full。所有世界移動／逐檔還原、lock、owned root、testmod隔離、main-only、old FAIL全保；known AccessDenied／testmod 處理前 Windows default AABB／走廊容量連坐同 code pin 最多一次新 nonce，第二次停，純文件 SHA 不洗次數；已結 task 不因 pure-docs known CI 失敗重開。非決定性從一開始分層，不逐格比較 final 方塊；一份設計一次窄審 C/I0 後做，不另加多輪觀測。
+5. 收尾保完整回歸／整分支審查／docs truth／CI，單人與多人各一輪，另加一輪宇宙內死亡重生。人工代操作／main 合併／tag 各自另問；目前不啟 client。T13 結案與 `270ea3f` 已核對；歷史各次 FAIL／UNKNOWN 原判保留，不由本輪文件倒改。
 
 狀態（2026-11-05 8C 結案）：8C-0～8C-3 的本機、兩席、docs truth、push 與遠端雙平台門檻已達。末 code pin `16b833cc43278fe8fb56e8e75f2aed4beee49667` 本機 full `run-all-f9344a453d914fc2b22bae056c0fed1e` 自然 `END ALL exit=0`／JUnit1014／M6 10/10／mainOnlyPASS，S1a Full strict另PASS；最終 docs HEAD `0f02011b97e9b03b043afbfe33d14aa203d88708` 的 GitHub run `41918108739` Ubuntu build／Windows windows-native雙job success。8C-3 handoff§4 I-1 修後複審 ADDRESSED C0/I0/M1；唯一 M1 為8C-2 foreign END／dispatch 異常未永久poison，符合tracked最小契約、較強ignored addendum未全做。此後純狀態docs commit不改code/build/workflow，本docs commit採Task9 tracked補充（獨審C0/I0/M0，報告SHA256 832EB19BF104F7C2A31804A407654680F551F5487640341D78CAA191F09BEF50），正常push後可派Task9 code；8-H H1–H4仍於Task21後triage，沒有waiver，原FAIL不改判。Task9–21與M6整體尚未完成，下方較早狀態均為歷史快照。
 
@@ -64,9 +66,9 @@
 | 高風險輸入／行為 | 擁有 task 與具名 test |
 | --- | --- |
 | 同一 `AllocationToken` 的 catalog atomic move 已落地但讀回失敗 | Task 10 `m6CatalogReadbackAfterMoveKeepsSameSeedAndUuid`，cross-JVM `catalog-readback` |
-| 同 U 床點在 restart 後 U 尚未載入 | 宇宙內重生 Task R：checked key 物化後床點仍有效，另驗登入仍同 U |
+| restart 後 EAGER_ENABLED U 的床點與登入 | Task R 測試既有 SERVER_STARTED bootstrap，床點仍有效、登入仍同 U；DISABLED 不新增登入物化 |
 | provider 同 id/version 輸出變更或已卸載 | Task 8C `resolveRejectsFingerprintMismatch`、`resolveRejectsUnknownProviderOrVersion`（`SHALLOW_V1` 深度，見 spec §3.1.3 已知限制）、Task 9 `journalRejectsMissingProvider`；完整閉包深度的 `snapshotRejectsChangedProvider` 屬 Task 8-H |
-| U 無有效床、或 U 無法使用 | Task R：同 U／canonical spawn 同 XZ 安全 Y；不可用 canonical fallback 有原因記錄 |
+| 床／錨跨世界優先及原版 fallback | Task R：有效床／錨照原版；僅 exact live U 死亡且 canonical fallback 才改同 U 同 XZ 安全 Y，無解保原版並記原因 |
 | canonical／共用 Nether／End 死亡被誤套 U 政策 | Task R 原版死亡反控制；End credits 與非死亡換維度分開驗 |
 
 ## File map 與固定介面
@@ -77,7 +79,7 @@
 | 三類 race | `src/main/java/dev/quantumchamber/mixin/` 的三個專用 mixin（新建），`src/main/resources/quantumchamber.mixins.json`; `src/test/java/dev/quantumchamber/universe/` 三個 race test、`src/testmod/java/dev/quantumchamber/gametest/M6RaceGameTests.java`（新建） | 每類只隔離該結構生成 invocation 的 mutable state，`require=1`；原版 `/place`／worker 路徑都受同一 guard。 |
 | snapshot／policy | `src/main/java/dev/quantumchamber/universe/GenerationSettingsSnapshot.java`、`UniverseProfileRegistry.java`、`UniverseProfileProvider.java`（新建）、`Minecraft121ShallowSettingsCanonicalizer.java`、`Minecraft121VanillaPresetProfileProvider.java`、`Minecraft121SettingsLifecycle.java`（8C 新建）；`src/main/java/dev/quantumchamber/candidate/SourceGenerationSnapshot.java`、`M6CandidatePolicySelector.java`（新建）；`candidate/CandidatePolicySnapshot.java`、`CandidateResolver.java`、`CandidateLedgerService.java`、`NewUniverseIntent.java`、`superposition/SuperpositionSession.java`、`persistence/CandidateJournalCodec.java`、`SessionRecoveryRecord.java`、`SessionJournalStore.java`; `src/main/java/dev/quantumchamber/QuantumSuperpositionMod.java` | `UniverseProfileRegistry.register(provider)`、`freeze()`、`createSnapshot(...,lease)`、`resolve(snapshot,lease)`；`SourceGenerationSnapshot(long rootSeed, GenerationSettingsSnapshot settings)` 僅在 NEW 分支求值；`M6CandidatePolicySelector.forNewSession(server)` 只在已驗後端 ready 時回 policy1/2/3/capability0，舊 frozen Context 不改；`Minecraft121SettingsLifecycle.registry()`（已 freeze 唯一實例）與 `Minecraft121SettingsLifecycle.acquire(server)` 是 Task 9–14 等現有生成路徑 取得 registry／lease 的唯一入口（8C）。 |
 | catalog／runtime seed | `collapse/UniverseAllocationLedger.java`、`CollapseAuthorities.java`、`DestinationResolver.java`; `universe/UniverseRecord.java`、`UniverseDefinition.java`、`UniverseRegistryState.java`、`UniverseRegistry.java`、`UniverseWorldDescriptor.java`; `universe/minecraft121/Minecraft121ServerWorldFactory.java`、`Minecraft121DynamicDimensionBackend.java`; `mixin/ServerWorldUniverseSeedMixin.java`（新建） | `catalogRecordMatches(intent, record, availability)` 依版本／provenance；`rootSeed(server, worldKey, descriptor)` 只對 exact schema2 world 生效，無匹配時原版。 |
-| 宇宙內重生／登入 | `universe/UniverseRespawnService.java`、`mixin/ServerPlayerUniverseRespawnMixin.java`、`PlayerManagerUniverseLoginMixin.java`（預計新建），既有 lifecycle checked materialize | 僅 U 主世界死亡／保存維度登入；注入點先回報，canonical／共用 Nether／End 死亡原版。 |
+| 宇宙內重生 | `universe/UniverseRespawnService.java`、`mixin/ServerPlayerUniverseRespawnMixin.java`（預計新建） | 僅 getRespawnTarget 兩個 canonical fallback 的窄 target 調整；exact live U 死亡條件，床／錨原版；不改 lifecycle 或登入。 |
 | GameTest／recovery | `src/testmod/java/dev/quantumchamber/gametest/M6UniverseGameTests.java`、`M6UniverseRecoveryProbe.java`（新建），`src/testmod/resources/fabric.mod.json`、`quantumchamber-test.mixins.json`、`src/testmod/java/dev/quantumchamber/gametest/mixin/M4LegacyGameTestFilterMixin.java`；`build.gradle` 的 `runGameTestM6`／`m6UniverseProbe`、`.github/workflows/build.yml` | batch `m6_universe*` 專屬 fresh `run/gametest-m6`；cross-JVM `m6UniverseProbe` 接 `m6UniverseNonce/Phase/StartupNonce/Root/Chain/ExpectedMode`，每 phase 新 JVM；`schema/expectedMode` 進 receipt。 |
 
 以上是擁有權地圖，不授權任一 task 順手修改全部列出的檔。task 派工逐項列本 task 允許路徑與 exact HEAD。原版 mixin 注入點在 native gate 證明前不可預寫成已可注入；下列功能介面及斷言固定，具體 descriptor/ordinal 由對應 native task 記錄後交 implementer。
@@ -807,7 +809,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 ### Task 14：policy3 的 normal↔amplified mutation
 
-**開工前待辦（同一份 T14 設計內完成）**：釘選 `sameSeedAmplifiedTerrainDiffersReproducibly` 的比較層級與固定樣本：seed／frozen 設定／provider／UUID／catalog／重啟權威嚴格驗，normal↔amplified 的差異以實際 feature 前生成層證明；各 preset 的可重現性另驗，final FEATURES 完整 rows／差格只作診斷，不用最終方塊逐格相同或任意容差。`NewUniverseIntent.java`、`UniverseRecord.java` 與下列 Files 是否需改由本 T14 設計明列，未列不得順改；不新增未回報的 production 注入點。這不是啟動 T14 的裁示，先完成 T13。
+**開工前待辦（同一份 T14 設計內完成）**：釘選 `sameSeedAmplifiedTerrainDiffersReproducibly` 的比較層級與固定樣本：seed／frozen 設定／provider／UUID／catalog／重啟權威嚴格驗，normal↔amplified 的差異以實際 feature 前生成層證明；各 preset 的可重現性另驗，final FEATURES 完整 rows／差格只作診斷，不用最終方塊逐格相同或任意容差。`NewUniverseIntent.java`、`UniverseRecord.java` 與下列 Files 是否需改由本 T14 設計明列，未列不得順改；不新增未回報的 production 注入點。T13 已結案且 `270ea3f` 已核對；本輪三檔修正唯一窄審 C／I 清零後，依使用者本輪授權開始 T14，沿既有 T14 設計，不另開設計文件。
 
 **Files:** Modify `src/main/java/dev/quantumchamber/candidate/CandidateResolver.java`、`M6CandidatePolicySelector.java`、`src/main/java/dev/quantumchamber/universe/UniverseProfileRegistry.java`、`universe/minecraft121/Minecraft121ServerWorldFactory.java`、`src/test/java/dev/quantumchamber/universe/GenerationSettingsSnapshotTest.java`、`src/testmod/java/dev/quantumchamber/gametest/M6UniverseGameTests.java`、`M6UniverseRecoveryProbe.java`、`M6ProfileProbePhases.java`、`scripts/verification/m6-universe-probe.ps1`。
 **Interfaces:** 同一真實入場 selector 只對**新 session**啟用 policy3/family0、三類等量；toggle 只翻轉 target Overworld preset（ProviderId 與 `OverworldPreset` 一併切換為對應內建 id），Nether/End snapshot 沿 source；舊 policy1/2、既有 target fingerprint 不改。
@@ -821,24 +823,24 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 ### Task R：宇宙內重生（取代原 T20；T14 後）
 
-**Files（僅列預計範圍，尚未實作）:** Create `src/main/java/dev/quantumchamber/universe/UniverseRespawnService.java`、`src/main/java/dev/quantumchamber/mixin/ServerPlayerUniverseRespawnMixin.java`、`PlayerManagerUniverseLoginMixin.java`、`src/test/java/dev/quantumchamber/universe/UniverseRespawnServiceTest.java`；Modify `src/main/resources/quantumchamber.mixins.json`、`UniverseLifecycleService.java`（僅 checked materialize 接線）、既有 `src/testmod/java/dev/quantumchamber/gametest/M6UniverseGameTests.java`／`M6UniverseRecoveryProbe.java`／`M6ProfileProbePhases.java`、`scripts/verification/m6-universe-probe.ps1`；若需其他路徑先回報，不借此擴 family。
+**Files（預計範圍，未實作）:** Create `src/main/java/dev/quantumchamber/universe/UniverseRespawnService.java`、`src/main/java/dev/quantumchamber/mixin/ServerPlayerUniverseRespawnMixin.java`、`src/test/java/dev/quantumchamber/universe/UniverseRespawnServiceTest.java`；Modify `src/main/resources/quantumchamber.mixins.json`、既有 `src/testmod/java/dev/quantumchamber/gametest/M6UniverseGameTests.java`／`M6UniverseRecoveryProbe.java`／`M6ProfileProbePhases.java`、`scripts/verification/m6-universe-probe.ps1`。不建立登入 mixin，不改 `UniverseLifecycleService.java`；其他路徑先回報。
 
-**Interfaces:** 死亡當刻 exact-owned U:OVERWORLD→同 U 有效床點；無效／無床→同 U 的 canonical 主世界 spawn 同 block XZ、安全 Y。其他 U／canonical 的床不作本 U 有效床點；不消耗外世界錨、不改全域 spawn、不任意挪 XZ。U authority／可用性／物化或安全落點不可成立時，canonical 主世界 fallback 並記玩家、U key、原因、實際目標。原版主世界與共用 Nether／End 死亡完全走原版；End credits／非死亡路徑另列反控制。重啟讀 playerdata 的 U key 時，在 vanilla fallback 前按 checked catalog 安全載入同 U；原 UUID／catalog／持久化保證與 playerdata IO 限制不變。
+**Interfaces:** 有效床／重生錨不論世界一律原版優先，不另判床合法性、不改錨消耗。只有原版兩個 canonical fallback，且死亡當下為 exact live U:OVERWORLD，才改同 U 的原版 spawn 同 block XZ、安全 Y；無安全落點／U 不可用沿原版 fallback，記玩家、U key、原因與實際目標。canonical／共用 Nether／End 死亡與 End 出口保持原版。`getRespawnTarget(false)` 也用於 End 出口，不能以 boolean 區分；exact live 死亡世界條件必須排除 canonical End。
 
-**新增 production 注入點（先寫 plan／先回報，未准直接實作）：**
+**唯一 production 注入範圍提案（先回報，未實作）:** `ServerPlayerEntity.getRespawnTarget(ZLnet/minecraft/world/TeleportTarget$PostDimensionTransition;)Lnet/minecraft/world/TeleportTarget;` 內兩個 `MinecraftServer.getOverworld()` fallback 呼叫的窄 target 調整。不是整個 method wrapper 或獨立床政策。必須辨識這兩支原生 fallback 路徑，不能僅憑回傳目標為 canonical 判定，因有效 canonical 床／錨也必須原樣保留。調整後保留原 `TeleportTarget` 的 `missingRespawnBlock`、velocity、yaw／pitch 與 `postDimensionTransition` 旗標／回呼；安全 Y 無解時原樣回傳原版 target 並記錄。 固定 1.21 native gate 核兩 callsite、descriptor、caller 與 exact live 條件。刪除原注入點 2 `PlayerManager.onPlayerConnect`，不另 hook 全域 getOverworld／portal。
 
-1. `ServerPlayerEntity.getRespawnTarget(ZLnet/minecraft/world/TeleportTarget$PostDimensionTransition;)Lnet/minecraft/world/TeleportTarget;` 的窄 method wrapper（預計 `@WrapMethod`）。只在實際死亡且目前 exact U 主世界套新目的地政策；同 U 床沿原版合法性／床邊計算，其餘取同 XZ 安全 Y。原生 bytecode 的 spawn world lookup 在 offset25，兩條 canonical fallback 在95／108後；不另 hook 全域 `MinecraftServer.getOverworld`，不攔其他維度死亡。
-2. `PlayerManager.onPlayerConnect(ClientConnection,ServerPlayerEntity,ConnectedClientData)` 內 `MinecraftServer.getWorld(RegistryKey)` 的單一呼叫（bytecode offset106，預計 `@WrapOperation require=1`）。只對保存的 checked U:OVERWORLD key 做 materialize／exact live owner 驗證後回原查詢，無法使用記錄並沿 canonical fallback；不改 playerdata 的 key／UUID，不把純 suffix 當權威。
-
-- [ ] 開工先回報以上兩點，固定1.21 native gate 核 descriptor、wrapper可行性與所有 caller；若需第三點或調整注入位置先回報，不先改 production。床點重啟未載入與實際死亡旗標／End credits須分清；End 出口若因 U 床而返回 U，先回報如何維持「回原版主世界」，不暗增 portal hook 或重開 T19。
-- [ ] 具名反例／正控制：U 有床、床拆除／無床、床在另一 U／canonical、死亡後 restart且U未載入、正常restart登入U、U disabled／catalog不健康／物化拒絕、sameXZ安全Y與unsafe column、兩 U／兩玩家隔離；canonical／共用 Nether／End 死亡及 credits 原路徑反控制。安全 Y 搜尋有界，無解不擅造平台／拆方塊，策略先回報；收據記同XZ輸入與實際位置、fallback原因。
-- [ ] 本 task 有 production 改動，按原 RED／必要 mutation／雙 focused／完整回歸／spec及quality／同 SHA CI 門檻；測試腳本窄修才適用 B+C 一席免 local full，不將產品 profile mutation 與測試 mutation 混淆。此文件修訂不啟本 task。
+- [ ] 重啟登入仍同 U 與床點有效，測試現有 `SERVER_STARTED` bootstrap 全部物化 EAGER_ENABLED、執行中不卸載的路徑（`UniverseLifecycleService.java:449–464`）。DISABLED 不在登入物化，保持 M5 §8.3 及既有行為；UUID／catalog／playerdata IO 限制不變。
+- [ ] 具名正反控制：同 U／另一 U／canonical 的有效床、有效錨與原版消耗；拆床／無床；兩 U／兩玩家隔離；sameXZ安全Y與unsafe column無解後原版 fallback 及原因。安全搜尋有界，不造平台／拆方塊，策略先回報。canonical／共用 Nether／End 死亡及 End 出口有 U 床回 U／無床回原版主世界分列；不把 End 回 U 當錯誤。
+- [ ] production 原 RED／必要 mutation／雙 focused／完整回歸／spec及quality／同 SHA CI 全保；只測試腳本窄修才適用 B+C 一席免 local full。T14 後開 Task R，新增或改注入位置先回報，不擴 family。
 
 ### Task 8-H triage 與必須切片（T14／宇宙內重生之後、M6 收尾前）
 
 **Files:** Modify `docs/implementation-notes/2026-10-24-m6-universe-generation.md`、本 plan 此節、`AGENTS.md` 接手入口；實作檔依裁示為必須的切片各自列出。
 **Interfaces:** triage 只產文件與裁示，不改程式；每個必須切片再按 Global Constraints 協定獨立派工。
 - [ ] 列出 H1 完整閉包 ProviderVersion≥2（C1d 其餘含 D1c LOOT_TABLE、三 role 完整 canonical／FP、100ms live hold I-1、T2 額外 100ms FAIL）、H2 正式 lifecycle 證明（S1b、S2 integrated RM、source bridge／同票同 seal／consumer、LT2 STOP-PENDING 安全性）、H3 8B3-F 三 bundle（三腳本、ci-rule 負例、workflow、production runtime 準備核）、H4 完整 reload GameTests、H5 Task9 reserved journal slot 事前攔截、H6 Task11 public `WorldGenerationOwnerAccess` setter 初次 foreign owner 安裝殘餘的當時狀態、原件 SHA 與 retained FAIL。H5 包含原生 `get` HEAD `@Inject`、`set` 的 `Map.put` `@WrapOperation`、`get` cache-miss 回填的 `Map.put` `@WrapOperation`、只為三 hook 所需 permit 消耗／公開 manager monitor 雙 thread 負控／wrong-lock／非 reserved cold get mutation，以及 `scripts/verification/m6-journal-slot-intermediary.ps1`、`scripts/verification/java/JournalSlotRuntimeObserver.java` 的 JDI 真 intermediary production gate 與 handler monitorenter 證明。H6 僅其他mod能在本模組安裝前造同server/key/live instance的偽 `GenerationOwner` 並呼public setter；本片未即時攔或證事後阻擋，不能冒稱canonical已防這種碰撞。依2026-11-10最新裁示提前至M6收尾前，按只有主世界／共用原版 Nether與End／SHALLOW_V1重新triage，不預先waiver。
+
+**Windows default AABB／走廊容量候選（待使用者裁示、未實作）**：既有只讀原件支持 global pin overflow 可連坐其他 space、offline case 完成後可留 pending；不證明後段 AABB 的當刻 4096 expanded coverage 已滿。四個 local 終局 NBT 僅見 offline SID，pin-cap SID 不在 Records，不能稱兩 SID 永久持有，也不能由最高 slot6 推定根因。候選 A 為 testmod 自身清理修正（來源可達的清理缺口候選，並非已證 AABB 根因）：`m2_native_offline` 保留原 cohort／KEEP_CURRENT／epoch0／保護等全部斷言後，以同 GameProfile／UUID 真重連，走正式返還、releaseComplete 與 ack 後才 complete；pin-cap 保留 256 合法／257 拒絕原斷言與原 timeout，只補自身全段失敗清理及 overflow 窗口的無其他 live space 檢核，不清他案。僅可用既有 `M4CandidateTestAccess.get(pages,"spaces")` 唯讀檢核，不能 mutate map／reset／dropSpace，且須覆蓋整個 overflow 窗口而非單次空集合。候選 B 為將原 offline／pin-cap case 隔離到專用 batch，保留每個 case／期待／timeout，default scope 仍完整執行它們並核 XML 集合，不能減案求綠。A 的預計 testmod 白名單為 `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`，若確需共用 helper 才另裁 `src/testmod/java/dev/quantumchamber/gametest/ConnectedGameTestPlayer.java`／`M4CandidateTestAccess.java`；B 除同一 case 檔的 batch 標註外，若需 runner／build／harness 接線，先列 exact 路徑與完整 scope 證明再請使用者裁示，不在本次授權。兩候選均不改 production 容量／行為、原案例與 timeout、old FAIL，不新增觀測或 observer；裁示及窄審後才可實作。T22 最終 full 必自然 `END ALL exit=0`，同 pin 最多重跑一次，第二次停報。
+
 - [ ] 獨立 review 對每項提案「M6 合併 `main` 前必須」或「明確 gate waiver／後續排程另裁」，附理由；預設建議（非裁示）：若 M6 正式只出 `SHALLOW_V1`，H1、H4 可 waiver；H3 至少須證 Windows intermediary main-only 與 named 的 `SHALLOW_V1` FP 相同；H2 只在 refresh seal 進入正式路徑時必須。交使用者裁示，裁示原話記入 AGENTS。
 - [ ] 只實作裁示為必須者，每片按實際改動分流：production 原 RED／mutation／雙 focused／full／兩席；僅測試／腳本／文件一席、必要 focused 與 CI，不 mutation／本機 full；waiver 項寫入 Task 22 人工清單與接手入口，標示 `main` 是開發快照、不適合未備份的正式世界。所有 retained FAIL 不因 waiver 改判。
 
@@ -851,13 +853,13 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 - [ ] 完成本範圍最終乾淨 code pin 完整 run-all，自然 `END ALL exit=0`；核 M6 原生鏈、M5／legacy、main-only、release／sources、實際 case 集合及 WARN／ERROR。同 code pin 已知偶發只許新 nonce 重跑一次，第二次停報，原根原判保留。
 - [ ] 人工清單分單人、多人各一輪：由來源艙選 NEW，receipt 證實不同 seed 的 random U；記錄 Universe UUID／world key、seed／profile，重進不重抽，正常存退重啟後仍在同一 U。不同 profile 依 receipt 辨別，不把 same-seed 結果當 random 或重抽同收據求差異。每項操作／預期／實際結果分欄，保存版本、世界、操作者與 log／receipt；未實玩不寫通過。
-- [ ] 加一輪宇宙內死亡重生：同 U 有床回床邊、無床／失效床在同 U 的原版 spawn 同 XZ 安全處；重啟未載入的床點與正常登入同 U、U 不可用 canonical fallback及記錄。與原版主世界／共用 Nether／End 的原版死亡行為分列，不用自動測試代人工結果。
-- [ ] 人工清單明列 SHALLOW_V1 僅 id 層 FP、same-seed／toggle 保證以同 datapack／mod 配置為前提，從 U 經地獄門／終界門到共用原版 Nether／End，回程落在原版主世界、不是出發 U 的已知行為，以及使用者核定的 8-H waiver；不宣稱 Nether／End family、portal／gateway／respawn no-leak 或 T21 U→U 已驗。
+- [ ] 加一輪宇宙內死亡重生：有效床／錨跨世界照原版優先；無床／失效床且原版 canonical fallback 才在 exact live U 死亡時改同 U 原版 spawn 同 XZ 安全處；既有 EAGER_ENABLED bootstrap 後床點與正常登入同 U，DISABLED 不新增登入物化，安全落點無解沿原版 fallback 並記錄。與原版主世界／共用 Nether／End 的原版死亡行為分列，不用自動測試代人工結果。
+- [ ] 人工清單明列 SHALLOW_V1 僅 id 層 FP、same-seed／toggle 保證以同 datapack／mod 配置為前提，地獄門回程一律落在原版主世界；終界出口照原版看床，床在 U 回 U、沒床回原版主世界的已知行為，以及使用者核定的 8-H waiver；不宣稱 Nether／End family、portal／gateway／respawn no-leak 或 T21 U→U 已驗。
 - [ ] 整分支審查依 production 原門檻保留、C／I 清零；docs truth、正常 feature push、同 SHA CI 讀回。人工 smoke 單人／多人及宇宙內死亡重生皆完成才可 milestone 收尾。人工代操作、合併 main、tag 各自另問使用者，不借持續 push 授權或 M5 舊授權。
 
 ## 五項自查索引
 
-Spec §1/7→Tasks 1–6，§2–4→Tasks 7–14（§3.1.3／§3.1.2 8-core→Task 8C；§3.1.1 完整閉包→Task 8-H），§5→宇宙內重生（取代T20），§6→共用原版維度行為，§8→B+C 分流、8-H triage（Task 14／宇宙內重生後，M6收尾前）與縮範圍22；原T15–T19／T21取消M6與M7排程，只保留未排程構想。所有 Review Focus 各有具名斷言。跨 task 介面由 file map 固定；原版 native 注入點保留 Task 7 及 Task R 所列兩點的先驗／先回報 gate，未當成已驗 API。計畫不含本輪授權外玩法；若 native gate 證固定 1.21 無法實現某個 binding 契約，停止該 task、具名回報 spec 修訂與獨立 review，不能用不受控 fallback 替代。
+Spec §1/7→Tasks 1–6，§2–4→Tasks 7–14（§3.1.3／§3.1.2 8-core→Task 8C；§3.1.1 完整閉包→Task 8-H），§5→宇宙內重生（取代T20），§6→共用原版維度行為，§8→B+C 分流、8-H triage（Task 14／宇宙內重生後，M6收尾前）與縮範圍22；原T15–T19／T21取消M6與M7排程，只保留未排程構想。所有 Review Focus 各有具名斷言。跨 task 介面由 file map 固定；原版 native 注入點保留 Task 7 及 Task R 所列 getRespawnTarget 兩個 canonical fallback 窄調整的先驗／先回報 gate，未當成已驗 API。計畫不含本輪授權外玩法；若 native gate 證固定 1.21 無法實現某個 binding 契約，停止該 task、具名回報 spec 修訂與獨立 review，不能用不受控 fallback 替代。
 
 ### 2026-11-08 Task13 E2 milk teardown 所有權窄補（待獨立設計／計畫審查，未實作）
 
