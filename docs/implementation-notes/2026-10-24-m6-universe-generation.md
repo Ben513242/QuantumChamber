@@ -1953,3 +1953,20 @@ M6Compile與兩正常單案、combined、最終共用deadlinecombined皆PASS；�
 兩席已讀final完整rows／差格：兩toggle各261個actual CARVERS差格，兩原same-seed跨側CARVERS exact，各側重啟exact。本次same-amplified final一差(521,24,524) granite/andesite，新hash `427ce479bd879cac0edf8b8d1a6f44efea9334fbaf231dde85a27a5c18dd0239`；toggle final各167差。全部reviewItems維持UNRESOLVED／NOT_CLASSIFIED，不建立baseline/容差，不推論feature writer根因；canonical source native consumer仍NOT_COVERED／target-only，SHALLOW_V1與其他覆蓋限制不外推。
 
 **本節候選狀態：待本 commit CI，T14 OPEN。** 正常push後必核該SHA的build、windows-native、m6-native三job真success，再於STATUS／ledger／接手入口記closed；不得沿用e366的CI或把本機fixtures當遠端。C/I已清零，不因M1新增fix/gates。本輪僅T14，TaskR／8-H triage／client／人工smoke／main／tag均未開工；所有舊FAIL/UNRESOLVED及本次e016原判保留。
+
+
+### 2026-11-10：Task14 同SHA Windows CI失敗，OPEN／停止交回
+
+**2026-11-10 Task14 OPEN：同SHA CI的Windows M6正式入口案失敗，已止損，不修碼／不重跑。** code pin `5ab3aa4fe6f4ddb63e0469b7c2148b56b8f1b9ff`，遠端候選 `c1b4ea78115e3bbe81bdd2ecb258e39cf4cbf4e0`；[CI42820518452](https://github.com/Ben513242/QuantumChamber/actions/runs/42820518452) attempt1終局：build success、m6-native success、windows-native failure。具名 `m6universegametests.formal_entry_freezes_policy_three_without_changing_older_sessions`，21案僅1失敗：有限等待逾時，FULL／loaded／ticking／tickingFuture=false；own slot0、chunks182、FULL=0／loaded=0／ticking=0。這是目前觀察到的就緒等待簽章，根因未查，不歸已知AccessDenied／AABB偶發。Windows M6執行與集合驗證兩步失敗，2/3 job不能抵全綠；T14從未closed。Windows FAIL artifact與raw XML/log已保存、digest讀回相符，見本plan SDD `task14-ci-c1b4ea7-20261110/terminal-ci-verification.json`（SHA `951b62f929d124bf7a9e49197b8cbf32f0542743ae9ebc28bc95f62a47a6a130`）。同clean5ab雙focused／8個production mutation KILLED及byte-exact REVERT／完整 `run-all-a45fe11f8f8b4ff8bf5218966b65bf1f` 自然END ALL0／outer0與spec C0/I0/M1、quality C0/I0/M0原判保留。首full e016的AccessDenied FAIL及唯一重跑1/1不洗，舊FAIL／UNRESOLVED不改判。為遵守本輪停止指示，交回文件只在本機commit，不再push觸發新CI；最新Git/Java/鎖狀態以ignored STATUS首段與交回索引為準。下一步只等使用者裁示此CI失敗處置；不開Task R、8-H triage、client、人工smoke、main合併或tag。
+
+候選四docs經唯一窄審C0/I0/M0（SHA `21fa7f303c6445b4c48915d64a3c9d9ca767608b11a707c9d56dbee14832ecc8`）後commit／正常push `c1b4ea78115e3bbe81bdd2ecb258e39cf4cbf4e0`，遠端讀回exact；排除四docs後551個tree entry對full pin5ab mode/type/blob exact。此候選始終寫「待本commit CI」，沒有提前close。
+
+CI42820518452（head c1b4ea7、push、attempt1）已completed/failure。build job129844605874 success；m6-native job129844606216 success，原log真9鏈27phase／479 PASS（SelfTest在15分鐘步驟內自然成功）；windows-native job129844606318 failure。Windows原default／normal／M5均完成，失敗步驟是「Windows M6 JUnit 與獨立 GameTest」及「確認 Windows M6 精確集合與隔離」。raw M6 XML21案僅formal_entry_freezes_policy_three_without_changing_older_sessions一案failure，並非以舊S1A diagnostic欄位冒充本次根因。
+
+原XML：位置(-1017730,-60,11939593)，有限等待逾時；FULL=false、loaded=false、ticking=false、tickingFuture=false；chunkDebug含minecraft:empty／ENTITY_TICKING，worldTime/serverTicks302；own SID f64eefd3-5343-410a-9964-65375298b2cb、flushed/current RETURNING、slot0、chunks182、FULL0/loaded0/ticking0。只記原錯與狀態，不把worldTime當等待耗時、不推論policy3產品錯或純fixture偶發，不追內部生成時序、不加probe、不改timeout／production。依使用者「其他FAIL立即停報」停止；同code唯一重跑1/1早已用於本機e016→a45，CI沒有rerun，也不藉pure docs重送CI。T14尚OPEN，不能借純文件偶發不重開已結task的規則倒推closed。
+
+保存：Windows artifact13768837100 ZIP SHA `4fbf9a80cedb21156f1c56d7c294c71a8d02536548677b7750116f00ae4e963f` 與GitHub digest exact；raw M6 XML SHA `706b7c5787a134c4f26d7d2bfb82ef9528e269c08c1409c10ca11fed0f21965d`，job raw log／terminal run&jobs／原ZIP及分析均在同CI root。terminal-ci-verification SHA `951b62f929d124bf7a9e49197b8cbf32f0542743ae9ebc28bc95f62a47a6a130`。CI runner只保存實際上傳的證據，不假稱已保留未上傳的完整遠端world。
+
+CI native PASS原artifact13768121649 ZIP SHA `b48c4b726abc292d55806cba4c0e9f098acac60a9d08ce1f9337eed1b8ad94ee` digest exact，269 JSON原bytes保留。既有final診斷送同spec席補記，新增C0/I0；報告 `task14-ci-c1b4ea7-20261110/native-final-diagnostic-review.md` SHA `03e61621882329f9f920e419d1f5f59782e512d62fc0f5f16e8a1a26eca9686a`。CI未新增local full未見hash；same-amplified target由本機427ce…回35809…，new/restart各對local一格差，CI跨側0；兩toggle仍final167／CARVERS261、每側重啟exact。全部UNRESOLVED／NOT_CLASSIFIED保留，原f3審查及原本機差格不改，不推根因、不建baseline。這項補記不能取代失敗Windows job或放行closed。
+
+本輪收尾只保存原件、更新交回並驗local Java0／鎖／porcelain；此後不開任何runtime、review新修法、Task R／8-H triage／client／人工／main／tag。交回文件僅本機commit，遠端仍c1b4ea7；不push，避免以文件SHA觸發同code新CI。後續調查或修正範圍交使用者裁示；M1診斷標籤待辦亦未修。
