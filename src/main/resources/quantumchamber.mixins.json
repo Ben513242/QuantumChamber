@@ -12,6 +12,7 @@
     "DataPackContentsRefreshSealMixin",
     "WorldSetBlockStateMixin",
     "ServerPlayerRecoveryCheckpointMixin",
+    "ServerPlayerUniverseRespawnMixin",
     "ServerPlayNetworkHandlerRecoveryMixin",
     "PlayerManagerSaveInvoker",
     "MinecraftServerSaveFailureMixin",
