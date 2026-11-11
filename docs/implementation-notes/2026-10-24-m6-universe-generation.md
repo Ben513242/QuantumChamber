@@ -2097,3 +2097,22 @@ CI 42978379270（head `715c47688115760dd1fdcdeb6b1852ff2f67e11e`，code pin `d73
 - 「通過的案例留下 session」只記為觀察，不在本片處理。
 
 **出口**：push 後同 SHA 三 job CI 全綠，才勾選 plan 的 8-H 這一項；若失敗就停下回報。之後進 Task R。
+
+**結案（2026-11-11）**：CI 43003044905（head `6c14dbb`，code pin `c410975`）attempt 1 三 job 全 success：Windows default 166、normal 13、M5 60、legacy 1、M6 21 全過，windows-native job 130463615833 的 log 中，`CI_W1_COHORT_CLEANUP … waitLabel=when` 為 0 行，代表沒有觸發自清。該次 CI 中 `native_shoulder_parrot…` 的案例耗時是 10.628 秒，超過舊的 10 秒上限；60 秒上限提供了餘量。案例總耗時不一定等於單段等待的時間，所以這只是旁證。plan 的 8-H 這一項已勾選。
+
+
+### 2026-11-11：Task R 設計（落點照原版），待窄審
+
+使用者在 AskUserQuestion「在宇宙裡死亡且沒有有效重生點時，落點要怎麼決定？」選「只換世界，位置照原版（建議）」，取代 spec §5 原本「同 block XZ、自訂有界安全 Y」的策略。spec §5、plan Task R 與人工清單已依此修訂。設計在 SDD `task-r-design-20261111.md`。
+
+**固定 1.21 native gate（javap）**：
+- `ServerPlayerEntity.getRespawnTarget` 的 `MinecraftServer.getOverworld()` 正好兩處：offset 99 交給 `TeleportTarget.missingSpawnBlock`，offset 116 交給 `new TeleportTarget(world, entity, transition)`。有效床或錨在 offset 94 就 return。
+- 整個 jar 只有 `PlayerManager.respawnPlayer` 與 `EndPortalBlock.createTeleportTarget` 呼叫它。
+- 兩個 fallback 的位置由 `ServerPlayerEntity.getWorldSpawnPos(world, world.getSpawnPos())` 計算：依 spawnRadius 取點，或在同一 column 上下調整。
+- U 的 level properties 包住主世界 properties，所以 U spawn 就是原版主世界的 spawn 座標。
+
+**設計重點**：
+- production 只有兩個新檔：`ServerPlayerUniverseRespawnMixin`（`@WrapOperation` 兩個 `getOverworld()`，`require=2`）與 `UniverseRespawnService`，另在 mixins.json 加一行。
+- 判斷條件：死亡世界是 checked flushed catalog 對應的 exact live U:OVERWORLD，而且 `resolveActive` 取回的是同一個實例。符合時只把 fallback 世界換成該 U；位置與「床不見了」提示等欄位都由原版產生。
+- 測試：JUnit 測泛型 `decide`；新 GameTest batch `m6_universe_respawn` 跑 13 個情境；6 個 production mutation。
+- 不新增 native 鏈。此時尚未實作。

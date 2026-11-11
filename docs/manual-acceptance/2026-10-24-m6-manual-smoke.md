@@ -14,7 +14,13 @@
 | 共用維度 | 從 U 經地獄門到原版 Nether 再回程；另驗 End 出口／credits | 地獄門回程一律落在原版主世界；終界出口照原版看床，床在 U 回 U、沒床回原版主世界；與死亡分開記 | 未執行 |
 | 宇宙內重生加一輪 | U 內設床後死亡；正常存退重啟後再驗 | 既有 EAGER_ENABLED bootstrap 後同 U 床有效、登入仍同 UUID／key；不新增登入物化 | 未執行 |
 | 宇宙內重生加一輪 | 有效床／錨位於另一 U 或 canonical；在 U 死亡 | 床／錨依原版優先，不另判合法性、不改錨消耗 | 未執行 |
-| 宇宙內重生加一輪 | 拆床／無有效床，在 exact live U 主世界死亡 | 僅原版 canonical fallback 改留同 U，取原版主世界 spawn 同 block XZ 安全 Y；無解沿原版並記原因 | 未執行 |
-| 宇宙內重生加一輪 | 受控 U／安全落點不可用、DISABLED 重啟登入；另驗 canonical／共用 Nether／End 死亡 | 無安全落點保原版 fallback 並記原因；DISABLED 不在登入物化、保持既有行為；其他維度死亡照原版 | 未執行 |
+| 宇宙內重生加一輪 | 拆床／無有效床，在 exact live U 主世界死亡 | 只有原版的 canonical fallback 改成留在同一 U，位置照原版重生規則：在 U spawn（與原版主世界 spawn 同座標）附近依 spawnRadius 找地面；拆床時仍顯示原版「床不見了」提示 | 未執行 |
+| 宇宙內重生加一輪 | DISABLED 重啟登入；另驗 canonical／共用 Nether／End 死亡 | DISABLED 不在登入時物化，保持既有行為；其他維度死亡照原版 | 未執行 |
 
-安全列與 U 不可用控制只在受控驗收世界做，不改正式使用者存檔。End 出口／credits 因有效 U 床返回 U 是預期行為；與預期不符才保存原件並回報，不新增 portal 注入點。8-H 另含 Windows default AABB／走廊容量的 testmod 自身清理或隔離 batch 候選，待使用者裁示、未實作；不把 4096 根因當已證。最終 full 必自然 END ALL exit=0，同 pin 最多重跑一次、第二次停報，原 case／期待／timeout／production 容量與 old FAIL 均保留。main 合併、tag、人工代操作各自另問使用者。
+DISABLED 重啟登入等控制只在受控驗收世界做，不改正式使用者存檔。End 出口／credits 因有效 U 床返回 U 是預期行為；與預期不符才保存原件並回報，不新增 portal 注入點。
+
+8-H 的 Windows default 走廊相關兩項都已完成，只改測試：
+- 容量兩案清理（`5ab3aa4`）；
+- M2 走廊預設等待 60 秒與逾時自清（`c410975`，使用者 2026-11-11 裁示）。
+
+不把 4096 根因當已證。最終 full 必自然 END ALL exit=0，同 pin 最多重跑一次、第二次停報；production 容量與 old FAIL 均保留。main 合併、tag、人工代操作各自另問使用者。

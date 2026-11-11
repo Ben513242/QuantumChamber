@@ -103,6 +103,13 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-11 Task R（宇宙內重生）設計中，待窄審；8-H 走廊等待項目已結案。**
+- 8-H：CI 43003044905（code pin `c410975`）三 job 全 success，plan 已勾選。
+- Task R 落點：使用者在 AskUserQuestion 選「只換世界，位置照原版（建議）」。fallback 只把目標世界換成同一 U，位置由原版重生規則計算，不寫自訂安全 Y。spec §5、plan Task R、人工清單已依此修訂。
+  - 下方較早段落中「原版 spawn 同 XZ、同 U 安全 Y／安全處」「兩個 proposed 注入點」等說法都已作廢。
+- 設計：SDD `task-r-design-20261111.md`；固定 1.21 native gate 已用 javap 核對。
+- 尚未實作。下段是 8-H 實作當時的紀錄。
+
 **2026-11-11 8-H 必要項「M2 走廊等待餘量與失敗連坐」已實作，待本 commit CI；之後進 Task R。** 使用者原話「現在開始排 8-H 的走廊等待修正然後再進Task R」。
 - 修正 `c410975`（只改 testmod 的 `M2CorridorGameTests.java`）：
   - 兩個預設 `when` 由 10 秒改為 60 秒；

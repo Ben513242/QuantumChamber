@@ -235,13 +235,27 @@ final 診斷保存兩側原 1440 rows／hash、全部差格及 new→restart 全
 
 有效的床或重生錨不論位於哪個世界，一律優先依原版結果；不另做床合法性判斷，不改重生錨消耗。僅在 `ServerPlayerEntity.getRespawnTarget(boolean, TeleportTarget.PostDimensionTransition)` 內原版要走兩個 `getOverworld()` fallback，且死亡當下世界為 checked authority 對應的 exact live U:OVERWORLD，才將 fallback 目標窄調整為同一 U。
 
-該 U 使用**原版主世界 spawn 相同的 block XZ**，在同 column 有界尋找可站立且頭部空間足夠的安全 Y；不任意改 XZ、不改全域 spawn、不造平台或破壞方塊。若同一 U 權威／可用性或安全落點不成立，保留原版 fallback 並記玩家、U key、原因、實際目標。安全搜尋策略須在實作前回報。
+**落點照原版（2026-11-11 使用者裁示）**：fallback 只把目標世界換成同一 U，位置仍由原版 `TeleportTarget` 經 `ServerPlayerEntity.getWorldSpawnPos` 在該 U 計算，與在原版主世界重生的規則相同：
+- 基準是 U 的 spawn。U 的 level properties 包住主世界 properties，所以座標與原版主世界 spawn 相同。
+- 依 `spawnRadius` 在附近找地面；`spawnRadius` 為 0 時，原版在同一 block XZ 的 column 上下調整。
+- 不寫自訂安全搜尋，不改全域 spawn，不造平台，不破壞方塊。
+
+使用者在 AskUserQuestion「在宇宙裡死亡且沒有有效重生點時，落點要怎麼決定？」選「只換世界，位置照原版（建議）」，取代先前「同 block XZ、有界安全 Y」的策略。
+
+若同一 U 的 checked catalog 權威或 exact live 條件不成立，保留原版 fallback，並記錄玩家、world key、原因與實際目標。
 
 原版主世界與共用 Nether／End 死亡保持原版。End→主世界本來走 `getRespawnTarget(false)`，不能以 boolean 當死亡／End 出口的區別；必須以死亡當下 exact live U 主世界條件隔開 canonical End。終界出口照原版看床，床在 U 就回 U，沒床回原版主世界，不加 portal hook。
 
-刪除原提案注入點 2（`PlayerManager.onPlayerConnect`），Task R 不改 `UniverseLifecycleService`。既有 `SERVER_STARTED` bootstrap 會物化全部 `EAGER_ENABLED` U，執行中不卸載（`UniverseLifecycleService.java:449–464`）；重啟登入仍在同一 U、床點有效，由測試涵蓋此既有路徑。`DISABLED` U 不在登入時物化，避免繞過 M5 §8.3，維持既有行為。UUID／catalog／frozen seed／settings 與 playerdata IO 限制不變。
+刪除原提案注入點 2（`PlayerManager.onPlayerConnect`），Task R 不改 `UniverseLifecycleService`。既有 `SERVER_STARTED` bootstrap 會物化全部 `EAGER_ENABLED` U，執行中不卸載（`UniverseLifecycleService.java:449–464`）；重啟後 U 仍被物化，由既有 restart 鏈證明；登入仍在同一 U、床點有效則依賴原版 `getWorld(U key)`，由人工清單驗證，不宣稱自動測試已涵蓋（2026-11-11 Task R 窄審修訂）。`DISABLED` U 不在登入時物化，避免繞過 M5 §8.3，維持既有行為。UUID／catalog／frozen seed／settings 與 playerdata IO 限制不變。
 
-唯一 production 提案範圍為上述 method 內兩個 canonical fallback 呼叫的窄 target 調整；不做整個 method 的獨立床政策 wrapper。固定 1.21 native gate 先核 descriptor、兩個 callsite、caller 與 exact live 判斷；未實作、未宣稱通過。T14 後開 Task R，新增或改變注入位置仍先回報，不擴 portal／gateway／family。
+唯一 production 提案範圍為上述 method 內兩個 canonical fallback 呼叫的窄 target 調整；不做整個 method 的獨立床政策 wrapper。
+
+固定 1.21 native gate 已於 2026-11-11 以 javap 核對，證據在 SDD `task-r-design-20261111.md`：
+- descriptor `(ZLnet/minecraft/world/TeleportTarget$PostDimensionTransition;)Lnet/minecraft/world/TeleportTarget;`；
+- `getOverworld()` 正好兩處，在 offset 99 與 116；
+- 呼叫者只有 `PlayerManager.respawnPlayer` 與 `EndPortalBlock.createTeleportTarget`。
+
+此時尚未實作，也未宣稱通過。T14 後開 Task R；新增或改變注入位置仍要先回報，不擴 portal、gateway 或 family。
 
 ## 6. 共用原版維度與量子艙界線
 

@@ -66,9 +66,9 @@
 | 高風險輸入／行為 | 擁有 task 與具名 test |
 | --- | --- |
 | 同一 `AllocationToken` 的 catalog atomic move 已落地但讀回失敗 | Task 10 `m6CatalogReadbackAfterMoveKeepsSameSeedAndUuid`，cross-JVM `catalog-readback` |
-| restart 後 EAGER_ENABLED U 的床點與登入 | Task R 測試既有 SERVER_STARTED bootstrap，床點仍有效、登入仍同 U；DISABLED 不新增登入物化 |
+| restart 後 EAGER_ENABLED U 的床點與登入 | 既有 restart 鏈證明 SERVER_STARTED bootstrap 後 U 仍被物化；床點有效依賴原版 `getWorld(U key)`，由人工清單驗證，不宣稱自動測試已涵蓋；DISABLED 不新增登入物化 |
 | provider 同 id/version 輸出變更或已卸載 | Task 8C `resolveRejectsFingerprintMismatch`、`resolveRejectsUnknownProviderOrVersion`（`SHALLOW_V1` 深度，見 spec §3.1.3 已知限制）、Task 9 `journalRejectsMissingProvider`；完整閉包深度的 `snapshotRejectsChangedProvider` 屬 Task 8-H |
-| 床／錨跨世界優先及原版 fallback | Task R：有效床／錨照原版；僅 exact live U 死亡且 canonical fallback 才改同 U 同 XZ 安全 Y，無解保原版並記原因 |
+| 床／錨跨世界優先及原版 fallback | Task R：有效床／錨照原版；僅 exact live U 死亡且走原版 canonical fallback 時，才把 fallback 世界換成同一 U，位置照原版重生規則（2026-11-11 裁示）；不成立時保留原版並記原因 |
 | canonical／共用 Nether／End 死亡被誤套 U 政策 | Task R 原版死亡反控制；End credits 與非死亡換維度分開驗 |
 
 ## File map 與固定介面
@@ -887,14 +887,49 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 ### Task R：宇宙內重生（取代原 T20；T14 後）
 
-**Files（預計範圍，未實作）:** Create `src/main/java/dev/quantumchamber/universe/UniverseRespawnService.java`、`src/main/java/dev/quantumchamber/mixin/ServerPlayerUniverseRespawnMixin.java`、`src/test/java/dev/quantumchamber/universe/UniverseRespawnServiceTest.java`；Modify `src/main/resources/quantumchamber.mixins.json`、既有 `src/testmod/java/dev/quantumchamber/gametest/M6UniverseGameTests.java`／`M6UniverseRecoveryProbe.java`／`M6ProfileProbePhases.java`、`scripts/verification/m6-universe-probe.ps1`。不建立登入 mixin，不改 `UniverseLifecycleService.java`；其他路徑先回報。
+**2026-11-11 設計（`.superpowers/sdd/2026-10-24-m6-universe-generation/task-r-design-20261111.md`）**：使用者在 AskUserQuestion 選「只換世界，位置照原版（建議）」。fallback 只把目標世界換成同一 U，位置由原版 `getWorldSpawnPos` 在該 U 計算，不寫自訂安全 Y 搜尋。固定 1.21 native gate 已用 javap 核對：offset 99／116 的兩個 `getOverworld()`、兩個呼叫者、U spawn 等於原版主世界 spawn。設計待窄審 C／I 清零才實作。
 
-**Interfaces:** 有效床／重生錨不論世界一律原版優先，不另判床合法性、不改錨消耗。只有原版兩個 canonical fallback，且死亡當下為 exact live U:OVERWORLD，才改同 U 的原版 spawn 同 block XZ、安全 Y；無安全落點／U 不可用沿原版 fallback，記玩家、U key、原因與實際目標。canonical／共用 Nether／End 死亡與 End 出口保持原版。`getRespawnTarget(false)` 也用於 End 出口，不能以 boolean 區分；exact live 死亡世界條件必須排除 canonical End。
+**Files:**
+- Create：
+  - `src/main/java/dev/quantumchamber/universe/UniverseRespawnService.java`
+  - `src/main/java/dev/quantumchamber/mixin/ServerPlayerUniverseRespawnMixin.java`
+  - `src/test/java/dev/quantumchamber/universe/UniverseRespawnServiceTest.java`
+  - `src/testmod/java/dev/quantumchamber/gametest/M6UniverseRespawnGameTests.java`（batch `m6_universe_respawn`，單獨成批）
+- Modify：
+  - `src/main/resources/quantumchamber.mixins.json`
+  - `src/testmod/resources/fabric.mod.json`（登記新 GameTest 類別）
+- 只讀沿用：`M6ProfileProbePhases.fixtureSource`。
+- 不改：`M6UniverseRecoveryProbe.java`、`M6ProfileProbePhases.java`、`scripts/verification/m6-universe-probe.ps1`（不新增 native 鏈，SelfTest 預算不變）、`UniverseLifecycleService.java`。不建立登入 mixin；其他路徑先回報。
 
-**唯一 production 注入範圍提案（先回報，未實作）:** `ServerPlayerEntity.getRespawnTarget(ZLnet/minecraft/world/TeleportTarget$PostDimensionTransition;)Lnet/minecraft/world/TeleportTarget;` 內兩個 `MinecraftServer.getOverworld()` fallback 呼叫的窄 target 調整。不是整個 method wrapper 或獨立床政策。必須辨識這兩支原生 fallback 路徑，不能僅憑回傳目標為 canonical 判定，因有效 canonical 床／錨也必須原樣保留。調整後保留原 `TeleportTarget` 的 `missingRespawnBlock`、velocity、yaw／pitch 與 `postDimensionTransition` 旗標／回呼；安全 Y 無解時原樣回傳原版 target 並記錄。 固定 1.21 native gate 核兩 callsite、descriptor、caller 與 exact live 條件。刪除原注入點 2 `PlayerManager.onPlayerConnect`，不另 hook 全域 getOverworld／portal。
+**Interfaces:**
+- 有效床或重生錨不論在哪個世界，一律原版優先，不另判床合法性，不改錨消耗（錨在 offset 94 就 return，不經 `getOverworld`）。
+- 只有原版的兩個 canonical fallback，而且死亡世界是 checked catalog 對應的 exact live U:OVERWORLD 時，才把 fallback 世界換成同一 U。判斷方式：
+  - flushed catalog 有 OVERWORLD descriptor key 等於死亡世界的記錄；
+  - 這筆的 current 等於 flushed；
+  - `UniverseLifecycleService.resolveActive` 取回同一個實例。
+- 位置與 `missingRespawnBlock`、yaw／pitch、`postDimensionTransition` 都由原版建構式照常產生。
+- 結果：
+  - 原版世界死亡（包含 End 出口時的 End）：原版，不記 log；
+  - 非 U 世界（例如走廊）：原版，不記 log；
+  - catalog 有記錄但條件不成立、或查詢失敗：原版，並記 WARN（玩家、world key、原因、目標）；
+  - 改到 U 時：記 INFO。
+- `getRespawnTarget(false)` 也用於 End 出口，不能用 boolean 區分；以死亡世界條件排除 canonical End。
 
-- [ ] 重啟登入仍同 U 與床點有效，測試現有 `SERVER_STARTED` bootstrap 全部物化 EAGER_ENABLED、執行中不卸載的路徑（`UniverseLifecycleService.java:449–464`）。DISABLED 不在登入物化，保持 M5 §8.3 及既有行為；UUID／catalog／playerdata IO 限制不變。
-- [ ] 具名正反控制：同 U／另一 U／canonical 的有效床、有效錨與原版消耗；拆床／無床；兩 U／兩玩家隔離；sameXZ安全Y與unsafe column無解後原版 fallback 及原因。安全搜尋有界，不造平台／拆方塊，策略先回報。canonical／共用 Nether／End 死亡及 End 出口有 U 床回 U／無床回原版主世界分列；不把 End 回 U 當錯誤。
+**唯一 production 注入範圍提案（先回報，未實作）:** `ServerPlayerEntity.getRespawnTarget(ZLnet/minecraft/world/TeleportTarget$PostDimensionTransition;)Lnet/minecraft/world/TeleportTarget;` 內兩個 `MinecraftServer.getOverworld()` fallback 呼叫的窄 target 調整。不是整個 method wrapper 或獨立床政策。必須辨識這兩支原生 fallback 路徑，不能僅憑回傳目標為 canonical 判定，因有效 canonical 床／錨也必須原樣保留。做法是只換傳入原版建構式的 world 參數（`@WrapOperation`，`require=2`，不設 `allow`）。`TeleportTarget` 的位置、`missingRespawnBlock`、velocity、yaw／pitch 與 `postDimensionTransition` 旗標／回呼都由原版照常產生；2026-11-11 裁示後已沒有自訂安全 Y 搜尋。固定 1.21 native gate 已核兩個 callsite、descriptor 與 caller，exact live 條件見上方 Interfaces。刪除原注入點 2 `PlayerManager.onPlayerConnect`，不另 hook 全域 getOverworld／portal。
+
+- [ ] 重啟登入仍在同一 U、床點有效：
+  - `SERVER_STARTED` bootstrap 物化全部 EAGER_ENABLED、執行中不卸載（`UniverseLifecycleService.java:449–464`），重啟後 U 仍被物化，由現有 restart 鏈證明（catalog-readback、same-seed、profile 各自的 restart phase）。
+  - 床點有效依賴原版 `getWorld(U key)`。這些鏈沒有設床，所以重啟後的床點由人工清單驗證，不宣稱自動測試已涵蓋。
+  - 本片不新增 native 鏈。DISABLED 不在登入時物化，保持 M5 §8.3 與既有行為；UUID、catalog、playerdata IO 限制都不變。
+- [ ] 具名正反控制（JUnit `decide` 加上 GameTest 13 個情境，見設計稿）：
+  - 床：同一 U、另一 U、原版主世界的有效床；
+  - 錨：共用 Nether 的錨，消耗交給原版；
+  - 失效：拆床（`missingRespawnBlock`）、沒有重生點；
+  - 隔離：兩個 U、兩個玩家；
+  - 不受影響：在原版主世界與共用 Nether 死亡；End 出口有 U 床回 U、沒床回原版主世界；在走廊死亡不記 log；
+  - 整合：`respawnPlayer`；
+  - 非 exact live 與查詢失敗走原版並記原因。
+  - End 回 U 不算錯誤。
 - [ ] production 原 RED／必要 mutation／雙 focused／完整回歸／spec及quality／同 SHA CI 全保；只測試腳本窄修才適用 B+C 一席免 local full。T14 後開 Task R，新增或改注入位置先回報，不擴 family。
 
 ### Task 8-H triage 與必須切片（T14／宇宙內重生之後、M6 收尾前）
@@ -907,7 +942,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 - 範圍：只改測試。放寬或改寫 M2 共用的 10 秒牆鐘等待（`M2CorridorGameTests.when`／`whenUntil` 等），數值或改用 tick 上限的方式依 CI 實測耗時定；並讓等待逾時的案例清掉自己的 session，避免連坐。
 - 不變：案例、斷言、production 容量與舊 FAIL 都不改。
 - 流程：先設計並窄審再實作，依 B+C 純測試流程（一席審查、必要 targeted、CI）。M6 收尾的最終 full 與 CI 依賴這一項。
-- [ ] **2026-11-11 已實作，待本 commit CI**：使用者 17:26 指示「現在開始排 8-H 的走廊等待修正然後再進Task R」，所以這一項先於 Task R，不受本節標題的排程限制。
+- [x] **2026-11-11 closed**：CI 43003044905（head `6c14dbb`，code pin `c410975`）attempt 1 三 job 全 success；Windows default 166、normal 13、M5 60、legacy 1、M6 21 全過，job 130463615833 的 log 中沒有 `waitLabel=when` 的自清。該次 CI 中 `native_shoulder_parrot…` 的案例耗時是 10.628 秒，超過舊的 10 秒上限（案例總耗時不等於單段等待，只是旁證）。以下是實作當時的紀錄：使用者 17:26 指示「現在開始排 8-H 的走廊等待修正然後再進Task R」，所以這一項先於 Task R，不受本節標題的排程限制。
   - 修正 `c410975`，只改 `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`：
     - 兩個預設 `when` 由 10 秒改為 60 秒；
     - `whenUntil` 逾時分支在 hooks==null 時，若本 context 唯一登記的 `NativeEntry` 仍有本艙 session，就走既有的 `CohortFailureCleanup` 正式收尾，再丟出原錯。
@@ -945,7 +980,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 - [ ] 完成本範圍最終乾淨 code pin 完整 run-all，自然 `END ALL exit=0`；核 M6 原生鏈、M5／legacy、main-only、release／sources、實際 case 集合及 WARN／ERROR。同 code pin 已知偶發只許新 nonce 重跑一次，第二次停報，原根原判保留。
 - [ ] 人工清單分單人、多人各一輪：由來源艙選 NEW，receipt 證實不同 seed 的 random U；記錄 Universe UUID／world key、seed／profile，重進不重抽，正常存退重啟後仍在同一 U。不同 profile 依 receipt 辨別，不把 same-seed 結果當 random 或重抽同收據求差異。每項操作／預期／實際結果分欄，保存版本、世界、操作者與 log／receipt；未實玩不寫通過。
-- [ ] 加一輪宇宙內死亡重生：有效床／錨跨世界照原版優先；無床／失效床且原版 canonical fallback 才在 exact live U 死亡時改同 U 原版 spawn 同 XZ 安全處；既有 EAGER_ENABLED bootstrap 後床點與正常登入同 U，DISABLED 不新增登入物化，安全落點無解沿原版 fallback 並記錄。與原版主世界／共用 Nether／End 的原版死亡行為分列，不用自動測試代人工結果。
+- [ ] 加一輪宇宙內死亡重生：有效床／錨跨世界照原版優先；無床或床失效、而且死在 exact live U 時，原版的 canonical fallback 改成留在同一 U，位置照原版重生規則（U spawn 附近依 spawnRadius 找地面）；既有 EAGER_ENABLED bootstrap 後，床點與正常登入都在同一 U，DISABLED 不新增登入物化。與原版主世界／共用 Nether／End 的原版死亡行為分列，不用自動測試代人工結果。
 - [ ] 人工清單明列 SHALLOW_V1 僅 id 層 FP、same-seed／toggle 保證以同 datapack／mod 配置為前提，地獄門回程一律落在原版主世界；終界出口照原版看床，床在 U 回 U、沒床回原版主世界的已知行為，以及使用者核定的 8-H waiver；不宣稱 Nether／End family、portal／gateway／respawn no-leak 或 T21 U→U 已驗。
 - [ ] 整分支審查依 production 原門檻保留、C／I 清零；docs truth、正常 feature push、同 SHA CI 讀回。人工 smoke 單人／多人及宇宙內死亡重生皆完成才可 milestone 收尾。人工代操作、合併 main、tag 各自另問使用者，不借持續 push 授權或 M5 舊授權。
 
