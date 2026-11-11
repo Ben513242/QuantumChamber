@@ -2191,6 +2191,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
         private boolean cohortFailureOwned;
         final BlockPos lever;
         final ConnectedGameTestPlayer operator;
+        /** 等待逾時自清的登記，只在 server thread 使用；同一 context 第二個 fixture 改標不明確，該 context 不自清（8-H，2026-11-11）。 */
+        private static final Map<TestContext,Object> TIMEOUT_CLEANUP=new java.util.IdentityHashMap<>();
+        private static final Object AMBIGUOUS=new Object();
         NativeEntry(TestContext context,int count) {
             this(context,count,Direction.NORTH);
         }
@@ -2222,6 +2225,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 player.getInventory().setStack(0,new net.minecraft.item.ItemStack(net.minecraft.item.Items.TORCH,7+i));
                 inventories.put(player.getUuid(),player.writeNbt(new NbtCompound()).get("Inventory").copy());
             }
+            TIMEOUT_CLEANUP.merge(context,this,(previous,current) -> AMBIGUOUS);
         }
         void power() { context.useBlock(lever,operator.player()); }
         dev.quantumchamber.chamber.ChamberControllerBlockEntity controller() {
@@ -2368,7 +2372,26 @@ public final class M2CorridorGameTests implements FabricGameTest {
                 throw original;
             }
         }
-        @Override public void close() { players.forEach(ConnectedGameTestPlayer::close); operator.close(); }
+        /**
+         * 只供 {@code whenUntil} 的逾時分支（hooks==null）：本 context 唯一登記的 fixture 仍有本艙 session 時，
+         * 改走既有正式失敗收尾，收尾結束才丟出原逾時錯誤；查詢失敗、沒有 session 或已有收尾時照原樣丟出。
+         */
+        static void failAfterTimeoutCleanup(TestContext context,int tick,RuntimeException timeout) {
+            NativeEntry fixture=null; UUID sid=null;
+            try {
+                if(TIMEOUT_CLEANUP.get(context) instanceof NativeEntry entry && !entry.cohortFailureOwned) {
+                    var record=entry.record();
+                    if(record!=null) { fixture=entry; sid=record.sessionUuid(); }
+                }
+            } catch(RuntimeException lookupFailure) { timeout.addSuppressed(lookupFailure); }
+            if(fixture==null) throw timeout;
+            TIMEOUT_CLEANUP.remove(context,fixture);
+            var trace=new CohortWaitTrace(fixture,sid,-1,tick,-1L,"when-timeout","when",null);
+            try { trace.failed(tick,timeout); }
+            catch(RuntimeException diagnosticFailure) { timeout.addSuppressed(diagnosticFailure); }
+            fixture.failCohortAfterCleanup(tick,timeout,trace);
+        }
+        @Override public void close() { TIMEOUT_CLEANUP.remove(context,this); players.forEach(ConnectedGameTestPlayer::close); operator.close(); }
     }
     /** 測試專用失敗收尾：只呼叫正式LOW與返還入口，不直接改journal、slot、lease或ticket。 */
     private static final class CohortFailureCleanup {
@@ -3245,12 +3268,13 @@ public final class M2CorridorGameTests implements FabricGameTest {
             }
         });
     }
+    /** 預設有限等待：牆鐘 60 秒，與 M4 的 {@code when} 及 cohort 等待一致；CI 最慢的通過單段約 9.6 秒（8-H，2026-11-11）。 */
     private static void when(TestContext context,int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready) {
-        whenUntil(context,tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10));
+        whenUntil(context,tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60));
     }
     /** 同上；逾時、斷言失敗或例外時先釋放本測試安裝的 hook。 */
     private static void when(TestContext context,int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready,TestHooks hooks) {
-        whenUntil(context,tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(10),hooks);
+        whenUntil(context,tick,condition,ready,System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(60),hooks);
     }
     private static void whenUntil(TestContext context,int tick,java.util.function.BooleanSupplier condition,java.util.function.IntConsumer ready,long deadline) {
         whenUntil(context,tick,condition,ready,deadline,null);
@@ -3268,11 +3292,19 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     if (tick>=90000 || System.nanoTime()>=deadline) {
                         var world=context.getWorld().getServer().getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
                         var sample=new net.minecraft.util.math.ChunkPos(62,125);
-                        context.assertTrue(false,"有限等待逾時：FULL="+(world.getChunkManager().getWorldChunk(62,125)!=null)
-                                +" loaded="+world.isChunkLoaded(sample.toLong())+" ticking="+world.shouldTick(sample)
-                                +" tickingFuture="+world.getChunkManager().isTickingFutureReady(sample.toLong())
-                                +" chunkDebug="+world.getChunkManager().getChunkLoadingDebugInfo(sample)
-                                +" worldTime="+world.getTime()+" serverTicks="+world.getServer().getTicks()+" own="+waitingLeaseEvidence(context));
+                        RuntimeException timeout;
+                        try {
+                            context.assertTrue(false,"有限等待逾時：FULL="+(world.getChunkManager().getWorldChunk(62,125)!=null)
+                                    +" loaded="+world.isChunkLoaded(sample.toLong())+" ticking="+world.shouldTick(sample)
+                                    +" tickingFuture="+world.getChunkManager().isTickingFutureReady(sample.toLong())
+                                    +" chunkDebug="+world.getChunkManager().getChunkLoadingDebugInfo(sample)
+                                    +" worldTime="+world.getTime()+" serverTicks="+world.getServer().getTicks()+" own="+waitingLeaseEvidence(context));
+                            throw new IllegalStateException("有限等待逾時斷言沒有丟出");
+                        } catch (RuntimeException failure) { timeout=failure; }
+                        // 只有逾時且沒有 hooks 時，本艙 NativeEntry 才走正式失敗收尾；決定收尾就不再排下一輪等待。
+                        if (hooks!=null) throw timeout;
+                        NativeEntry.failAfterTimeoutCleanup(context,tick,timeout);
+                        return;
                     }
                     whenUntil(context,tick+1,condition,ready,deadline,hooks);
                 }
