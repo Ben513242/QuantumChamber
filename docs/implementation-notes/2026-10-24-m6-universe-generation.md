@@ -2013,3 +2013,30 @@ policy2 對照案走同一個 `trustedTeardown` 流程，也斷言 policy3，在
 spec review 的 M1 診斷標籤仍未修。Task R、8-H triage、client、人工 smoke、main 合併與 tag 都沒有啟動。
 
 **殘留風險**：`whenUntil` 用的是牆鐘，不是 tick 數。之後如果有案例在同一 batch 裡長時間同步佔用 server thread，同類逾時可能再出現。新增 M6 案例時，會同步物化宇宙的案例，不要和依賴走廊返還的案例放在同一 batch。
+
+
+### 2026-11-11：Task14 結案（CI 42978379270 attempt 2）
+
+CI 42978379270（head `715c47688115760dd1fdcdeb6b1852ff2f67e11e`，code pin `d73de9c`）：
+
+**attempt 1**：build、m6-native success，windows-native failure。
+- Windows M6 獨立 GameTest 21/21 PASS，`m6_universe_profile_entry` 單獨執行，拆 batch 修正在 CI 生效。
+- 失敗來自步驟 6 Windows default：166 案中 8 案失敗，全是 M2 走廊 `_windows` 案例。
+- 步驟 9 的 `M6_SCOPE_MISMATCH（default）expected=166 actual=166 缺[] 多[]` 是 default XML 含失敗的連帶。
+
+8 案的失敗過程：
+- 首案 `native_shoulder_parrot_stays_on_shoulder_in_corridor_and_returns_windows` 在 10 秒牆鐘等待逾時（ARMING、slot2、chunks182、FULL182、loaded106）。同案在 c1b4ea7 那次 CI 的 default 步驟（該步驟全過；該次 windows-native 因 M6 正式入口案失敗，原判不變）要 9.593 秒，本機 `run-all-a45fe11f…` 4.011 秒。
+- 之後逾時案例不清理自己的 session，新 session 的 slot 從 2 爬到 6。
+- `trusted_lateral_geometry_south_windows`、`trusted_lateral_geometry_north_windows` 兩案報「局部實例／完整 AABB 容量不足」，其餘 10 秒逾時。
+
+這和 `43cb99b`、`f30853a` 屬同一 Windows default AABB／走廊容量連坐家族；最近 6 次 Windows CI（43cb、e338、0abd、f308、c1b4、715c）有 3 次中。
+
+停服 log 的「expanded coverage」是整個 run 的**峰值**（`CorridorPageManager.java:129–130` 的 `peakCoverage()`），不是停服當下值。通過的 run 峰值也有 3858（0abd、e338），所以不能當洩漏證據。原件存 SDD `task14-ci-715c476-20261111/`：job log、default 與 M6 XML、batch／slot 時間線。
+
+**使用者裁示**（AskUserQuestion）：
+- 「重跑失敗 job 一次（建議）」：`gh run rerun 42978379270 --failed`，用掉 code pin d73de9c 唯一一次已知偶發重跑額度。
+- 「可以，列為 8-H 必要項（建議）」：題目是「根治 Windows default 偶發時，可以調整 M2 走廊測試共用的 10 秒牆鐘等待嗎？」，該選項說明原文是「在 M6 收尾前做：放寬或改寫這些等待，並讓逾時案例清掉自己的 session 以免連坐。數值依 CI 實測耗時定，經審查後才採用，只改測試。」已寫入 plan 8-H 節。
+
+**attempt 2**：windows-native job 130400524850 success，步驟 6–13 全部 success：Windows default 166、normal 13、M5 60、M6 21 全過；M6 步驟內另有 legacy 1 案 `isolated_legacy_schema2_then_empty_schema3_authority_gates_windows` 也通過。build、m6-native 沿用 attempt 1 的 success。
+
+**T14 closed。** attempt 1 的 FAIL、CI42820518452 的 FAIL、首次 full e016 的 AccessDenied FAIL、兩次 BUDGET_FAIL 與所有 UNRESOLVED 都保留原判。spec review 的 M1 診斷標籤待辦仍未修。下一步是 Task R（宇宙內重生）；8-H triage、client、人工 smoke、main 合併與 tag 都未啟動。

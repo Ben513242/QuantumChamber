@@ -809,6 +809,8 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 ### Task 14：policy3 的 normal↔amplified mutation
 
+**2026-11-11 Task14 closed。** CI 42978379270（head `715c476`，code pin `d73de9c`）attempt 2 三 job 全 success。attempt 1 的 windows-native 因 Windows default 8 案走廊連坐失敗，當時 M6 已 21/21，失敗原判保留。使用者選「重跑失敗 job 一次（建議）」，用掉 d73de9c 唯一一次重跑額度。根治列為 8-H 必要項，見下方 8-H 節。下一步是 Task R。
+
 **2026-11-11 Task14 候選修正：待本 commit CI，仍 OPEN。** CI42820518452 的 Windows M6 逾時根因：正式入口案與 toggle 案同在 batch `m6_universe_profile`，後者在 server thread 同步物化四個 U，佔掉前者固定 10 秒的牆鐘返還等待。這是依 CI log 推論，待本 commit CI 確認。修正 `d73de9c` 把正式入口案移到獨立 batch `m6_universe_profile_entry`，案例、斷言、timeout 與 production 不變。同 pin focused 兩輪 21/21 PASS，一席審查 C0/I0/M2。三 job CI 全綠才記 closed。詳見 M6 implementation note 的 2026-11-11 段；下段「根因未查」是當時的停點。
 
 **2026-11-10 Task14 OPEN：同SHA CI的Windows M6正式入口案失敗，已止損，不修碼／不重跑。** code pin `5ab3aa4fe6f4ddb63e0469b7c2148b56b8f1b9ff`，遠端候選 `c1b4ea78115e3bbe81bdd2ecb258e39cf4cbf4e0`；[CI42820518452](https://github.com/Ben513242/QuantumChamber/actions/runs/42820518452) attempt1終局：build success、m6-native success、windows-native failure。具名 `m6universegametests.formal_entry_freezes_policy_three_without_changing_older_sessions`，21案僅1失敗：有限等待逾時，FULL／loaded／ticking／tickingFuture=false；own slot0、chunks182、FULL=0／loaded=0／ticking=0。這是目前觀察到的就緒等待簽章，根因未查，不歸已知AccessDenied／AABB偶發。Windows M6執行與集合驗證兩步失敗，2/3 job不能抵全綠；T14從未closed。Windows FAIL artifact與raw XML/log已保存、digest讀回相符，見本plan SDD `task14-ci-c1b4ea7-20261110/terminal-ci-verification.json`（SHA `951b62f929d124bf7a9e49197b8cbf32f0542743ae9ebc28bc95f62a47a6a130`）。同clean5ab雙focused／8個production mutation KILLED及byte-exact REVERT／完整 `run-all-a45fe11f8f8b4ff8bf5218966b65bf1f` 自然END ALL0／outer0與spec C0/I0/M1、quality C0/I0/M0原判保留。首full e016的AccessDenied FAIL及唯一重跑1/1不洗，舊FAIL／UNRESOLVED不改判。為遵守本輪停止指示，交回文件只在本機commit，不再push觸發新CI；最新Git/Java/鎖狀態以ignored STATUS首段與交回索引為準。下一步只等使用者裁示此CI失敗處置；不開Task R、8-H triage、client、人工smoke、main合併或tag。
@@ -875,7 +877,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 - [x] 窄改六production owner，GREEN涵蓋normal→amplified與反向、GenerateStructures true/false、固定hash向量、source immutable、target合法、profile選擇與policy/cap exact；既有舊fixture全數保留。GameTest新批次 `m6_universe_profile` 負責設定／owner／不物化N/E；terrain差異與restart在上述兩正式native鏈具名核。
 - [x] 必要production mutation各獨立新root／具名殺手：selector退回2；toggle rootSeed誤走random；resolver不翻preset（或provider/preset錯配）；toggle漏保GenerateStructures；strict intent、allocation、catalog分別錯接允許不合法profile/policy（各owner獨立殺手）。每次單一改動，保存patch/log/XML/receipt/SHA，finally byte-exact REVERT。前置錯誤若遮蔽較深owner，改用對應strict JUnit直接到達該owner，不以被別層攔截冒該層殺手。這是T14 production門檻，不適用僅tests/scripts/docs免mutation規則。
 - [x] 固定CLI沿既有 `pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M6Compile -Label <fresh>`；JUnit逐一 `m6-focused.ps1 -Suite JUnit -TestClass <上述七個fqcn> -Label <fresh>`；`-Suite GameTest -Batch m6_universe_profile,m6_universe_profile_entry` 及原 `m6_universe_same_seed`／`m6_universe_random` 批次；M4新入口以 `gates.ps1 -Mode M4NormalGameTest` 與default正式入口案驗；native用 `m6-focused.ps1 -Suite Probe -Chain <profile-restart|profile-amplified-restart|same-seed-restart|same-seed-amplified-restart> -ExpectedMode FUNCTIONAL -Label <fresh>`。兩次clean pin focused各涵蓋兩toggle方向與原兩same-seed、相關JUnit/GameTest；完整run-all再全九鏈及原集合。
-- [ ] root安排compile／候選code commit後，同乾淨code pin雙focused→`pwsh -NoProfile -File scripts/verification/run-all.ps1` 自然 `END ALL exit=0`與outer0→fresh spec與quality兩席C/I0→docs truth／正常push→同SHA Ubuntu build、Windows windows-native、Windows m6-native三job PASS。CI新M6案例由既有宣告掃描精確查有無缺席；source新增批次須出現在兩平台XML。不以過往T13綠或文件CI替本task。
+- [x] （2026-11-11 結案：code pin `d73de9c`／docs `715c476`；CI 42978379270 attempt 2 三 job 全 success，見本節開頭與 note 2026-11-11 段）root安排compile／候選code commit後，同乾淨code pin雙focused→`pwsh -NoProfile -File scripts/verification/run-all.ps1` 自然 `END ALL exit=0`與outer0→fresh spec與quality兩席C/I0→docs truth／正常push→同SHA Ubuntu build、Windows windows-native、Windows m6-native三job PASS。CI新M6案例由既有宣告掃描精確查有無缺席；source新增批次須出現在兩平台XML。不以過往T13綠或文件CI替本task。
 - [x] `m6-universe-probe.ps1 -VerifySummary <當次AllEnabled-summary> -ExpectedHead <sha> -SelfTest` 完整新集合與末全baseline必PASS；run-all仍保default／M4 normal／M5／legacy／M6、JUnit、artifact與main-only全門檻。執行用process-local UTF8啟動既有pwsh、短預設EvidenceRoot，不改OS／producer pin／oracle。
 - [x] 每次僅一gate；world move先canonical/non-reparse/owned root/無live Java/session.lock，原world可恢復move與逐檔hash還原；失敗root/receipt不覆寫、不刪除。僅已明定Windows atomic-move AccessDenied或Windows default AABB／容量連坐可同code pin一次fresh nonce重跑，第二次立即停報；docs SHA不洗額度。其他FAIL不歸偶發；未知final差格保診斷並交兩席，不改terrain oracle。純測試/腳本窄修才依B+C一席＋必要targeted/CI，不豁免本T14產品總出口。
 
@@ -896,6 +898,15 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 - [ ] production 原 RED／必要 mutation／雙 focused／完整回歸／spec及quality／同 SHA CI 全保；只測試腳本窄修才適用 B+C 一席免 local full。T14 後開 Task R，新增或改注入位置先回報，不擴 family。
 
 ### Task 8-H triage 與必須切片（T14／宇宙內重生之後、M6 收尾前）
+
+**2026-11-11 8-H 必要項：Windows default 的 M2 走廊等待餘量與失敗連坐。** 使用者在 AskUserQuestion 選「可以，列為 8-H 必要項（建議）」。題目是「根治 Windows default 偶發時，可以調整 M2 走廊測試共用的 10 秒牆鐘等待嗎？」，該選項說明原文是「在 M6 收尾前做：放寬或改寫這些等待，並讓逾時案例清掉自己的 session 以免連坐。數值依 CI 實測耗時定，經審查後才採用，只改測試。」
+- 依據：
+  - CI 42978379270 attempt 1 的首個失敗是 `native_shoulder_parrot_stays_on_shoulder_in_corridor_and_returns_windows` 在 10 秒牆鐘等待逾時。它在 c1b4ea7 那次 CI 的 default 步驟（該步驟全過；該次 windows-native 因 M6 正式入口案失敗，原判不變）也要 9.593 秒，本機約 4.0 秒。
+  - 逾時案例不清理自己的 session，後續 7 案連坐，含 AABB 容量不足。
+  - 最近 6 次 Windows CI 有 3 次中這一類。
+- 範圍：只改測試。放寬或改寫 M2 共用的 10 秒牆鐘等待（`M2CorridorGameTests.when`／`whenUntil` 等），數值或改用 tick 上限的方式依 CI 實測耗時定；並讓等待逾時的案例清掉自己的 session，避免連坐。
+- 不變：案例、斷言、production 容量與舊 FAIL 都不改。
+- 流程：先設計並窄審再實作，依 B+C 純測試流程（一席審查、必要 targeted、CI）。M6 收尾的最終 full 與 CI 依賴這一項。
 
 **Files:** Modify `docs/implementation-notes/2026-10-24-m6-universe-generation.md`、本 plan 此節、`AGENTS.md` 接手入口；實作檔依裁示為必須的切片各自列出。
 **Interfaces:** triage 只產文件與裁示，不改程式；每個必須切片再按 Global Constraints 協定獨立派工。

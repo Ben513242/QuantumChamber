@@ -103,6 +103,14 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-11 Task14 closed；M6 目前由 Claude 實作（使用者原話「由你繼續接手實作」），下一步 Task R（宇宙內重生），尚未開始。** CI 42978379270（head `715c476`，code pin `d73de9c`）attempt 2 三 job 全 success：Windows default 166、normal 13、M5 60、M6 21 全過。
+
+attempt 1 的 windows-native 失敗（default 8 案 M2 走廊連坐，M6 已 21/21）保留原判。使用者裁示兩項，選項原文如下：
+- 「重跑失敗 job 一次（建議）」：用掉 d73de9c 唯一一次已知偶發重跑額度。
+- 「可以，列為 8-H 必要項（建議）」：題目是「根治 Windows default 偶發時，可以調整 M2 走廊測試共用的 10 秒牆鐘等待嗎？」，選項說明原文是「在 M6 收尾前做：放寬或改寫這些等待，並讓逾時案例清掉自己的 session 以免連坐。數值依 CI 實測耗時定，經審查後才採用，只改測試。」詳見 plan 8-H 節。
+
+8-H triage、client、人工 smoke、main 合併、tag 未啟動。下段是 T14 結案前的候選紀錄。
+
 **2026-11-11 Task14 候選修正：待本 commit CI，仍 OPEN（改由 Claude 接手實作）。** CI42820518452 Windows M6 的 `formal_entry_freezes_policy_three_without_changing_older_sessions` 逾時已查到根因，這是依 CI log 與耗時對照的推論，待本 commit CI 確認：
 - 它和 `toggle_owner_settings_match_both_frozen_presets` 同在 batch `m6_universe_profile`。
 - 後者在 server thread 同步物化四個 U（CI 約 7.4 秒，XML 7.356；本機 0.6 秒），佔掉前者固定 10 秒的牆鐘返還等待。
