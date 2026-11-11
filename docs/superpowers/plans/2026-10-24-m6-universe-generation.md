@@ -809,6 +809,8 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 ### Task 14：policy3 的 normal↔amplified mutation
 
+**2026-11-11 Task14 候選修正：待本 commit CI，仍 OPEN。** CI42820518452 的 Windows M6 逾時根因：正式入口案與 toggle 案同在 batch `m6_universe_profile`，後者在 server thread 同步物化四個 U，佔掉前者固定 10 秒的牆鐘返還等待。這是依 CI log 推論，待本 commit CI 確認。修正 `d73de9c` 把正式入口案移到獨立 batch `m6_universe_profile_entry`，案例、斷言、timeout 與 production 不變。同 pin focused 兩輪 21/21 PASS，一席審查 C0/I0/M2。三 job CI 全綠才記 closed。詳見 M6 implementation note 的 2026-11-11 段；下段「根因未查」是當時的停點。
+
 **2026-11-10 Task14 OPEN：同SHA CI的Windows M6正式入口案失敗，已止損，不修碼／不重跑。** code pin `5ab3aa4fe6f4ddb63e0469b7c2148b56b8f1b9ff`，遠端候選 `c1b4ea78115e3bbe81bdd2ecb258e39cf4cbf4e0`；[CI42820518452](https://github.com/Ben513242/QuantumChamber/actions/runs/42820518452) attempt1終局：build success、m6-native success、windows-native failure。具名 `m6universegametests.formal_entry_freezes_policy_three_without_changing_older_sessions`，21案僅1失敗：有限等待逾時，FULL／loaded／ticking／tickingFuture=false；own slot0、chunks182、FULL=0／loaded=0／ticking=0。這是目前觀察到的就緒等待簽章，根因未查，不歸已知AccessDenied／AABB偶發。Windows M6執行與集合驗證兩步失敗，2/3 job不能抵全綠；T14從未closed。Windows FAIL artifact與raw XML/log已保存、digest讀回相符，見本plan SDD `task14-ci-c1b4ea7-20261110/terminal-ci-verification.json`（SHA `951b62f929d124bf7a9e49197b8cbf32f0542743ae9ebc28bc95f62a47a6a130`）。同clean5ab雙focused／8個production mutation KILLED及byte-exact REVERT／完整 `run-all-a45fe11f8f8b4ff8bf5218966b65bf1f` 自然END ALL0／outer0與spec C0/I0/M1、quality C0/I0/M0原判保留。首full e016的AccessDenied FAIL及唯一重跑1/1不洗，舊FAIL／UNRESOLVED不改判。為遵守本輪停止指示，交回文件只在本機commit，不再push觸發新CI；最新Git/Java/鎖狀態以ignored STATUS首段與交回索引為準。下一步只等使用者裁示此CI失敗處置；不開Task R、8-H triage、client、人工smoke、main合併或tag。
 
 以下為已採設計及各階段原紀錄；本段更新完成狀態，不改 acceptance contract。

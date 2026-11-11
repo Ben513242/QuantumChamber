@@ -1970,3 +1970,46 @@ CI42820518452（head c1b4ea7、push、attempt1）已completed/failure。build jo
 CI native PASS原artifact13768121649 ZIP SHA `b48c4b726abc292d55806cba4c0e9f098acac60a9d08ce1f9337eed1b8ad94ee` digest exact，269 JSON原bytes保留。既有final診斷送同spec席補記，新增C0/I0；報告 `task14-ci-c1b4ea7-20261110/native-final-diagnostic-review.md` SHA `03e61621882329f9f920e419d1f5f59782e512d62fc0f5f16e8a1a26eca9686a`。CI未新增local full未見hash；same-amplified target由本機427ce…回35809…，new/restart各對local一格差，CI跨側0；兩toggle仍final167／CARVERS261、每側重啟exact。全部UNRESOLVED／NOT_CLASSIFIED保留，原f3審查及原本機差格不改，不推根因、不建baseline。這項補記不能取代失敗Windows job或放行closed。
 
 本輪收尾只保存原件、更新交回並驗local Java0／鎖／porcelain；此後不開任何runtime、review新修法、Task R／8-H triage／client／人工／main／tag。交回文件僅本機commit，遠端仍c1b4ea7；不push，避免以文件SHA觸發同code新CI。後續調查或修正範圍交使用者裁示；M1診斷標籤待辦亦未修。
+
+
+### 2026-11-11：Task14 Windows M6 失敗的根因與拆 batch 修正（Claude 接手）
+
+使用者 11-11 指示「由你繼續接手實作」，T14 改由 Claude 實作。上一段 CI42820518452 的失敗已查到根因。以下是依 CI log 與耗時對照的推論，要等本 commit 的同 SHA CI 才算確認。
+
+**根因**：T14 新增的正式入口案 `formal_entry_freezes_policy_three_without_changing_older_sessions`，和 `toggle_owner_settings_match_both_frozen_presets` 排在同一個 batch `m6_universe_profile`，同一 batch 的案例會同時執行。
+- 正式入口案在 tick 2 拉桿入場（ARMING），同一個 tick 內呼叫 `NativeEntry.trustedTeardown` 拉 LOW 進入 RETURNING。之後從 tick 3 起輪詢，用固定 10 秒的 `System.nanoTime()` 牆鐘等待 presence 變成 NONE（`M2CorridorGameTests.java:3249`、`3268`）。
+- toggle 案在 server thread 上同步物化四個 U：CI log 的 `M3_UNIVERSE_LOAD` 出現在 13:34:53.04、55.51、57.94、13:35:00.35，每個約 2.4 秒。
+- 這段期間 server 幾乎不 tick：失敗當下 `worldTime=serverTicks=302`，13:35:03.8 出現「Running 8602ms or 172 ticks behind」。走廊 slot0 的 182 chunks 因此一個都沒載入（FULL／loaded／ticking 都是 0），10 秒一到就判逾時。
+- 失敗後，slot0 在 13:35:17 被下一批的另一個 session（b999cccf）重配，表示失敗案的 session 之後已不再佔用 slot0。這只證明 slot 已釋放，不能區分是正式返還完成，還是其他清理路徑釋放的；「返還只是比 10 秒慢」屬於推論。
+
+耗時對照（秒）：
+
+| 測試 | 本機 `run-all-a45fe11f…` | CI Windows |
+| --- | --- | --- |
+| toggle_owner_settings_match_both_frozen_presets（同批） | 0.601 | 7.356 |
+| formal_entry_freezes_policy_three_without_changing_older_sessions（同批） | 2.119 | 10.795 FAIL |
+| formal_entry_freezes_policy_two_on_flat（同流程，batch `m6_universe_random`） | 0.906 | 2.307 PASS |
+
+policy2 對照案走同一個 `trustedTeardown` 流程，也斷言 policy3，在沒有宇宙物化同伴的 batch 裡通過，所以不是 policy3 的 production 差異。production 自 `5ab3aa4` 之後沒有改動。
+
+**修正** `d73de9c`：只把正式入口案的 `batchId` 改為 `m6_universe_profile_entry`，加一行註解；案例名稱、斷言、`tickLimit` 與 10 秒等待都不變。README 的 focused 命令和 plan 的 T14 Files 表、CLI 句同步新 batch。M6 run 以 `startsWith("m6_universe")` 選案，CI 範圍檢查以 source 宣告解析，所以案例數仍是 21。
+
+**驗證**（依 B+C 純測試改動：一席審查、必要 targeted 與 CI；不另跑 mutation 或本機 full。production 基準仍是 `5ab3aa4` 的 `run-all-a45fe11f8f8b4ff8bf5218966b65bf1f`，自然 END ALL 0）：
+- 同 pin `d73de9c` 的 M6 GameTest focused 兩輪都 PASS：
+  - `focused-t14-entry-batch-r1-0a6d6cb99ee345ec98b6d59afb224b9c`
+  - `focused-t14-entry-batch-r2-5de1d8401d934389806d567167e3e569`
+- 兩輪的結果都是 scope 宣告 21／實跑 21、0 failure；正式入口案 0.313／0.305 秒。
+- 兩輪的 runtime log 都顯示 `m6_universe_profile:0 (1 tests)` 與 `m6_universe_profile_entry:0 (1 tests)` 依序執行：r1 在 15:08:37／15:08:48，r2 在 15:10:29／15:10:40。
+- 一席獨立審查 C0／I0／M2，報告在 SDD `task14-entry-batch-review-20261111.md`。
+  - M1：「根因未查」字樣，由本段與接手入口補記。
+  - M2：共用的 10 秒牆鐘等待仍然脆弱，只記為風險，不放寬。
+
+**出口**：本 commit push 後，同 SHA 三 job CI（build、windows-native、m6-native）全綠才記 T14 closed；若失敗就停下回報，不重送。以下全部保留原判：
+- CI42820518452 的 FAIL；
+- 首次 full e016 的 AccessDenied FAIL 與已用掉的重跑額度；
+- 兩次 BUDGET_FAIL；
+- 所有 UNRESOLVED。
+
+spec review 的 M1 診斷標籤仍未修。Task R、8-H triage、client、人工 smoke、main 合併與 tag 都沒有啟動。
+
+**殘留風險**：`whenUntil` 用的是牆鐘，不是 tick 數。之後如果有案例在同一 batch 裡長時間同步佔用 server thread，同類逾時可能再出現。新增 M6 案例時，會同步物化宇宙的案例，不要和依賴走廊返還的案例放在同一 batch。
