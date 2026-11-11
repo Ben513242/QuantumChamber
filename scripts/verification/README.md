@@ -537,7 +537,7 @@ Task14的新session採policy3/family0，random／same-seed／toggle依固定hash
 新增focused命令（每次新label；正式native須clean candidate pin）：
 
 ```powershell
-pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_profile -Label t14-profile
+pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite GameTest -Batch m6_universe_profile,m6_universe_profile_entry -Label t14-profile
 pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite Probe -Chain profile-restart -ExpectedMode FUNCTIONAL -Label t14-normal-toggle
 pwsh -NoProfile -File scripts/verification/m6-focused.ps1 -Suite Probe -Chain profile-amplified-restart -ExpectedMode FUNCTIONAL -Label t14-amplified-toggle
 ```

@@ -360,7 +360,8 @@ public final class M6UniverseGameTests implements FabricGameTest {
         context.assertEquals(0, acquireCalls[0], "SOURCE／EXISTING／legacy與未知NEW拒絕都不偷取得lease");
     }
 
-    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_profile", tickLimit=100000)
+    // 獨立 batch：同批的 toggle 案在 server thread 同步物化四個 U，CI Windows 上約占滿本案 10 秒正式返還等待（CI 42820518452）。
+    @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_profile_entry", tickLimit=100000)
     public void formal_entry_freezes_policy_three_without_changing_older_sessions(TestContext context) {
         if (!com.sun.jna.Platform.isWindows()) { context.complete(); return; }
         var fixture = new M2CorridorGameTests.NativeEntry(context, 1);
