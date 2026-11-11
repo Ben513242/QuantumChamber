@@ -262,7 +262,7 @@ final 診斷保存兩側原 1440 rows／hash、全部差格及 new→restart 全
 - `getOverworld()` 正好兩處，在 offset 99 與 116；
 - 呼叫者只有 `PlayerManager.respawnPlayer` 與 `EndPortalBlock.createTeleportTarget`。
 
-**實作（2026-11-11，code pin `1ead254`）**：依上述範圍實作，注入位置沒有變更。本機 RED、8 個 production mutation、雙 focused、完整回歸與 spec／quality 兩席審查都已通過，待本 commit 同 SHA CI；CI 三 job 全綠才算結案。細節見 M6 note 的 2026-11-11「Task R 實作」段。之後新增或改變注入位置仍要先回報，不擴 portal、gateway 或 family。
+**實作（2026-11-11，code pin `1ead254`）**：依上述範圍實作，注入位置沒有變更。本機 RED、8 個 production mutation、雙 focused、完整回歸與 spec／quality 兩席審查都已通過；2026-11-12 CI 43079591580（head `33dc315`）三 job 全 success，Task R 結案。重啟後床點有效與海上 spawn 落海底仍由人工清單驗證。細節見 M6 note 的 2026-11-11「Task R 實作」段。之後新增或改變注入位置仍要先回報，不擴 portal、gateway 或 family。
 
 ## 6. 共用原版維度與量子艙界線
 

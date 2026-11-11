@@ -891,6 +891,8 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 **2026-11-11 實作，待本 commit CI**：code pin `1ead254`（實作 `e9fdbf5` 加審查修正）。本機 RED、M1–M8 mutation、雙 focused、完整回歸 `run-all-c3f5f4705d584008b26d2b6b0505cc1e` 與兩席審查都已通過，細節見 M6 note 的 2026-11-11「Task R 實作」段。同 SHA 三 job CI 全綠才勾「具名正反控制」與出口兩項並記結案；重啟床點項等人工 smoke。
 
+**2026-11-12 Task R 結案**：CI 43079591580（head `33dc315`，code pin `1ead254`）attempt 1 三 job 全 success：Windows default 166、normal 13、M5 60、M6 34、legacy 1；Ubuntu default 166、M5 60、M6 34、legacy 1；m6-native 9 條鏈 27 phase、479 反例。兩項已勾選；重啟床點項仍等人工 smoke。
+
 **Files:**
 - Create：
   - `src/main/java/dev/quantumchamber/universe/UniverseRespawnService.java`
@@ -925,7 +927,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
   - `SERVER_STARTED` bootstrap 物化全部 EAGER_ENABLED、執行中不卸載（`UniverseLifecycleService.java:449–464`），重啟後 U 仍被物化，由現有 restart 鏈證明（catalog-readback、same-seed、profile 各自的 restart phase）。
   - 床點有效依賴原版 `getWorld(U key)`。這些鏈沒有設床，所以重啟後的床點由人工清單驗證，不宣稱自動測試已涵蓋。
   - 本片不新增 native 鏈。DISABLED 不在登入時物化，保持 M5 §8.3 與既有行為；UUID、catalog、playerdata IO 限制都不變。
-- [ ] 具名正反控制（JUnit `decide` 加上 GameTest 13 個情境，見設計稿；2026-11-11：`UniverseRespawnServiceTest` 12 案、`M6UniverseRespawnGameTests` 13 案，RED 時情境 1、6、12、13 FAIL。本機證據已齊，同 SHA CI 全綠時與出口項一起勾選）：
+- [x] 具名正反控制（JUnit `decide` 加上 GameTest 13 個情境，見設計稿；2026-11-11：`UniverseRespawnServiceTest` 12 案、`M6UniverseRespawnGameTests` 13 案，RED 時情境 1、6、12、13 FAIL。2026-11-12 CI 43079591580 全綠後勾選）：
   - 床：同一 U、另一 U、原版主世界的有效床；
   - 錨：共用 Nether 的錨，消耗交給原版；
   - 失效：拆床（`missingRespawnBlock`）、沒有重生點；
@@ -934,7 +936,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
   - 整合：`respawnPlayer`；
   - 非 exact live 與查詢失敗走原版並記原因。
   - End 回 U 不算錯誤。
-- [ ] production 原 RED／必要 mutation／雙 focused／完整回歸／spec及quality／同 SHA CI 全保；只測試腳本窄修才適用 B+C 一席免 local full。T14 後開 Task R，新增或改注入位置先回報，不擴 family。2026-11-11：同 SHA CI 以外的項目本機都已通過，待本 commit CI；CI 三 job 全綠才勾選。
+- [x] production 原 RED／必要 mutation／雙 focused／完整回歸／spec及quality／同 SHA CI 全保；只測試腳本窄修才適用 B+C 一席免 local full。T14 後開 Task R，新增或改注入位置先回報，不擴 family。2026-11-11：同 SHA CI 以外的項目本機都已通過；2026-11-12 CI 43079591580 三 job 全 success。
 
 ### Task 8-H triage 與必須切片（T14／宇宙內重生之後、M6 收尾前）
 

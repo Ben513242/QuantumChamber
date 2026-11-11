@@ -1,5 +1,12 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
+**2026-11-12 Task R（宇宙內重生）closed；下一步 8-H triage。** CI 43079591580（head `33dc315`，code pin `1ead254`）attempt 1 三 job 全 success：
+- Windows：default 166、normal 13、M5 60、M6 34、legacy 1；
+- Ubuntu：default 166、M5 60、M6 34、legacy 1；
+- m6-native：9 條鏈 27 phase。
+
+plan 的「重啟登入仍在同一 U、床點有效」與海上 spawn 落海底，留給人工 smoke。client、人工 smoke、main 合併、tag 都未啟動。細節見 M6 note 的 2026-11-11「Task R 實作」段末。下段是結案前的紀錄。
+
 **2026-11-11 Task R（宇宙內重生）已實作，待本 commit CI，仍 OPEN。**
 - code pin `1ead254`（實作 `e9fdbf5` 加審查修正）。production 是 `ServerPlayerUniverseRespawnMixin` 與 `UniverseRespawnService`：exact live U 主世界死亡、原版要退回主世界時，改留在同一 U，位置照原版。
 - 本機證據：

@@ -2199,3 +2199,12 @@ M1–M6 先在 `e9fdbf5` 跑過一次，全部 killed（SDD `task-r-mutations-20
 - T14 spec 審查的 M1 診斷標籤待辦仍未修。
 
 **出口**：push 後同 SHA 三 job CI 全綠，才勾 plan Task R 的「具名正反控制」與出口兩項並記結案；「重啟登入仍在同一 U、床點有效」要等人工 smoke。CI 失敗就停下回報。之後進 8-H triage。
+
+**docs 審查**：結案文件 `33dc315` 經一席審查，第一輪 C0／I1／M4。I-1 是 plan 的重啟床點項被提前勾選，已改回 `[ ]`。修正後複審 C0／I0／M1，該 Minor 依建議處理：具名控制項也等 CI 全綠才勾。
+
+**結案（2026-11-12）**：CI 43079591580（head `33dc315a54ed2a7138e85a60ba90ade83587f560`，code pin `1ead254`）attempt 1 三 job 全 success：
+- windows-native（job 130728309236）：default 166、normal 13、M5 60、M6 34、legacy 1 全過。`UNIVERSE_RESPAWN_FALLBACK` 5 筆、`UNIVERSE_RESPAWN_KEPT_CANONICAL` 0 筆，`CI_W1_COHORT_CLEANUP … waitLabel=when` 0 行。12 行 `M6_SCOPE_MISMATCH` 都是 `EXPECTED_RED` 自檢。
+- build（Ubuntu，job 130728309171）：default 166、M5 60、M6 34、legacy 1 全過。
+- m6-native（job 130728308724）：`M6_NATIVE_VERIFIED PASS chains=9 phases=27 negativeChecks=479 HEAD=33dc315…`。
+
+plan Task R 的「具名正反控制」與出口兩項已勾選，**Task R closed**。「重啟登入仍在同一 U、床點有效」與海上 spawn 落海底留給人工 smoke。下一步是 8-H triage；client、人工 smoke、main 合併、tag 都未啟動。
