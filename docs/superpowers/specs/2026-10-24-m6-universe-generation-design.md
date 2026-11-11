@@ -244,6 +244,13 @@ final 診斷保存兩側原 1440 rows／hash、全部差格及 new→restart 全
 
 若同一 U 的 checked catalog 權威或 exact live 條件不成立，保留原版 fallback，並記錄玩家、world key、原因與實際目標。
 
+**已知行為：海上出生點（2026-11-11 使用者裁示）**
+- U 沿用原版主世界的 spawn 座標，但 U 的地形不同，那裡可能是海。
+- 若 spawnRadius 範圍內都找不到地面，原版會退回 spawn 座標，並在同一 column 往下落到碰撞面。水沒有碰撞，所以玩家會在海底重生，要自己游上來。
+- 有效的床不受影響。
+- Task R quality 審查以 javap 佐證：`SpawnLocating.findOverworldSpawn` 對水柱回傳 null；`ServerPlayerEntity.getWorldSpawnPos` 全部候選失敗時退回 basePos。
+- 使用者在 AskUserQuestion「宇宙的出生點若在海上，沒床死亡會照原版落到海底重生…要怎麼處理？」選「接受，照原版落海底」，不另加注入點。
+
 原版主世界與共用 Nether／End 死亡保持原版。End→主世界本來走 `getRespawnTarget(false)`，不能以 boolean 當死亡／End 出口的區別；必須以死亡當下 exact live U 主世界條件隔開 canonical End。終界出口照原版看床，床在 U 就回 U，沒床回原版主世界，不加 portal hook。
 
 刪除原提案注入點 2（`PlayerManager.onPlayerConnect`），Task R 不改 `UniverseLifecycleService`。既有 `SERVER_STARTED` bootstrap 會物化全部 `EAGER_ENABLED` U，執行中不卸載（`UniverseLifecycleService.java:449–464`）；重啟後 U 仍被物化，由既有 restart 鏈證明；登入仍在同一 U、床點有效則依賴原版 `getWorld(U key)`，由人工清單驗證，不宣稱自動測試已涵蓋（2026-11-11 Task R 窄審修訂）。`DISABLED` U 不在登入時物化，避免繞過 M5 §8.3，維持既有行為。UUID／catalog／frozen seed／settings 與 playerdata IO 限制不變。

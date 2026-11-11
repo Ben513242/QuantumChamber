@@ -914,6 +914,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
   - catalog 有記錄但條件不成立、或查詢失敗：原版，並記 WARN（玩家、world key、原因、目標）；
   - 改到 U 時：記 INFO。
 - `getRespawnTarget(false)` 也用於 End 出口，不能用 boolean 區分；以死亡世界條件排除 canonical End。
+- 已知行為（使用者 2026-11-11 選「接受，照原版落海底」）：U 的 spawn 座標若在海上，而且附近找不到地面，沒床死亡會照原版落到海底重生，要自己游上來。不另加注入點；人工清單列出這一項。
 
 **唯一 production 注入範圍提案（先回報，未實作）:** `ServerPlayerEntity.getRespawnTarget(ZLnet/minecraft/world/TeleportTarget$PostDimensionTransition;)Lnet/minecraft/world/TeleportTarget;` 內兩個 `MinecraftServer.getOverworld()` fallback 呼叫的窄 target 調整。不是整個 method wrapper 或獨立床政策。必須辨識這兩支原生 fallback 路徑，不能僅憑回傳目標為 canonical 判定，因有效 canonical 床／錨也必須原樣保留。做法是只換傳入原版建構式的 world 參數（`@WrapOperation`，`require=2`，不設 `allow`）。`TeleportTarget` 的位置、`missingRespawnBlock`、velocity、yaw／pitch 與 `postDimensionTransition` 旗標／回呼都由原版照常產生；2026-11-11 裁示後已沒有自訂安全 Y 搜尋。固定 1.21 native gate 已核兩個 callsite、descriptor 與 caller，exact live 條件見上方 Interfaces。刪除原注入點 2 `PlayerManager.onPlayerConnect`，不另 hook 全域 getOverworld／portal。
 
