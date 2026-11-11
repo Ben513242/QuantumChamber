@@ -26,26 +26,31 @@ import net.minecraft.world.World;
  */
 public final class M6UniverseRespawnGameTests implements FabricGameTest {
     private record Universes(MinecraftServer server,ServerWorld first,ServerWorld second) {}
-    private static Universes universes;
+    private static MinecraftServer sharedServer;
+    private static ServerWorld sharedFirst,sharedSecond;
 
+    /** 每個 server 各物化一次 U1、U2；逐一保存，前一個成功後下一個失敗時不重複物化已成功的那個。 */
     private static Universes universes(MinecraftServer server) {
-        if(universes==null || universes.server()!=server) {
-            universes=new Universes(server,
-                    M6ProfileProbePhases.fixtureSource(server,UniverseId.of(UUID.randomUUID()),"normal"),
-                    M6ProfileProbePhases.fixtureSource(server,UniverseId.of(UUID.randomUUID()),"normal"));
-        }
-        return universes;
+        if(sharedServer!=server) { sharedServer=server; sharedFirst=null; sharedSecond=null; }
+        if(sharedFirst==null) sharedFirst=M6ProfileProbePhases.fixtureSource(server,UniverseId.of(UUID.randomUUID()),"normal");
+        if(sharedSecond==null) sharedSecond=M6ProfileProbePhases.fixtureSource(server,UniverseId.of(UUID.randomUUID()),"normal");
+        return new Universes(server,sharedFirst,sharedSecond);
     }
 
-    /** 原版登入固定落在 canonical，之後再以原版 teleport 送到指定世界。 */
+    /** 原版登入固定落在 canonical，之後再以原版 teleport 送到指定世界；失敗時先關閉連線，不留下玩家連坐後續案例。 */
     private static ConnectedGameTestPlayer playerIn(TestContext context,ServerWorld world,Vec3d pos) {
         var connection=new ConnectedGameTestPlayer(context.getWorld());
-        connection.player().teleportTo(new TeleportTarget(world,pos,Vec3d.ZERO,0,0,TeleportTarget.NO_OP));
-        context.assertTrue(connection.player().getServerWorld()==world,"RESPAWN_FIXTURE_WORLD：測試玩家須實際位於 "+world.getRegistryKey().getValue());
-        return connection;
+        try {
+            connection.player().teleportTo(new TeleportTarget(world,pos,Vec3d.ZERO,0,0,TeleportTarget.NO_OP));
+            context.assertTrue(connection.player().getServerWorld()==world,"RESPAWN_FIXTURE_WORLD：測試玩家須實際位於 "+world.getRegistryKey().getValue());
+            return connection;
+        } catch(RuntimeException | Error failure) {
+            connection.close();
+            throw failure;
+        }
     }
 
-    /** 在 {@code base} 清出空間並鋪石台，回傳放好的方塊位置；只用 NOTIFY_LISTENERS，不觸發鄰居更新。 */
+    /** 在 {@code base} 清出空間並鋪石台；只用 NOTIFY_LISTENERS，不觸發鄰居更新。 */
     private static void platform(ServerWorld world,BlockPos base) {
         for(int dx=-2;dx<=2;dx++) for(int dz=-3;dz<=2;dz++) {
             world.setBlockState(base.add(dx,-1,dz),Blocks.STONE.getDefaultState(),Block.NOTIFY_LISTENERS);
@@ -143,7 +148,7 @@ public final class M6UniverseRespawnGameTests implements FabricGameTest {
 
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_respawn", tickLimit=1200)
     public void canonical_death_without_spawn_point_stays_vanilla(TestContext context) {
-        var server=context.getWorld().getServer(); universes(server); var canonical=server.getOverworld();
+        var server=context.getWorld().getServer(); universes(server); /* 控制組也先物化 U，確保 catalog 有 U 時仍走原版 */ var canonical=server.getOverworld();
         try(var connection=playerIn(context,canonical,new Vec3d(4000.5,200,4000.5))) {
             near(context,connection.player().getRespawnTarget(true,TeleportTarget.NO_OP),canonical,canonical.getSpawnPos(),
                     server.getSpawnRadius(canonical),"RESPAWN_CANONICAL_VANILLA");
@@ -153,7 +158,7 @@ public final class M6UniverseRespawnGameTests implements FabricGameTest {
 
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_respawn", tickLimit=1200)
     public void nether_death_without_spawn_point_stays_vanilla(TestContext context) {
-        var server=context.getWorld().getServer(); universes(server); var canonical=server.getOverworld();
+        var server=context.getWorld().getServer(); universes(server); /* 控制組也先物化 U，確保 catalog 有 U 時仍走原版 */ var canonical=server.getOverworld();
         try(var connection=playerIn(context,server.getWorld(World.NETHER),new Vec3d(1200.5,100,1000.5))) {
             near(context,connection.player().getRespawnTarget(true,TeleportTarget.NO_OP),canonical,canonical.getSpawnPos(),
                     server.getSpawnRadius(canonical),"RESPAWN_NETHER_VANILLA");
@@ -175,7 +180,7 @@ public final class M6UniverseRespawnGameTests implements FabricGameTest {
 
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_respawn", tickLimit=1200)
     public void end_exit_without_bed_returns_to_canonical(TestContext context) {
-        var server=context.getWorld().getServer(); universes(server); var canonical=server.getOverworld();
+        var server=context.getWorld().getServer(); universes(server); /* 控制組也先物化 U，確保 catalog 有 U 時仍走原版 */ var canonical=server.getOverworld();
         try(var connection=playerIn(context,server.getWorld(World.END),new Vec3d(1100.5,100,1000.5))) {
             near(context,connection.player().getRespawnTarget(false,TeleportTarget.NO_OP),canonical,canonical.getSpawnPos(),
                     server.getSpawnRadius(canonical),"RESPAWN_END_EXIT_CANONICAL");
@@ -185,7 +190,7 @@ public final class M6UniverseRespawnGameTests implements FabricGameTest {
 
     @GameTest(templateName="quantumchamber:m1_empty", batchId="m6_universe_respawn", tickLimit=1200)
     public void corridor_death_stays_vanilla_without_universe_log(TestContext context) {
-        var server=context.getWorld().getServer(); universes(server); var canonical=server.getOverworld();
+        var server=context.getWorld().getServer(); universes(server); /* 控制組也先物化 U，確保 catalog 有 U 時仍走原版 */ var canonical=server.getOverworld();
         var corridor=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
         try(var connection=playerIn(context,corridor,new Vec3d(0.5,100,-50000.5))) {
             TeleportTarget target;
