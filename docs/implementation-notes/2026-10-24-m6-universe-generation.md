@@ -2040,3 +2040,60 @@ CI 42978379270（head `715c47688115760dd1fdcdeb6b1852ff2f67e11e`，code pin `d73
 **attempt 2**：windows-native job 130400524850 success，步驟 6–13 全部 success：Windows default 166、normal 13、M5 60、M6 21 全過；M6 步驟內另有 legacy 1 案 `isolated_legacy_schema2_then_empty_schema3_authority_gates_windows` 也通過。build、m6-native 沿用 attempt 1 的 success。
 
 **T14 closed。** attempt 1 的 FAIL、CI42820518452 的 FAIL、首次 full e016 的 AccessDenied FAIL、兩次 BUDGET_FAIL 與所有 UNRESOLVED 都保留原判。spec review 的 M1 診斷標籤待辦仍未修。下一步是 Task R（宇宙內重生）；8-H triage、client、人工 smoke、main 合併與 tag 都未啟動。
+
+
+### 2026-11-11：8-H 必要項「M2 走廊等待餘量與失敗連坐」（待本 commit CI）
+
+使用者 17:26 指示「現在開始排 8-H 的走廊等待修正然後再進Task R」，所以排在 Task R 之前。授權原文見 plan 8-H 節。
+
+**設計**：SDD `8h-m2-wait-budget-design-20261111.md`。窄審第一輪 C0／I3／M4，修訂後複審 C0／I0／M2。三項 Important 已修進設計：
+- I1：觸發範圍只限逾時，不含 ready 內的一般斷言失敗，忠於「逾時案例」的授權；
+- I2：前置查詢包在 try/catch 裡，不遮蔽原錯；
+- I3：補上未修正版的本機強制 RED 基準。
+
+**修正** `c410975`，只改 `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`（+40／-8）：
+1. 兩個預設 `when` 的牆鐘上限由 10 秒改為 60 秒。`tick>=90000` 上限與所有明確傳入 deadline 的等待都不變。
+   - 依據：與 M4 `when`、`CohortWaitTrace`、`CohortFailureCleanup` 既有的 60 秒一致；約為 CI 最慢通過單段（9.6 秒）的 6 倍。
+2. `NativeEntry` 在 5 參數建構子末尾登記到以 `TestContext` 為鍵的 `IdentityHashMap`。同一 context 第二次登記改標 AMBIGUOUS；`close()` 只移除自己。
+3. `whenUntil` 的逾時分支：逾時錯誤仍用 `context.assertTrue(false, 原訊息)` 產生，捕捉後處理。
+   - `hooks!=null`：照原樣丟出，經外層 catch 走 `hooks.primary/releaseAfter`。
+   - `hooks==null`：交給 `NativeEntry.failAfterTimeoutCleanup`。若本 context 唯一登記的 fixture 仍有本艙 session 且尚未持有收尾，就先記 `CI_W1_COHORT_WAIT FAIL`，再呼叫既有的 `failCohortAfterCleanup`，並直接 return，不再排下一輪等待。
+   - 收尾只走正式 LOW／`returnToOrigin`，確認乾淨後關閉連線，最後才丟出原錯。
+   - 查詢失敗、沒有 session、已持有收尾時，都照原樣丟出原錯。
+
+**不變**：
+- production、案例名、斷言、tickLimit；
+- ready 或 condition 內的一般斷言失敗；
+- `Error`；
+- `TrustedSpace`／`TrustedSpaceRun`；
+- offline／pin-cap 自有的 10 秒 `await`；
+- M4 自有的 `when`。
+
+**本機證據**（SDD `8h-m2-wait-forced-20261111/`）：
+- **RED-forced**：在未修正的 `ee398ad` 上，把 `native_shoulder_parrot…` 第一個等待的 condition 暫時改為 `() -> false`。
+  - gate：`gates.ps1 -Mode GameTest`，root `gate-red-forced-8h-08f174ef662c4c4a8575297b693907f2`。
+  - 結果：166 案中 5 案 FAIL。強制的 1 案逾時當下是 SUPERPOSITION，slot 2。另 4 案是連坐：entity_placement（slot 3，loaded 92／182）、lateral_north（AABB 容量不足）、custom_hidden（slot 4，2／91）、custom_single（slot 5，0／91）。
+  - 這重現了 CI 42978379270 attempt 1 的連坐模式。
+- **GREEN-forced**：在修正版上套用同一強制修改，root `gate-green-forced-8h-c990d43db88a45bb9370c1a4ca767855`。
+  - 結果：166 案中只有強制的 1 案 FAIL，60.534 秒逾時，原錯訊息不變。
+  - log 依序出現 `CI_W1_COHORT_WAIT FAIL`、`CI_W1_COHORT_CLEANUP BEGIN`，19 tick、516 ms 後出現 `FINAL phase=CLEAN`：presence NONE、journal 無此 SID、玩家回到來源 bbox、連線已關、保護已解除、space 已清。
+- 兩次強制修改都先存原檔，gate 後逐位元組還原並核 SHA：未修正版 `1b5a3dcd…`，修正版 `68bc51d5…`。
+- **GREEN-normal**（乾淨 pin `c410975`）：
+  - default：`gate-green-normal-8h-c410975-3b443e6fd71c4f719fe3bf2a5bde4e0d`，166/166，沒有觸發任何自清；
+  - M6：`focused-green-normal-8h-m6-c410975-064521dd245544e0aa18038ff764c640`，21/21；
+  - 上次 CI 失敗的 `native_*` 案中，有 5 案本機為 2.8–5.4 秒。`native_cohort_walks_and_returns_west_windows` 總耗時 69.3 秒，但它是多段 cohort 等待，每段各有自己的 60 秒上限，不是單一 `when`。
+  - M4 normal 與 M5 依賴同 SHA CI。
+
+**審查**：程式一席審查 C0／I0／M3（SDD `8h-m2-wait-code-review-20261111.md`）。三項 Minor 記為殘留：
+- 靜態登記表會保留未 `close()` 測試的引用；
+- ARMING 狀態的逾時沒有被直接強制驗過；
+- 靜態欄位的位置。
+
+**殘留**：
+- 一般 `TrustedSpace` 案逾時仍不自清。CI 42978379270 attempt 1 的 8 個失敗案中，有 3 案用 `TrustedSpace` 系列，角色不同：
+  - `native_projection_identified_before_budget_split_cancel_windows` 用一般 `TrustedSpace`，逾時後留下 slot 4 的 ARMING session，不會自清。這是本片沒有涵蓋的缺口。
+  - `trusted_lateral_geometry_south_windows`、`trusted_lateral_geometry_north_windows` 經 `withTrustedSpace` 使用有自己清理機制的 `TrustedSpaceRun`（`M2CorridorGameTests.java:252–254`）。失敗訊息只有「局部實例／完整 AABB 容量不足」，屬於在建構時拿不到容量的受害者。
+  - 其餘 5 案是 `NativeEntry`：shoulder_parrot、cohort_walks_west、entity_placement、custom_hidden、custom_single，本片已涵蓋。
+- 「通過的案例留下 session」只記為觀察，不在本片處理。
+
+**出口**：push 後同 SHA 三 job CI 全綠，才勾選 plan 的 8-H 這一項；若失敗就停下回報。之後進 Task R。

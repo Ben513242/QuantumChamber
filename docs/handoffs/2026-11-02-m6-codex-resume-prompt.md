@@ -1,5 +1,17 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
+**2026-11-11 8-H 必要項「M2 走廊等待餘量與失敗連坐」已實作，待本 commit CI；之後進 Task R。** 使用者原話「現在開始排 8-H 的走廊等待修正然後再進Task R」。
+- 修正 `c410975`（只改 testmod 的 `M2CorridorGameTests.java`）：
+  - 兩個預設 `when` 由 10 秒改為 60 秒；
+  - `NativeEntry` 案例在等待逾時時，走既有的正式收尾清掉自己的 session，再丟出原錯，避免連坐。
+- 設計窄審複審 C0/I0/M2，程式一席審查 C0/I0/M3。
+- 本機證據：
+  - 未修正版強制一案逾時：5 案 FAIL，其中 4 案連坐；
+  - 修正版：只有強制的 1 案 FAIL，收尾 `phase=CLEAN`；
+  - 乾淨 pin：default 166/166、M6 21/21。
+- 殘留：一般 `TrustedSpace` 案逾時仍不自清（`TrustedSpaceRun` 有自己的清理）。
+- production、案例與斷言都不變。細節見 M6 note 的 2026-11-11「8-H 必要項」段。Task R 尚未開始。
+
 **2026-11-11 Task14 closed；M6 目前由 Claude 實作（使用者原話「由你繼續接手實作」），下一步 Task R（宇宙內重生），尚未開始。** CI 42978379270（head `715c476`，code pin `d73de9c`）attempt 2 三 job 全 success：Windows default 166、normal 13、M5 60、M6 21 全過。
 
 attempt 1 的 windows-native 失敗（default 8 案 M2 走廊連坐，M6 已 21/21）保留原判。使用者裁示兩項，選項原文如下：

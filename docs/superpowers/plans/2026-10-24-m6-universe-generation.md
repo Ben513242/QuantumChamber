@@ -907,6 +907,16 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 - 範圍：只改測試。放寬或改寫 M2 共用的 10 秒牆鐘等待（`M2CorridorGameTests.when`／`whenUntil` 等），數值或改用 tick 上限的方式依 CI 實測耗時定；並讓等待逾時的案例清掉自己的 session，避免連坐。
 - 不變：案例、斷言、production 容量與舊 FAIL 都不改。
 - 流程：先設計並窄審再實作，依 B+C 純測試流程（一席審查、必要 targeted、CI）。M6 收尾的最終 full 與 CI 依賴這一項。
+- [ ] **2026-11-11 已實作，待本 commit CI**：使用者 17:26 指示「現在開始排 8-H 的走廊等待修正然後再進Task R」，所以這一項先於 Task R，不受本節標題的排程限制。
+  - 修正 `c410975`，只改 `src/testmod/java/dev/quantumchamber/gametest/M2CorridorGameTests.java`：
+    - 兩個預設 `when` 由 10 秒改為 60 秒；
+    - `whenUntil` 逾時分支在 hooks==null 時，若本 context 唯一登記的 `NativeEntry` 仍有本艙 session，就走既有的 `CohortFailureCleanup` 正式收尾，再丟出原錯。
+  - 設計窄審 C0/I3/M4，修訂後複審 C0/I0/M2；程式一席審查 C0/I0/M3。
+  - 本機證據：
+    - RED-forced（未修正版，強制 1 案逾時）：5 案 FAIL，其中 4 案連坐。
+    - GREEN-forced（修正版）：只有強制的 1 案 FAIL，收尾 `phase=CLEAN`。
+    - GREEN-normal：default 166/166、M6 21/21。
+  - 殘留：一般 `TrustedSpace` 案逾時仍不自清（例如 `native_projection_identified…_cancel`；`TrustedSpaceRun` 有自己的清理）；ARMING 狀態的逾時沒有被直接強制驗過。詳見 M6 note 的 2026-11-11 段。同 SHA 三 job CI 全綠才勾選。
 
 **Files:** Modify `docs/implementation-notes/2026-10-24-m6-universe-generation.md`、本 plan 此節、`AGENTS.md` 接手入口；實作檔依裁示為必須的切片各自列出。
 **Interfaces:** triage 只產文件與裁示，不改程式；每個必須切片再按 Global Constraints 協定獨立派工。
