@@ -8,7 +8,9 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.HexFormat;
 import java.util.Map;
+import java.util.TreeMap;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtByte;
 import net.minecraft.nbt.NbtElement;
@@ -200,6 +202,22 @@ class Minecraft121ShallowSettingsCanonicalizerTest {
         envelope.put("Roles", new NbtCompound()); envelope.putByte("GenerateStructures", (byte)1);
         envelope.put("Parameters", new NbtCompound());
         assertThrows(RuntimeException.class, () -> Minecraft121ShallowSettingsCanonicalizer.canonicalEnvelope(envelope));
+    }
+    // 已存檔 U 的 snapshot 存著 OutputFingerprint，這些值一變，舊世界開啟時就會 FP 不符；Ubuntu 與 Windows CI 各自比對同一組常數。
+    // GenerateStructures=1 的兩個值與 run-all-c3f5f470 原生鏈 receipt 的 target/sourceFingerprint 相同（真 server）；=0 的兩個值取自 1ead254 的實作輸出。
+    @Test void shallowFingerprintsMatchPinnedValues() {
+        var expected = new TreeMap<String, String>(Map.of(
+                "amplified/0", "535d2fdff94fcd1191aee59bc445d14001db527c88eb505af4544650b06a8985",
+                "amplified/1", "102962da118dad66a5777ceeabd8590041862eea8f78a68f22725e6e2cdadf40",
+                "normal/0", "e9f6ad318e7df291f7fac787b3987c478e41bbc5f8efb5facb4ea50e6efb7094",
+                "normal/1", "4bdb138addb5fca11d0cce76c69d08d7d1598b56a6088286debb86202ef5f4b5"));
+        var actual = new TreeMap<String, String>();
+        try (var f = Minecraft121WorldgenRegistryFixture.load()) {
+            for (String preset : new String[] {"normal", "amplified"}) for (boolean structures : new boolean[] {true, false})
+                actual.put(preset + "/" + (structures ? 1 : 0),
+                        HexFormat.of().formatHex(result(new Lease(f.registries(), true), preset, structures).fingerprint()));
+        }
+        assertEquals(expected, actual);
     }
     @Test void shallowFingerprintUnchangedWhenNoiseSettingsContentChanges() {
         try (var normal = Minecraft121WorldgenRegistryFixture.load(); var changed = Minecraft121WorldgenRegistryFixture.loadAmplifiedOverride()) {
