@@ -103,6 +103,17 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-11 Task R（宇宙內重生）已實作，待本 commit CI，仍 OPEN。**
+- code pin `1ead254`（實作 `e9fdbf5` 加審查修正）。production 是 `ServerPlayerUniverseRespawnMixin` 與 `UniverseRespawnService`：exact live U 主世界死亡、原版要退回主世界時，改留在同一 U，位置照原版。
+- 本機證據：
+  - RED 13 案中 4 案 FAIL；
+  - M1–M8 mutation 全部 killed；
+  - 雙 focused：M6 34/34、JUnit 12/12；
+  - 完整回歸 `run-all-c3f5f4705d584008b26d2b6b0505cc1e` 自然 `END ALL exit=0`。
+- 審查：spec、quality 複審都是 C0／I0。
+- 使用者裁示「接受，照原版落海底」：U spawn 在海上時，沒床死亡會落到海底，列為已知行為。
+- 同 SHA 三 job CI 全綠才記結案，失敗就停下回報。之後是 8-H triage 與 M6 收尾；client、人工 smoke、main 合併、tag 都未啟動。細節見 M6 note 的 2026-11-11「Task R 實作」段。下段是 Task R 設計當時的紀錄。
+
 **2026-11-11 Task R（宇宙內重生）設計中，待窄審；8-H 走廊等待項目已結案。**
 - 8-H：CI 43003044905（code pin `c410975`）三 job 全 success，plan 已勾選。
 - Task R 落點：使用者在 AskUserQuestion 選「只換世界，位置照原版（建議）」。fallback 只把目標世界換成同一 U，位置由原版重生規則計算，不寫自訂安全 Y。spec §5、plan Task R、人工清單已依此修訂。

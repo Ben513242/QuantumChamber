@@ -4,9 +4,9 @@
 
 ### v1.7 有效範圍（2026-11-10：宇宙只有主世界）
 
-使用者原話：「宇宙只有主世界，Nether／End 共用原版，意思就是平行宇宙共用原有的Nether／End」「在宇宙裡死亡（沒有床）要去哪裡:留在宇宙這樣才符合量子艙的概念」。本版優先於較早 B+C 範圍快照；B+C 的流程與資料安全關卡保留。本次唯一範圍修訂已經獨立窄審（同席定向關閉殘留 active family 承諾 I1，終局 C0／I0／M0）採用，報告 SHA256 `062ac1acd07c6f073517c50f3cf69adfbaac7ab47ef6bad3e31ec13eb27cff3c`；尚非重生實作或人工通過。
+使用者原話：「宇宙只有主世界，Nether／End 共用原版，意思就是平行宇宙共用原有的Nether／End」「在宇宙裡死亡（沒有床）要去哪裡:留在宇宙這樣才符合量子艙的概念」。本版優先於較早 B+C 範圍快照；B+C 的流程與資料安全關卡保留。本次唯一範圍修訂已經獨立窄審（同席定向關閉殘留 active family 承諾 I1，終局 C0／I0／M0）採用，報告 SHA256 `062ac1acd07c6f073517c50f3cf69adfbaac7ab47ef6bad3e31ec13eb27cff3c`；尚非重生實作或人工通過（當時；重生已於 2026-11-11 實作，見 §5 末，人工仍未執行）。
 
-**Task R 開工前修訂已採用（2026-11-10）**：本次只修 spec／plan／人工清單，唯一獨立窄審 C0／I0／M0，報告 SHA256 `1a40624a243630e9d832cecadc967b41a05785cae6ee4e328401bcdf45fe9ee0`。T13 結案不變；本輪窄審已清零，可依使用者本次授權開始 T14，Task R 尚未實作。
+**Task R 開工前修訂已採用（2026-11-10）**：本次只修 spec／plan／人工清單，唯一獨立窄審 C0／I0／M0，報告 SHA256 `1a40624a243630e9d832cecadc967b41a05785cae6ee4e328401bcdf45fe9ee0`。T13 結案不變；本輪窄審已清零，可依使用者本次授權開始 T14，Task R 當時尚未實作（2026-11-11 已實作，狀態見 §5 末）。
 
 - T13 已結案，`270ea3f` 已核對；本輪三檔修正經唯一窄審 C／I 清零後，依使用者授權開始 T14。M6 依序 T14 normal↔amplified→宇宙內重生（取代 T20）→8-H triage→收尾。`FamilyCapabilityVersion` 維持 0，僅物化 U:OVERWORLD。
 - T15–T19、T21 暫時排除，不排 M6 或 M7；不再承諾三 role family、專屬 Nether／End、portal／gateway routing、同 role 艙或 U→U 全量比較。只在 plan 保留一段未排程構想。catalog 未物化 Nether／End descriptor 的處理、維度 key 不一致待辦一併取消；不改程式、不刪改現有 catalog／ledger／frozen snapshot。c7d／e1d 及所有原 FAIL 均為保留的歷史，不是未來 T21 關卡。
@@ -262,7 +262,7 @@ final 診斷保存兩側原 1440 rows／hash、全部差格及 new→restart 全
 - `getOverworld()` 正好兩處，在 offset 99 與 116；
 - 呼叫者只有 `PlayerManager.respawnPlayer` 與 `EndPortalBlock.createTeleportTarget`。
 
-此時尚未實作，也未宣稱通過。T14 後開 Task R；新增或改變注入位置仍要先回報，不擴 portal、gateway 或 family。
+**實作（2026-11-11，code pin `1ead254`）**：依上述範圍實作，注入位置沒有變更。本機 RED、8 個 production mutation、雙 focused、完整回歸與 spec／quality 兩席審查都已通過，待本 commit 同 SHA CI；CI 三 job 全綠才算結案。細節見 M6 note 的 2026-11-11「Task R 實作」段。之後新增或改變注入位置仍要先回報，不擴 portal、gateway 或 family。
 
 ## 6. 共用原版維度與量子艙界線
 

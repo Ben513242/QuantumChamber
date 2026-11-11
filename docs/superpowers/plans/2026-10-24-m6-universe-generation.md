@@ -12,9 +12,9 @@
 
 ## 2026-11-10 最新範圍：宇宙只有主世界（B+C 流程維持）
 
-**本輪 Task R 修正已採用**：spec v1.7、plan 與人工清單唯一窄審 C0／I0／M0（SHA256 `1a40624a243630e9d832cecadc967b41a05785cae6ee4e328401bcdf45fe9ee0`），無必要修法；T13 結案與 270ea3f 維持。之後依本次明確授權開工 T14；AABB 兩案自身清理與既有獨立 batch 已獲 2026-11-10 裁示，依下方 8-H A 段排在 T14 full 前；Task R 未實作。
+**本輪 Task R 修正已採用**：spec v1.7、plan 與人工清單唯一窄審 C0／I0／M0（SHA256 `1a40624a243630e9d832cecadc967b41a05785cae6ee4e328401bcdf45fe9ee0`），無必要修法；T13 結案與 270ea3f 維持。之後依本次明確授權開工 T14；AABB 兩案自身清理與既有獨立 batch 已獲 2026-11-10 裁示，依下方 8-H A 段排在 T14 full 前；Task R 當時未實作（2026-11-11 已實作，見 Task R 節）。
 
-使用者原話：「宇宙只有主世界，Nether／End 共用原版，意思就是平行宇宙共用原有的Nether／End」「在宇宙裡死亡（沒有床）要去哪裡:留在宇宙這樣才符合量子艙的概念」。本段優先於所有較早 M7／family／T21 範圍快照；這一份 spec／plan 修訂已經唯一獨立窄審終局 C0／I0／M0 採用，I1 僅同席定向修正；不改 source，尚非 Task R 實作。
+使用者原話：「宇宙只有主世界，Nether／End 共用原版，意思就是平行宇宙共用原有的Nether／End」「在宇宙裡死亡（沒有床）要去哪裡:留在宇宙這樣才符合量子艙的概念」。本段優先於所有較早 M7／family／T21 範圍快照；這一份 spec／plan 修訂已經唯一獨立窄審終局 C0／I0／M0 採用，I1 僅同席定向修正；不改 source，尚非 Task R 實作（當時；2026-11-11 已實作）。
 
 1. T13 已結案且 `270ea3f` 已核對；本輪三檔修正唯一窄審 C／I 清零後已獲使用者授權開工 T14。順序：T14→宇宙內重生（取代 T20）→8-H triage→M6 收尾。M6 僅 U 主世界、FamilyCapabilityVersion=0；T15–T19、T21 不排 M6 或 M7，原 U→U 全量比較取消，c7d／e1d 原 FAIL 永保歷史。
 2. catalog 未物化 Nether／End descriptor 與維度 key 不一致待辦一併取消；不改 UniverseKeys／catalog／ledger／frozen snapshot，不建新 role、不升 capability。
@@ -887,7 +887,9 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 ### Task R：宇宙內重生（取代原 T20；T14 後）
 
-**2026-11-11 設計（`.superpowers/sdd/2026-10-24-m6-universe-generation/task-r-design-20261111.md`）**：使用者在 AskUserQuestion 選「只換世界，位置照原版（建議）」。fallback 只把目標世界換成同一 U，位置由原版 `getWorldSpawnPos` 在該 U 計算，不寫自訂安全 Y 搜尋。固定 1.21 native gate 已用 javap 核對：offset 99／116 的兩個 `getOverworld()`、兩個呼叫者、U spawn 等於原版主世界 spawn。設計待窄審 C／I 清零才實作。
+**2026-11-11 設計（`.superpowers/sdd/2026-10-24-m6-universe-generation/task-r-design-20261111.md`）**：使用者在 AskUserQuestion 選「只換世界，位置照原版（建議）」。fallback 只把目標世界換成同一 U，位置由原版 `getWorldSpawnPos` 在該 U 計算，不寫自訂安全 Y 搜尋。固定 1.21 native gate 已用 javap 核對：offset 99／116 的兩個 `getOverworld()`、兩個呼叫者、U spawn 等於原版主世界 spawn。設計窄審三輪後 C0／I0／M0 採用（`task-r-design-review-20261111.md`）。
+
+**2026-11-11 實作，待本 commit CI**：code pin `1ead254`（實作 `e9fdbf5` 加審查修正）。本機 RED、M1–M8 mutation、雙 focused、完整回歸 `run-all-c3f5f4705d584008b26d2b6b0505cc1e` 與兩席審查都已通過，細節見 M6 note 的 2026-11-11「Task R 實作」段。同 SHA 三 job CI 全綠才勾「具名正反控制」與出口兩項並記結案；重啟床點項等人工 smoke。
 
 **Files:**
 - Create：
@@ -917,13 +919,13 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 - `getRespawnTarget(false)` 也用於 End 出口，不能用 boolean 區分；以死亡世界條件排除 canonical End。
 - 已知行為（使用者 2026-11-11 選「接受，照原版落海底」）：U 的 spawn 座標若在海上，而且附近找不到地面，沒床死亡會照原版落到海底重生，要自己游上來。不另加注入點；人工清單列出這一項。
 
-**唯一 production 注入範圍提案（先回報，未實作）:** `ServerPlayerEntity.getRespawnTarget(ZLnet/minecraft/world/TeleportTarget$PostDimensionTransition;)Lnet/minecraft/world/TeleportTarget;` 內兩個 `MinecraftServer.getOverworld()` fallback 呼叫的窄 target 調整。不是整個 method wrapper 或獨立床政策。必須辨識這兩支原生 fallback 路徑，不能僅憑回傳目標為 canonical 判定，因有效 canonical 床／錨也必須原樣保留。做法是只換傳入原版建構式的 world 參數（`@WrapOperation`，`require=2`，不設 `allow`）。`TeleportTarget` 的位置、`missingRespawnBlock`、velocity、yaw／pitch 與 `postDimensionTransition` 旗標／回呼都由原版照常產生；2026-11-11 裁示後已沒有自訂安全 Y 搜尋。固定 1.21 native gate 已核兩個 callsite、descriptor 與 caller，exact live 條件見上方 Interfaces。刪除原注入點 2 `PlayerManager.onPlayerConnect`，不另 hook 全域 getOverworld／portal。
+**唯一 production 注入範圍（2026-11-11 已依此實作，位置未變）:** `ServerPlayerEntity.getRespawnTarget(ZLnet/minecraft/world/TeleportTarget$PostDimensionTransition;)Lnet/minecraft/world/TeleportTarget;` 內兩個 `MinecraftServer.getOverworld()` fallback 呼叫的窄 target 調整。不是整個 method wrapper 或獨立床政策。必須辨識這兩支原生 fallback 路徑，不能僅憑回傳目標為 canonical 判定，因有效 canonical 床／錨也必須原樣保留。做法是只換傳入原版建構式的 world 參數（`@WrapOperation`，`require=2`，不設 `allow`）。`TeleportTarget` 的位置、`missingRespawnBlock`、velocity、yaw／pitch 與 `postDimensionTransition` 旗標／回呼都由原版照常產生；2026-11-11 裁示後已沒有自訂安全 Y 搜尋。固定 1.21 native gate 已核兩個 callsite、descriptor 與 caller，exact live 條件見上方 Interfaces。刪除原注入點 2 `PlayerManager.onPlayerConnect`，不另 hook 全域 getOverworld／portal。
 
-- [ ] 重啟登入仍在同一 U、床點有效：
+- [ ] 重啟登入仍在同一 U、床點有效（2026-11-11：自動部分「重啟後 U 仍被物化」已由 `run-all-c3f5f4705d584008b26d2b6b0505cc1e` 中 catalog-readback、same-seed（含 amplified）、profile（含 amplified）的 restart phase PASS 證明；登入仍在同一 U 與床點有效留給人工清單，人工 smoke 完成後才勾選）：
   - `SERVER_STARTED` bootstrap 物化全部 EAGER_ENABLED、執行中不卸載（`UniverseLifecycleService.java:449–464`），重啟後 U 仍被物化，由現有 restart 鏈證明（catalog-readback、same-seed、profile 各自的 restart phase）。
   - 床點有效依賴原版 `getWorld(U key)`。這些鏈沒有設床，所以重啟後的床點由人工清單驗證，不宣稱自動測試已涵蓋。
   - 本片不新增 native 鏈。DISABLED 不在登入時物化，保持 M5 §8.3 與既有行為；UUID、catalog、playerdata IO 限制都不變。
-- [ ] 具名正反控制（JUnit `decide` 加上 GameTest 13 個情境，見設計稿）：
+- [ ] 具名正反控制（JUnit `decide` 加上 GameTest 13 個情境，見設計稿；2026-11-11：`UniverseRespawnServiceTest` 12 案、`M6UniverseRespawnGameTests` 13 案，RED 時情境 1、6、12、13 FAIL。本機證據已齊，同 SHA CI 全綠時與出口項一起勾選）：
   - 床：同一 U、另一 U、原版主世界的有效床；
   - 錨：共用 Nether 的錨，消耗交給原版；
   - 失效：拆床（`missingRespawnBlock`）、沒有重生點；
@@ -932,7 +934,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
   - 整合：`respawnPlayer`；
   - 非 exact live 與查詢失敗走原版並記原因。
   - End 回 U 不算錯誤。
-- [ ] production 原 RED／必要 mutation／雙 focused／完整回歸／spec及quality／同 SHA CI 全保；只測試腳本窄修才適用 B+C 一席免 local full。T14 後開 Task R，新增或改注入位置先回報，不擴 family。
+- [ ] production 原 RED／必要 mutation／雙 focused／完整回歸／spec及quality／同 SHA CI 全保；只測試腳本窄修才適用 B+C 一席免 local full。T14 後開 Task R，新增或改注入位置先回報，不擴 family。2026-11-11：同 SHA CI 以外的項目本機都已通過，待本 commit CI；CI 三 job 全綠才勾選。
 
 ### Task 8-H triage 與必須切片（T14／宇宙內重生之後、M6 收尾前）
 

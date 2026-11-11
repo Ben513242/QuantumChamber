@@ -2103,6 +2103,8 @@ CI 42978379270（head `715c47688115760dd1fdcdeb6b1852ff2f67e11e`，code pin `d73
 
 ### 2026-11-11：Task R 設計（落點照原版），待窄審
 
+（設計當時的紀錄。窄審後已採用，實作見下段「Task R 實作」。）
+
 使用者在 AskUserQuestion「在宇宙裡死亡且沒有有效重生點時，落點要怎麼決定？」選「只換世界，位置照原版（建議）」，取代 spec §5 原本「同 block XZ、自訂有界安全 Y」的策略。spec §5、plan Task R 與人工清單已依此修訂。設計在 SDD `task-r-design-20261111.md`。
 
 **固定 1.21 native gate（javap）**：
@@ -2116,3 +2118,84 @@ CI 42978379270（head `715c47688115760dd1fdcdeb6b1852ff2f67e11e`，code pin `d73
 - 判斷條件：死亡世界是 checked flushed catalog 對應的 exact live U:OVERWORLD，而且 `resolveActive` 取回的是同一個實例。符合時只把 fallback 世界換成該 U；位置與「床不見了」提示等欄位都由原版產生。
 - 測試：JUnit 測泛型 `decide`；新 GameTest batch `m6_universe_respawn` 跑 13 個情境；6 個 production mutation。
 - 不新增 native 鏈。此時尚未實作。
+
+
+### 2026-11-11：Task R 實作（待本 commit CI）
+
+**設計窄審**（SDD `task-r-design-review-20261111.md`）：一席三輪。
+- 第一輪 C0／I4／M8：案例數自相矛盾、M4 是等價突變、`respawnPlayer` 留下新 entity、重啟床點的涵蓋說法不成立。
+- 第二輪 C0／I1／M2。
+- 第三輪 C0／I0／M0，設計採用。docs commit `9f4edba`。
+- 修訂結果：13 個獨立 `@GameTest`，M6 宣告數 34；M4 的殺手改為 JUnit；情境 13 在測試內清理；重啟床點改由人工清單驗證。
+
+**RED**（SDD `task-r-red-20261111/`）：
+- HEAD `9f4edba`，production 未改，只新增 GameTest 類別並登記。
+- root `focused-task-r-red-901375e0d7ec4d6d92ea1ea22470b87d`：13 案中 4 案 FAIL，都是「實際 minecraft:overworld」：
+  - 情境 1：沒有重生點；
+  - 情境 6：床被拆；
+  - 情境 12：兩個 U 兩個玩家；
+  - 情境 13：`respawnPlayer` 整合。
+- 其餘 9 個控制情境 PASS。
+
+**實作** `e9fdbf5`：
+- production：
+  - 新增 `ServerPlayerUniverseRespawnMixin`：`@WrapOperation` 包住 `getRespawnTarget` 內兩個 `MinecraftServer.getOverworld()`，`require=2`，只換傳給原版建構式的 world；
+  - 新增 `UniverseRespawnService`；
+  - `quantumchamber.mixins.json` 加一行。
+- 測試：
+  - 新增 `UniverseRespawnServiceTest`；
+  - 新增 `M6UniverseRespawnGameTests`，batch `m6_universe_respawn`；
+  - testmod 的 `fabric.mod.json` 登記新類別。
+- `decide` 的判斷順序：
+  1. 原版世界：原版，不查 catalog。
+  2. 不在 server thread、查詢失敗、flushed 沒有這筆：原版。只有 `quantumchamber:universe/…` 樣式的 key 才記 WARN。
+  3. descriptor 不是 OVERWORLD、current 與 flushed 不同、U 不是 ACTIVE、ACTIVE 實例不是死亡世界：原版，並記 WARN。
+  4. 以上都不成立：換成死亡的 U，並記 INFO `UNIVERSE_RESPAWN_FALLBACK`。
+
+**GREEN**：
+- GameTest root `focused-task-r-green-gametest-85360ef2…`：13/13，有 5 筆 `UNIVERSE_RESPAWN_FALLBACK`。
+- JUnit：10/10。第一次 JUnit（root `focused-task-r-green-junit-1de8c65e25944d4f9ef8e1583162729b`）10 案中 2 案失敗，原因是測試的 key 常數取名 `UNIVERSE`，遮住了同名 enum 常數；改名為 `UNIVERSE_KEY`，production 不變。
+
+**兩席審查 `e9fdbf5`**（SDD `task-r-code-reviews-20261111.md`）：
+- spec 席：C0／I0／M3。
+- quality 席：C0／I1／M8，另有 S-1：
+  - I-1：`lookup` 沒有單元測試，有兩個突變會存活。修正 `1ead254`：`lookup` 改為 package-private，接收 catalog 與 `resolveActive` 函式；JUnit 用經 NBT 讀回的真 `UniverseRegistryState` 加三案。兩個突變補為 M7、M8。同時移除 spec 席 M2 指出的同義反覆測試，JUnit 共 12 案。
+  - Minor：除 M-6 外都已處理。M-6（把 key 格式判斷收進 `UniverseKeys`）不採，因為要改白名單外的檔案；改在註解指向 `UniverseKeys.world`。
+  - S-1：U 的 spawn 若在海上，沒床死亡會照原版落到海底。使用者選「接受，照原版落海底」，docs `aa9b45f`。
+- 複審 `1ead254`：
+  - quality：C0／I0／M0。另附一項文件同步提醒（不計入 Minor）：M-4 改變了 log 規則，plan Interfaces 要跟著改，已在 `a81ffaa` 補一行。兩項極小建議（一個沒被讀取的欄位、catch 內的 `addSuppressed`）只記為殘留，不改程式，避免換 pin。
+  - spec：C0／I0／M2。spec 摘要表的舊字樣已在 `a81ffaa` 修正；spec、plan 中「尚未實作」等過期說法在本 commit 更新。
+
+**mutation**（code pin `1ead254`，SDD `task-r-mutations-1ead254-20261111/mutations-results.json`，SHA256 `ed0611cfd8b85360602631aae8805a5f34c95972ce4b0d4e9a4ab0de31ea6484`）：8 個全部 killed，逐位元組還原並核 SHA。
+
+| 編號 | 突變 | 殺手 |
+| --- | --- | --- |
+| M1 | mixin 一律回傳原版主世界 | GameTest 情境 1、13 |
+| M2 | 在 server thread 上就直接判 UNIVERSE | JUnit 沒有 catalog 記錄的案例、GameTest 走廊死亡 |
+| M3 | 拿掉「ACTIVE 實例等於死亡世界」的檢查 | JUnit `differentActiveInstanceIsRejected` |
+| M4 | 拿掉原版世界的提早 return | JUnit `vanillaWorldsNeverQueryCatalog` |
+| M5 | 只包 offset 99 那一處 | GameTest 情境 1（沒有重生點） |
+| M6 | 只包 offset 116 那一處 | GameTest 情境 6（床被拆） |
+| M7 | `currentMatchesFlushed` 固定為 true | JUnit `lookupReportsCurrentDifferentFromFlushed` |
+| M8 | `lookup` 跳過非 EAGER_ENABLED 的記錄 | JUnit `lookupIgnoresAvailabilityForFlushedDisabledUniverse` |
+
+M1–M6 先在 `e9fdbf5` 跑過一次，全部 killed（SDD `task-r-mutations-20261111/`）。
+
+**雙 focused**（HEAD `aa9b45f`，code 同 `1ead254`）：
+- M6 GameTest：`focused-task-r-pin2-r1-m6-d64ba4e8bb934adfa0f952c2e4b20e06`、`focused-task-r-pin2-r2-m6-3c9c3d844ca4400d944e476deb84e0ff`，兩輪都是 34/34；
+- JUnit：`focused-task-r-pin2-r1-junit-b643e2b4ea9149a8aae48a6facb190f5`、`focused-task-r-pin2-r2-junit-8599dbfae91c42559f30ab70204740cc`，兩輪都是 12/12。
+
+**完整回歸**：`run-all-c3f5f4705d584008b26d2b6b0505cc1e`（HEAD `a81ffaa`，code 同 `1ead254`），外層 0，自然結束於 `END ALL exit=0`。
+- `SUMMARY default=166/166 windows=76 legacy=1/1 m5=60/60 m6=34/34 m6pace=38 normal=13/13 perTest=43+13+1 junit=1127 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=570entries/523classes sources=266 testmodHits=0 mainOnly=PASS m3=4+5 recovery=25 m5collapse=69 m6native=DIAGNOSTIC:2,FUNCTIONAL:25 ci=win:PASS,ubuntu:PASS`。
+- 其中 `ci=` 是本機 workflow 規則自檢，不是 GitHub Actions 的結果。
+- `summary.json` SHA256 `86f2b46d9c8dc1187f3b1fc1a475415def2639d9ebf9b6c4782be13a3ceb2744`。
+- 與 T14 的 `run-all-a45fe11f…` 相比：M6 21→34、JUnit 1115→1127，差額正好是本片新增的 13 案與 12 案；default 166、M5 60、legacy 1、normal 13 不變。
+- 原生鏈 9 條 27 phase PASS，其中 7 條有名為 restart 的 phase；SelfTest 479 反例。本片沒有新增 native 鏈。
+- M6 gate 的 runtime log：`UNIVERSE_RESPAWN_FALLBACK` 5 筆，與 GREEN 相同；`UNIVERSE_RESPAWN_KEPT_CANONICAL` 0 筆。
+
+**殘留**：
+- 沒有測試直接斷言 log 欄位（spec 席 M3）。
+- 重啟後床點有效、海上 spawn 落海底，由人工清單驗證。
+- T14 spec 審查的 M1 診斷標籤待辦仍未修。
+
+**出口**：push 後同 SHA 三 job CI 全綠，才勾 plan Task R 的「具名正反控制」與出口兩項並記結案；「重啟登入仍在同一 U、床點有效」要等人工 smoke。CI 失敗就停下回報。之後進 8-H triage。
