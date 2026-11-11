@@ -910,7 +910,8 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 - 位置與 `missingRespawnBlock`、yaw／pitch、`postDimensionTransition` 都由原版建構式照常產生。
 - 結果：
   - 原版世界死亡（包含 End 出口時的 End）：原版，不記 log；
-  - 非 U 世界（例如走廊）：原版，不記 log；
+  - 非 U 世界（例如走廊、其他 mod 的維度）：原版，不記 log；
+  - key 是 `quantumchamber:universe/…` 樣式，但 flushed catalog 沒有這筆，或不在 server thread：原版，並記 WARN；
   - catalog 有記錄但條件不成立、或查詢失敗：原版，並記 WARN（玩家、world key、原因、目標）；
   - 改到 U 時：記 INFO。
 - `getRespawnTarget(false)` 也用於 End 出口，不能用 boolean 區分；以死亡世界條件排除 canonical End。

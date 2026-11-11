@@ -28,7 +28,7 @@ M6 依序交付①測試腳本安全與生成競態、②random seed、③same-s
 | ①安全與競態 | fresh root 失敗仍可 exact 還原；三類結構並行生成無共享狀態污染，原版單世界輸出不變 | native 1.21 路徑盤點、三類各自定向 RED |
 | ②random | 兩個 `NEW` 可有不同 terrain／biome／structure seed，重啟與重訪不變；舊世界不變。原版 portal／死亡仍可能非正規回到 canonical，沿 M5 已知限制 | §3 schema／seed owner 與提交鏈 |
 | ③same-seed／profile | 新 UUID、空白歷史、同 seed 地形；至少一種可量測的原版 profile mutation；registry 查詢能回報精確 id／version／參數。原版 portal／死亡非正規回程仍未修 | ②、原版 preset 與 worker 實證 |
-| 宇宙內重生（取代 T20） | 床／錨依原版優先；exact live U 主世界死亡且原版 canonical fallback 才改同 U 安全位置，無解沿原版並記錄 | §5 的 getRespawnTarget 兩個 canonical fallback 呼叫窄調整先回報，原 production gate |
+| 宇宙內重生（取代 T20） | 床／錨依原版優先；exact live U 主世界死亡且走原版 canonical fallback 時，只把世界換成同一 U，位置照原版（2026-11-11 裁示）；權威不成立時沿原版並記錄 | §5 的 getRespawnTarget 兩個 canonical fallback 呼叫窄調整，原 production gate |
 
 不做 M7、玩家可控制的權重 UI、複雜 renderer、目的地預覽、雙向量子通道、全域 eager 投影、世界池卸載或版本升級。固定 Minecraft 1.21／Yarn `1.21+build.9`／Loader `0.17.2`／API `0.102.0+1.21`／Loom `1.7.4`／Java 21。AccessDenied 維持既有 fail-closed／退避；不宣稱原版 playerdata 吞下 IOException 已解決。
 
