@@ -2208,3 +2208,39 @@ M1–M6 先在 `e9fdbf5` 跑過一次，全部 killed（SDD `task-r-mutations-20
 - m6-native（job 130728308724）：`M6_NATIVE_VERIFIED PASS chains=9 phases=27 negativeChecks=479 HEAD=33dc315…`。
 
 plan Task R 的「具名正反控制」與出口兩項已勾選，**Task R closed**。「重啟登入仍在同一 U、床點有效」與海上 spawn 落海底留給人工 smoke。下一步是 8-H triage；client、人工 smoke、main 合併、tag 都未啟動。
+
+
+### 2026-11-12：8-H triage 裁示與固定指紋值測試（待本 commit CI）
+
+**盤點與獨立審查**：
+- 盤點稿 SDD `8h-triage-inventory-20261112.md`（HEAD `8a26677`）：H1～H6 各列原定義、程式真相、證據、風險、若做的流程與建議；另列「其他已知殘留」A～E。
+- 獨立審查 SDD `8h-triage-review-20261112.md`：事實錯誤 0。補充一點：release JAR 的 refmap／remap 在各 task 有靜態核對，但從來沒有實際啟動過。
+- 審查中確認的程式事實：
+  - main-only gate 只跑 Loom `runServer`（`gates.ps1:449`，`main-oracle.ps1:17` 要求 devlaunchinjector），repo 沒有任何以 release JAR 啟動的 gate 或 CI 步驟；
+  - `Minecraft121SettingsLifecycle.onReloadStarted` 在非 IDLE 時進 POISONED，只能重啟恢復；這段期間 `freezeCandidateContext` 失敗，新的量子艙被拒絕（`SuperpositionSessionManager.java:140–141`）；
+  - 失敗的 reload：`Minecraft121SettingsContexts.finishReload` 清掉 current、不發布新來源（`:266–271`），phase 回 IDLE，所以要等下一次成功的 reload 或重啟才恢復；
+  - `UniverseProfileRegistry` 只接受 ProviderVersion 1，`Minecraft121RegistryClosure` 在 `src/main` 沒有呼叫者；
+  - refresh seal 只有 testmod 讀取；
+  - `WorldGenerationOwnerAccess` setter 唯一的呼叫者是 `Minecraft121ServerWorldFactory.java:49`。
+- 「M6 正式只出 SHALLOW_V1」原本沒有使用者原話（spec §3.1.3 寫明交 8-H triage 裁示），本次一併確認。
+
+**使用者裁示**：四題都選建議項，題目與選項原文記在 plan「Task 8-H triage」節。
+- 「只出簡易版（建議）」：H1、H2 waiver。
+- 「人工一次＋自動指紋測試（建議）」：H3 只做最小版。
+- 「人工 smoke 加驗（建議）」：H4 只做最小版，重疊 reload 列已知限制。
+- 「全部不做，寫入文件（建議）」：H5、H6 與其他殘留 waiver。
+
+人工清單新增「release JAR」「/reload」兩列與 waiver 段。
+
+**固定指紋值 JUnit** `a9871e8`：只改 `src/test/java/dev/quantumchamber/universe/Minecraft121ShallowSettingsCanonicalizerTest.java`，新增 `shallowFingerprintsMatchPinnedValues`。
+- 比對 normal／amplified × GenerateStructures 0／1 四組 OutputFingerprint 常數。理由：已存檔 U 的 snapshot 存著這個值，編碼一變，舊世界開啟時就會 FP 不符；兩個平台的 CI 會各自比對同一組常數。
+- 常數的來源：
+  - GenerateStructures=1 的兩組，與 `run-all-c3f5f4705d584008b26d2b6b0505cc1e` 原生鏈 receipt 中真 server 算出的值相同：normal `4bdb138a…`（same-seed-restart 的 source／target）、amplified `102962da…`（same-seed-amplified-restart）。receipt 在 `run/m6-universe-91bace754a7041cd83ace3d07b592eba-<chain>/`；nonce `91bace75…` 也出現在該 run-all root 的 `m6-native-run-91bace754a7041cd83ace3d07b592eba.json` 檔名與 `run-all.log` 的 `M6_PHASE … ROOT=` 行；
+  - GenerateStructures=0 的兩組取自實作輸出（normal `e9f6ad31…`、amplified `535d2fdf…`），沒有實跑紀錄可對照。
+- 驗證：
+  - 先以佔位值執行，root `focused-golden-fp-pending-456647888bf74d0d83180319db0fea5a`：15 案中只有新案 FAIL，失敗訊息印出四組實際值；GenerateStructures=1 兩組與 receipt 相同。
+  - 填值後在乾淨 HEAD `a9871e8` 跑雙 focused：`focused-golden-fp-r1-a5915a499e4c4845ab3e72dd77990e2d`、`focused-golden-fp-r2-bc732fafb694423aadde2f1b52f3f59f`，兩輪都是 15/15。
+- 依 B+C 純測試流程：一席審查、targeted、CI，不做 mutation 與本機 full。
+- 這個測試只證明 named 環境下兩個平台算出相同指紋，不證明 intermediary 環境或 release JAR 能啟動。spec §3.1.3 要求評估「intermediary 與 named 的 SHALLOW_V1 FP 是否相同」，評估結論：這一點交由人工清單的「release JAR」一列一次性取證（尚未執行）。預期是世界在 named 開發 runtime 建立、由 release JAR 開啟時，兩種 U 都沒有 `SETTINGS_FINGERPRINT_MISMATCH`。
+
+**出口**：push 後同 SHA 三 job CI 全綠，才算固定指紋值測試完成；plan 8-H 第三項要等兩個人工列也完成才勾。之後進 Task 22 收尾。

@@ -18,7 +18,7 @@
 
 1. T13 已結案且 `270ea3f` 已核對；本輪三檔修正唯一窄審 C／I 清零後已獲使用者授權開工 T14。順序：T14→宇宙內重生（取代 T20）→8-H triage→M6 收尾。M6 僅 U 主世界、FamilyCapabilityVersion=0；T15–T19、T21 不排 M6 或 M7，原 U→U 全量比較取消，c7d／e1d 原 FAIL 永保歷史。
 2. catalog 未物化 Nether／End descriptor 與維度 key 不一致待辦一併取消；不改 UniverseKeys／catalog／ledger／frozen snapshot，不建新 role、不升 capability。
-3. 8-H 依「只有主世界、共用原版 Nether／End、SHALLOW_V1」重提必要項與 waiver，交使用者裁定；不自動豁免或移排 M7。
+3. 8-H 依「只有主世界、共用原版 Nether／End、SHALLOW_V1」重提必要項與 waiver，交使用者裁定；不自動豁免或移排 M7。（2026-11-12 已裁示，見「Task 8-H triage」節。）
 4. B+C 不變：production 原門檻；僅測試／腳本／文件一席審查、必要 targeted 驗證與 CI，免 mutation／本機 full。所有世界移動／逐檔還原、lock、owned root、testmod隔離、main-only、old FAIL全保；known AccessDenied／testmod 處理前 Windows default AABB／走廊容量連坐同 code pin 最多一次新 nonce，第二次停，純文件 SHA 不洗次數；已結 task 不因 pure-docs known CI 失敗重開。非決定性從一開始分層，不逐格比較 final 方塊；一份設計一次窄審 C/I0 後做，不另加多輪觀測。
 5. 收尾保完整回歸／整分支審查／docs truth／CI，單人與多人各一輪，另加一輪宇宙內死亡重生。人工代操作／main 合併／tag 各自另問；目前不啟 client。T13 結案與 `270ea3f` 已核對；歷史各次 FAIL／UNKNOWN 原判保留，不由本輪文件倒改。
 
@@ -961,7 +961,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 **Files:** Modify `docs/implementation-notes/2026-10-24-m6-universe-generation.md`、本 plan 此節、`AGENTS.md` 接手入口；實作檔依裁示為必須的切片各自列出。
 **Interfaces:** triage 只產文件與裁示，不改程式；每個必須切片再按 Global Constraints 協定獨立派工。
-- [ ] 列出 H1 完整閉包 ProviderVersion≥2（C1d 其餘含 D1c LOOT_TABLE、三 role 完整 canonical／FP、100ms live hold I-1、T2 額外 100ms FAIL）、H2 正式 lifecycle 證明（S1b、S2 integrated RM、source bridge／同票同 seal／consumer、LT2 STOP-PENDING 安全性）、H3 8B3-F 三 bundle（三腳本、ci-rule 負例、workflow、production runtime 準備核）、H4 完整 reload GameTests、H5 Task9 reserved journal slot 事前攔截、H6 Task11 public `WorldGenerationOwnerAccess` setter 初次 foreign owner 安裝殘餘的當時狀態、原件 SHA 與 retained FAIL。H5 包含原生 `get` HEAD `@Inject`、`set` 的 `Map.put` `@WrapOperation`、`get` cache-miss 回填的 `Map.put` `@WrapOperation`、只為三 hook 所需 permit 消耗／公開 manager monitor 雙 thread 負控／wrong-lock／非 reserved cold get mutation，以及 `scripts/verification/m6-journal-slot-intermediary.ps1`、`scripts/verification/java/JournalSlotRuntimeObserver.java` 的 JDI 真 intermediary production gate 與 handler monitorenter 證明。H6 僅其他mod能在本模組安裝前造同server/key/live instance的偽 `GenerationOwner` 並呼public setter；本片未即時攔或證事後阻擋，不能冒稱canonical已防這種碰撞。依2026-11-10最新裁示提前至M6收尾前，按只有主世界／共用原版 Nether與End／SHALLOW_V1重新triage，不預先waiver。
+- [x] （2026-11-12：盤點稿 SDD `8h-triage-inventory-20261112.md`，HEAD `8a26677`）列出 H1 完整閉包 ProviderVersion≥2（C1d 其餘含 D1c LOOT_TABLE、三 role 完整 canonical／FP、100ms live hold I-1、T2 額外 100ms FAIL）、H2 正式 lifecycle 證明（S1b、S2 integrated RM、source bridge／同票同 seal／consumer、LT2 STOP-PENDING 安全性）、H3 8B3-F 三 bundle（三腳本、ci-rule 負例、workflow、production runtime 準備核）、H4 完整 reload GameTests、H5 Task9 reserved journal slot 事前攔截、H6 Task11 public `WorldGenerationOwnerAccess` setter 初次 foreign owner 安裝殘餘的當時狀態、原件 SHA 與 retained FAIL。H5 包含原生 `get` HEAD `@Inject`、`set` 的 `Map.put` `@WrapOperation`、`get` cache-miss 回填的 `Map.put` `@WrapOperation`、只為三 hook 所需 permit 消耗／公開 manager monitor 雙 thread 負控／wrong-lock／非 reserved cold get mutation，以及 `scripts/verification/m6-journal-slot-intermediary.ps1`、`scripts/verification/java/JournalSlotRuntimeObserver.java` 的 JDI 真 intermediary production gate 與 handler monitorenter 證明。H6 僅其他mod能在本模組安裝前造同server/key/live instance的偽 `GenerationOwner` 並呼public setter；本片未即時攔或證事後阻擋，不能冒稱canonical已防這種碰撞。依2026-11-10最新裁示提前至M6收尾前，按只有主世界／共用原版 Nether與End／SHALLOW_V1重新triage，不預先waiver。
 
 **2026-11-10 Windows default AABB／走廊容量：A＋各自獨立 batch 已裁示，設計釘選、候選本機targeted通過，待獨審／CI。** 本片提前至 T14 完整回歸前整合；其餘8-H仍依原排程。只讀原件支持global pin overflow可連坐其他space、offline完成可留離線cohort；四個local終局僅有offline SID、pin-cap SID absent。這既不證明當刻4096 coverage已滿，也不以journal absence／pin0宣稱allocator空；本片不能稱為已證AABB根因修復。
 
@@ -974,8 +974,25 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 
 - **本機候選證據（2026-11-10，未代完整出口）**：原71個M2宣告／caseName／batch／tickLimit對cdb全部exact；兩正常單案各1/1、合併2/2。將admission與prepare改共用同一原10秒deadline後，fresh `gate-t14-capacity-deadline-final-f241f848a7a44fb797f220a415846936` 再2/2零bad／outer0，scope仍declared.default166、world exactRestored。兩個較早同候選testmod控制分別保留offline原斷言錯與pin部分spawn原錯，均正式清理後交FAIL，source逐位元還原；最後deadline改動不重跑控制、不冒控制對新等待分支已覆蓋。具體原根／SHA／限制見 ignored `task14-capacity-targeted-ebdce7f53f07448e88d083e086c61eff/index.json`。首次錯用 `-Batch` 的launch前SETUP拒絕不是功能FAIL／RED。兩個原SelfTest BUDGET_FAIL不在本片重跑，900回放、獨審與CI仍待。
 
-- [ ] 獨立 review 對每項提案「M6 合併 `main` 前必須」或「明確 gate waiver／後續排程另裁」，附理由；預設建議（非裁示）：若 M6 正式只出 `SHALLOW_V1`，H1、H4 可 waiver；H3 至少須證 Windows intermediary main-only 與 named 的 `SHALLOW_V1` FP 相同；H2 只在 refresh seal 進入正式路徑時必須。交使用者裁示，裁示原話記入 AGENTS。
-- [ ] 只實作裁示為必須者，每片按實際改動分流：production 原 RED／mutation／雙 focused／full／兩席；僅測試／腳本／文件一席、必要 focused 與 CI，不 mutation／本機 full；waiver 項寫入 Task 22 人工清單與接手入口，標示 `main` 是開發快照、不適合未備份的正式世界。所有 retained FAIL 不因 waiver 改判。
+- [x] 獨立 review 對每項提案「M6 合併 `main` 前必須」或「明確 gate waiver／後續排程另裁」，附理由；預設建議（非裁示）：若 M6 正式只出 `SHALLOW_V1`，H1、H4 可 waiver；H3 至少須證 Windows intermediary main-only 與 named 的 `SHALLOW_V1` FP 相同；H2 只在 refresh seal 進入正式路徑時必須。交使用者裁示，裁示原話記入 AGENTS。（2026-11-12：獨立審查 SDD `8h-triage-review-20261112.md`，事實錯誤 0；裁示見下方。）
+
+**2026-11-12 8-H triage 裁示**（AskUserQuestion，四題都選建議項；題目與選項說明原文如下）：
+1. 題目「M6 正式版的宇宙設定指紋，只做目前的簡易版（SHALLOW_V1）就好嗎？簡易版只比對設定的名稱與參數，不比對 datapack 內容；換了 datapack 不會被偵測，行為與原版換 datapack 相同。H1（完整指紋）、H2（啟動流程完整證明）能否不做，都取決於這一題。」選「只出簡易版（建議）」：「確認 M6 只出 SHALLOW_V1。H1、H2 不做，寫入人工清單與接手文件作為已知限制。」
+2. 題目「正式發佈用的 release JAR 從來沒有實際啟動過，M1–M5 也一樣，全部只在開發環境測過；目前只有靜態檢查。M6 新增了很多 mixin，在正式環境要靠 refmap 才能套用。要不要補一次實際啟動驗證？」選「人工一次＋自動指紋測試（建議）」：「用 release JAR 加 Fabric API 開 dedicated server，確認 mixin 全部套用、普通與放大地形的宇宙都能開。另加一個固定指紋值的 JUnit，讓兩個平台的 CI 自動比對。」
+3. 題目「`/reload` 在真 server 上從沒測過。如果兩次 reload 重疊，在重啟伺服器（單人就是退出重進）之前，所有新量子艙都會靜默啟動失敗。要怎麼處理？」選「人工 smoke 加驗（建議）」：「在收尾的單人與 dedicated 人工測試中，各做一次 /reload 後再啟動量子艙。重疊 reload 列為已知限制。若發現 reload 後量子艙不能用，就開 production 修正 task。」
+4. 題目「剩下的項目只有在其他 mod 異常操作時才會觸發，或只影響測試診斷：H5 保留 journal slot 的事前攔截、H6 內部 owner setter 可被其他 mod 呼叫，以及走廊測試逾時不自清等測試殘留。要怎麼處理？」選「全部不做，寫入文件（建議）」：「都列為已知限制，寫入人工清單與接手文件；舊的 FAIL 紀錄保留原判。」
+
+處置：
+- 必須：
+  - H3 最小版：release JAR 實跑一次（人工清單新增一列）；固定指紋值 JUnit（`a9871e8`，純測試，依 B+C）。
+  - H4 最小版：單人與 dedicated 各一次 `/reload` 後再啟動量子艙（人工清單新增一列）。
+- waiver：H1、H2、H3 三 bundle 全套、H4 完整版與重疊 reload、H5、H6，以及盤點稿「其他已知殘留」A～E（E-1 是無法補的證據缺口，不算 waiver，在整分支審查揭露）。各項寫入人工清單的 waiver 段與接手入口；retained FAIL 不因 waiver 改判。
+- 以下 waiver 是 controller 依使用者所選選項推得，題目沒有逐項明問：
+  - 「H3 三 bundle 全套」與「H4 完整版、失敗的 reload」：使用者在第 2、3 題選了最小版；
+  - 8C-2 異常 END／dispatch 不永久停用（盤點稿 E-3）：屬 H2 範圍，隨第 1 題。
+  - 使用者若不同意，可單獨改列必須。
+
+- [ ] 只實作裁示為必須者，每片按實際改動分流：production 原 RED／mutation／雙 focused／full／兩席；僅測試／腳本／文件一席、必要 focused 與 CI，不 mutation／本機 full；waiver 項寫入 Task 22 人工清單與接手入口，標示 `main` 是開發快照、不適合未備份的正式世界。所有 retained FAIL 不因 waiver 改判。（2026-11-12：固定指紋值 JUnit `a9871e8` 雙 focused 15/15，待本 commit CI；兩個人工項排入 Task 22。CI 全綠且人工兩列完成才勾。）
 
 ## Milestone 收尾（與 code task 分離）
 

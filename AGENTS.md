@@ -103,6 +103,14 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-12 8-H triage 已裁示；固定指紋值測試 `a9871e8` 待本 commit CI。** 使用者四題都選建議項。這裡只列選項標籤，題目與選項說明的原文以 plan「Task 8-H triage」節為準：
+- 「只出簡易版（建議）」：M6 只出 SHALLOW_V1，H1、H2 waiver。
+- 「人工一次＋自動指紋測試（建議）」：H3 只做 release JAR 實跑一次（人工）加固定指紋值 JUnit（`a9871e8`）。
+- 「人工 smoke 加驗（建議）」：H4 只做單人與 dedicated 各一次 `/reload` 後啟動量子艙（人工）；重疊 reload 列已知限制。
+- 「全部不做，寫入文件（建議）」：H5、H6 與其他殘留 waiver。
+
+人工清單已新增兩列與 waiver 段；`main` 是開發快照，不適合未備份的正式世界。CI 全綠後進 Task 22 收尾：最終 full、整分支審查、docs truth、CI、人工 smoke。client、人工 smoke、main 合併、tag 都未啟動，各自另問。下段是 Task R 結案時的紀錄。
+
 **2026-11-12 Task R（宇宙內重生）closed；下一步 8-H triage。** CI 43079591580（head `33dc315`，code pin `1ead254`）attempt 1 三 job 全 success：
 - Windows：default 166、normal 13、M5 60、M6 34、legacy 1；
 - Ubuntu：default 166、M5 60、M6 34、legacy 1；
