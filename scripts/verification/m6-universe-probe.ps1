@@ -479,7 +479,7 @@ function Assert-SavedNativeChain($native,[int]$ChainIndex,$receiptOverrides=@{},
     if((Get-FileHash -LiteralPath $chainRow.preservation).Hash -cne $chainRow.preservationSha256){throw 'M6_SAVED_PRESERVATION_HASH'}
     $preserve=if($preservationOverrides.ContainsKey($i)){$preservationOverrides[$i]}else{Get-Content -LiteralPath $chainRow.preservation -Raw | ConvertFrom-Json -DateKind String}
     if($preserve.root -cne $chainRow.root -or $preserve.strategy -cne 'NEW_OWNED_ROOT' -or $preserve.existingWorldsMoved -ne 0 -or $preserve.existingWorldsChanged -or -not $preserve.retainedRoot -or -not $preserve.lockReleased -or $preserve.normalStop -ne ($spec.chain -cne 'catalog-readback')){throw 'M6_SAVED_PRESERVATION'}
-    $receipts=@();$pids=@();$phaseEvidenceBases=@()
+    $receipts=@();$jvms=@();$phaseEvidenceBases=@()
     foreach($phaseName in $spec.phases) {
         $row=$native.phases[$offset]
         if((Get-FileHash -LiteralPath $row.receipt).Hash -cne $row.receiptSha256){throw 'M6_SAVED_RECEIPT_HASH'}
@@ -490,9 +490,10 @@ function Assert-SavedNativeChain($native,[int]$ChainIndex,$receiptOverrides=@{},
         if($row.normalStop -eq $halt -or $row.javaExitCode -ne $(if($halt){77}else{0}) -or ($halt -and $row.gradleExitCode -eq 0) -or (-not $halt -and $row.gradleExitCode -ne 0)){throw 'M6_SAVED_EXIT'}
         $owned=[pscustomobject]@{nonce=$row.nonce;root=$row.root};$state=[pscustomobject]@{StartupNonce=$row.startupNonce;PhaseEvidence=[IO.Path]::GetDirectoryName($row.receipt)}
         if($null -eq $ReceiptPredicateIndex -or $offset -eq $ReceiptPredicateIndex){Assert-SavedNativeReceiptPredicate $receipt $phaseName $owned $state $spec}
-        $receipts+=,$receipt;$pids+=,$row.javaPid;$phaseEvidenceBases+=,$state.PhaseEvidence;$offset++
+        # Windows會回收已結束process的PID；JVM身分以(PID, StartTime)判定，與M4/M5 probe相同。
+        $receipts+=,$receipt;$jvms+=,"$($row.javaPid)@$($row.javaStartTimeUtc)";$phaseEvidenceBases+=,$state.PhaseEvidence;$offset++
     }
-    if(@($pids | Sort-Object -Unique).Count -ne $spec.phases.Count){throw 'M6_SAVED_JVM_REUSED'}
+    if(@($jvms | Sort-Object -Unique).Count -ne $spec.phases.Count){throw 'M6_SAVED_JVM_REUSED'}
     if($spec.chain -ceq 'native-seed-diagnostic') {
         if($receipts[0].catalogSha256 -cne $receipts[1].catalogSha256 -or -not $receipts[1].diagnosticAssertions.reopenExact){throw 'M6_SAVED_DIAGNOSTIC_REOPEN'}
     } elseif($spec.chain -ceq 'native-seed-functional') {
@@ -696,7 +697,7 @@ try {
             }
             if($chainSpec.chain -ceq 'partial-overworld' -and ((($proofs[2].protectedSamples | ConvertTo-Json -Compress) -cne ($proofs[3].protectedSamples | ConvertTo-Json -Compress)) -or (($proofs[2].partialNativeConsumers | ConvertTo-Json -Compress) -cne ($proofs[3].partialNativeConsumers | ConvertTo-Json -Compress)))){throw 'M6_FORMAL_PARTIAL_PROTECTED_CHANGED'}
         }
-        if(@($current.javaPid | Select-Object -Unique).Count -ne $chainSpec.phases.Count -or @($current.startupNonce | Select-Object -Unique).Count -ne $chainSpec.phases.Count){throw 'M6_PHASE_JVM_REUSED'}
+        if(@($current | ForEach-Object {"$($_.javaPid)@$($_.javaStartTimeUtc)"} | Select-Object -Unique).Count -ne $chainSpec.phases.Count -or @($current.startupNonce | Select-Object -Unique).Count -ne $chainSpec.phases.Count){throw 'M6_PHASE_JVM_REUSED'}
         [ordered]@{strategy='NEW_OWNED_ROOT';existingWorldsMoved=0;existingWorldsChanged=$false;retainedRoot=$true;root=$owned.root;normalStop=(-not $functional);lockReleased=$true} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $owned.root 'preservation.json') -Encoding utf8
         if($functional){
             $proofs=@($current | ForEach-Object {Get-Content -LiteralPath $_.receipt -Raw | ConvertFrom-Json -DateKind String})

@@ -2326,3 +2326,26 @@ plan 的「fix1 同 SHA CI」已勾。「最終完整回歸」一項等人工 sm
 沒有改程式，`6965301` 是最終 code pin。plan 已勾 6 項：Task R「重啟登入仍在同一 U、床點有效」、8-H「只實作裁示為必須者」，以及 Task 22 的最終完整回歸、單人／多人輪、宇宙內重生、人工清單明列已知行為；整分支審查與 docs truth 那一項等本 commit 的同 SHA CI。之後只剩 main 合併與 tag，各自另問使用者。
 
 **結果 docs 的 CI**：`4ffadab` 的 CI 43176799947 attempt 1 三 job 全綠。兩平台都是 default 166、M5 60、M6 35、legacy 1；Windows normal 13；m6-native 9 鏈 27 phase／479 反例（`M6_NATIVE_VERIFIED PASS`，HEAD 相符）；兩平台各 12 行 `M6_SCOPE_MISMATCH` 都是 EXPECTED_RED。兩平台各有一行預期內的「M6 reload 沒有成功」WARN（batch `m6_universe_reload_materialize`）；`KEPT_CANONICAL`、`SETTINGS_FINGERPRINT_MISMATCH`、mixin 錯誤都是 0。plan Task 22 最後一項依此勾選。
+
+### 2026-11-12：m6-native 的 PID 回收誤判與腳本修正
+
+**起因**：`9c6bec1`（純文件）的 CI 43182315379 attempt 1，m6-native 以 `M6_PHASE_JVM_REUSED` FAIL，原判保留。catalog-readback 鏈的 intent 與 restart 兩階段都是 PID 6436，但兩者的啟動時間（08:24:03／08:25:27 UTC）與 startupNonce（`9f3d649e…`／`767f4c45…`）都不同。前一個 JVM 已結束、鎖已釋放之後，Windows 回收了同一個 PID。上一個 commit `4ffadab` 跑同一條鏈是通過的。
+
+**根因**：`scripts/verification/m6-universe-probe.ps1` 有兩處只比對裸 PID：執行時的 `M6_PHASE_JVM_REUSED`，以及唯讀驗證的 `M6_SAVED_JVM_REUSED`。M4、M5 probe 與 run-all 都用 `(PID, StartTime)` 判定 JVM 身分。
+
+**處置**（使用者 2026-11-12 裁示：失敗的 job 重跑一次，合併 main 之前修腳本）：
+- 43182315379 attempt 1 結束時 build、windows-native 都是 success；m6-native 以 attempt 2 重跑一次，結果另行讀回。
+- 兩處都改成比對 `PID@javaStartTimeUtc`，startupNonce 唯一性的檢查不變。同一個 JVM 真的被重用時，PID 與啟動時間都相同，照樣會被拒絕。
+- 只改這個驗證腳本，`src/` 沒有變更。production code pin 仍是 `6965301`；驗證腳本的新 pin 是本 commit。依 plan「2026-11-10 最新範圍」第 4 項的 B+C 規則（只改測試／腳本／文件：一席審查、必要定向與 CI，免 mutation／本機 full），不重跑本機 full。改到的 m6-native 由同 SHA CI 的 `-AllEnabled` 全鏈與 `-VerifySummary -SelfTest` 涵蓋。
+- RED／GREEN 以 CI 原件的實際資料重算（輸入與運算式記在 SDD `ci-43182315379/pid-reuse-red-green-provenance.md`）：
+  - 舊寫法只得 3 個不同 PID，會拒絕；
+  - 新寫法得 4 個不同身分，通過；
+  - 人為讓同一列出現兩次，新寫法仍拒絕。
+
+  審查者另以兩條路徑的實際型別（執行時 OrderedDictionary＋`Select-Object -Unique`、唯讀 PSCustomObject＋`Sort-Object -Unique`）重算，結果相同。
+- 本機定向：`-Chain catalog-readback -ExpectedMode FUNCTIONAL` 四階段 PASS（`M6_NATIVE PASS … phases=4`）。
+- SelfTest 沒有 JVM 重用的反例，所以 CI 的 `-VerifySummary -SelfTest` 只證明正常資料不會被誤拒。「真重用仍會被拒絕」只由上面的原件重算佐證，沒有 tracked 負控。
+
+**已知同類殘留（未修，不在本次裁示範圍內）**：
+- M5 的 W10 bridge 檢查要求新舊兩階段 PID 必須不同（`m5-collapse-probe.ps1:635`、`run-all.ps1:125`）。Windows 回收 PID 時，這裡同樣會誤判成 FAIL。
+- `m6-harness-safety-check.ps1:203–206` 以 `ParentProcessId -in $entryPids` 判定本 case 產生的 Java，沒有用 `CreationDate` 過濾。若某個常駐 Java 的父 process 已結束、PID 被回收給 entry pwsh，就會誤判成 `M6_CI_PREFLIGHT_TEST_FAILED`。只會誤判成 FAIL，不會冒充 PASS；run-all 的 `ci-cwd-preflight` 會跑到，CI workflow 不跑。
