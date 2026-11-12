@@ -2292,3 +2292,12 @@ plan Task R 的「具名正反控制」與出口兩項已勾選，**Task R close
   - 觀察（quality 席推論，未驗）：F2 的快取也讓 journal 在 SERVER_STOPPING 之後、快取命中時仍可通過驗證，方向安全。
 
 **出口**：push 後同 SHA 三 job CI 全綠，fix1 才算完成。之後是人工 smoke（單人、多人、宇宙內重生、release JAR、/reload），要使用者操作或另行授權代操作。
+
+**fix1 closed**：CI 43154751486（head `408ff3d`，code pin `6965301`）attempt 1 三 job 全 success。
+- windows-native（job 130971967221）：default 166、normal 13、M5 60、M6 35、legacy 1 全過。
+- build（Ubuntu，job 130971967224）：default 166、M5 60、M6 35、legacy 1 全過。
+- m6-native（job 130971966962）：9 條鏈 27 phase，479 個反例。
+- 兩平台各 12 行 `M6_SCOPE_MISMATCH`，都是 `EXPECTED_RED`。兩平台也各有一行「M6 reload 沒有成功」WARN（Windows log 的中文因編碼顯示成 `?`），位在 batch `m6_universe_reload_materialize`，來自新 GameTest 模擬的失敗 reload，屬預期。
+- job log 存 SDD `ci-43154751486/`。
+
+plan 的「fix1 同 SHA CI」已勾。「最終完整回歸」一項等人工 smoke 確定不再改程式後才勾。下一步是人工 smoke（見上方出口段）；main 合併、tag 各自另問。

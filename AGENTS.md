@@ -103,6 +103,13 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-12 Task 22 fix1 closed；下一步人工 smoke。** CI 43154751486（head `408ff3d`，code pin `6965301`）attempt 1 三 job 全 success：
+- Windows：default 166、normal 13、M5 60、M6 35、legacy 1；
+- Ubuntu：default 166、M5 60、M6 35、legacy 1；
+- m6-native：9 條鏈 27 phase。
+
+Task 22 接下來卡在使用者：先做人工 smoke（單人、多人、宇宙內重生、release JAR、/reload，見 `docs/manual-acceptance/2026-10-24-m6-manual-smoke.md`），要使用者操作或另行授權代操作。smoke 之後由 controller 補 docs truth，並在確定不再改程式後勾 plan 的「最終完整回歸」；main 合併、tag 各自另問。細節見 M6 note「Task 22 收尾與 fix1」節末。下段是 fix1 結案前的紀錄。
+
 **2026-11-12 Task 22 收尾中：fix1（reload 期間物化不停機、journal 不卡）待本 commit CI。**
 - 固定指紋值測試已完成：CI 43123630195（head `373f67b`）三 job 全 success。
 - 第一次最終 full `run-all-01f3a7de…`（code pin `a9871e8`）FAIL，M5 已知的 AccessDenied，原判保留。
