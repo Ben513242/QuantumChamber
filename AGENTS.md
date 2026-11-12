@@ -103,6 +103,20 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-12 M6 人工 smoke 完成；下一步：本 docs commit push 與同 SHA CI，之後 main 合併與 tag（各自另問使用者）。** 使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
+- 人工清單 10 列全部 PASS：
+  - 單人三輪 NEW 抽到 same-seed、toggle（amplified）、random 三種 profile；
+  - 重進與完全重啟都回到同一 U；
+  - 宇宙內重生、共用 Nether／End、DISABLED（床在另一個 U 的情況未驗）；
+  - 多人 dedicated 兩人同 U、重啟後各回原位；
+  - 單人與 dedicated 的 `/reload`；
+  - release JAR＋Fabric Loader 0.17.2 開啟 named 世界，mixin 錯誤與指紋不符都是 0。
+- 沒有改程式，code pin 仍 `6965301`。證據在 repo 外 `C:\Users\Ben\Documents\QC-acceptance-evidence\2026-11-12-m6\`；細節見人工清單與 M6 note「人工 smoke 實際操作與結果」節。
+- 8-H waiver 的後果仍適用：`main` 是開發快照，不適合未備份的正式世界。
+- 剩下：本 docs commit 的同 SHA CI → 勾 plan Task 22 最後一項 → main `--ff-only` 合併、tag `m6`，兩者都要使用者另外同意。
+
+下段是 fix1 結案時的紀錄。
+
 **2026-11-12 Task 22 fix1 closed；下一步人工 smoke。** CI 43154751486（head `408ff3d`，code pin `6965301`）attempt 1 三 job 全 success：
 - Windows：default 166、normal 13、M5 60、M6 35、legacy 1；
 - Ubuntu：default 166、M5 60、M6 35、legacy 1；

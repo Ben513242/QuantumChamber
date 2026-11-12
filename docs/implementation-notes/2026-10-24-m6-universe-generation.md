@@ -2301,3 +2301,26 @@ plan Task R 的「具名正反控制」與出口兩項已勾選，**Task R close
 - job log 存 SDD `ci-43154751486/`。
 
 plan 的「fix1 同 SHA CI」已勾。「最終完整回歸」一項等人工 smoke 確定不再改程式後才勾。下一步是人工 smoke（見上方出口段）；main 合併、tag 各自另問。
+
+### 2026-11-12：人工 smoke 實際操作與結果
+
+使用者 2026-11-12 選「由 Claude 代操作（建議）」，並另外授權在測試世界改檔（DISABLED 列）與下載 Fabric 官方 server launcher（release JAR 列）。基準 HEAD `71f4f72`（code pin `6965301`），porcelain 空；`runClient`／`runClientRender`／`runServer` 都不帶 testmod。逐列結果記在人工清單；證據在 repo 外 `C:\Users\Ben\Documents\QC-acceptance-evidence\2026-11-12-m6\`，`evidence-index.json` 177 檔，SHA256 `84d058e4bb1ce22888d1fd7c7d91fed985e1064ffaa7522bba75851093fac8d7`。
+
+**結果**：人工清單 10 列全部 PASS。
+- 單人三輪 NEW 抽到三種 profile：U1 `same_seed_fresh_v1`、U2 `same_seed_toggle_amplified_v1`（amplified）、U3 `random_vanilla_v1`（seed 6701660318953015129）。停服後讀回的 catalog 與遊戲內 Dimension、seed 一致。
+- 存退重進、完全重啟後都回同一個 U；重生、共用 Nether／End、DISABLED（只改測試世界複本）都符合清單預期。床在另一個 U 的情況沒有另外驗。
+- 多人：dedicated 兩人同組跨越到同一個 U（停服後 catalog 讀回為 `random_vanilla_v1`），重連與重啟 server 後各回原位置。
+- `/reload`：單人與 dedicated 各做一次，之後量子艙都能完整走到跨越；log 沒有 lifecycle WARN。
+- release JAR：release JAR＋Fabric Loader 0.17.2＋Fabric API 0.102.0+1.21 開啟在 named runtime 建立的世界。mixin 錯誤與 `SETTINGS_FINGERPRINT_MISMATCH` 都是 0，normal 與 amplified 兩種 U 都能以 `/execute in … tp` 進出（沒有在 release JAR 上走量子艙流程）。唯一非離線模式的 WARN 是 `Missing data pack fabric-gametest-api-v1`：不在該列判定條件內，依據 release 版 fabric-api 不含 gametest 模組，推定為開發 runtime 留下的過期存檔 metadata，沒有擴大判定白名單。
+- 所有 log 合計（去重後的事件數）：`UNIVERSE_RESPAWN_FALLBACK` 1 次（拆床那次）、`KEPT_CANONICAL` 0、lifecycle WARN 0。
+
+**偏差**（都不影響判定，明細在證據 `notes.md`）：
+- 剛進世界時第一批指令被吞。
+- 補平台的 `/fill` 把艙底換成石頭，艙變 INVALID；改回後恢復。
+- 我在走廊內下了 `/tp`，觸發保護性安全返還（兩則 WARN）。這是產品的保護行為，不是缺陷。
+- 多人喝藥時準星落在門上，門被打開，重新關門。
+- 注音輸入法卡在中文模式。
+- 關 client 時前景一度被 VS Code 取得，工具停止送鍵。
+- 其他操作性偏差與佈置列在人工清單「本輪實際操作」節，完整紀錄在證據 `notes.md`。
+
+沒有改程式，`6965301` 是最終 code pin。plan 已勾 6 項：Task R「重啟登入仍在同一 U、床點有效」、8-H「只實作裁示為必須者」，以及 Task 22 的最終完整回歸、單人／多人輪、宇宙內重生、人工清單明列已知行為；整分支審查與 docs truth 那一項等本 commit 的同 SHA CI。之後只剩 main 合併與 tag，各自另問使用者。
