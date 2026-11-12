@@ -1,6 +1,6 @@
 # M6 宇宙生成與完整維度家族：實作紀錄
 
-日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。最新（2026-10-29）：Task1–7、8A、8B1、8B2-G、C1a與C1b-B1/B2/B3局部資料切片已完成；B3 code `530491b` 乾淨雙focused70/70、完整run-all與獨立spec/quality C/I/M0，但仍無完整三role/FP。C1c template v2設計C0/I0/M0待code；C1d/100ms live hold/8B3三bundle及Task9–20/人工仍待；原件見文末。
+日期：2026-10-24（台灣）。分支 `codex/m6-universe-generation`。現況（2026-11-12）：範圍已縮為宇宙只有主世界（spec v1.7）；人工 smoke 完成，已合併 main 並建立 tag `m6`，見文末「2026-11-12：M6 整合（main 與 tag）」節。以下是 2026-10-29 的歷史摘要：Task1–7、8A、8B1、8B2-G、C1a與C1b-B1/B2/B3局部資料切片已完成；B3 code `530491b` 乾淨雙focused70/70、完整run-all與獨立spec/quality C/I/M0，但仍無完整三role/FP。C1c template v2設計C0/I0/M0待code；C1d/100ms live hold/8B3三bundle及Task9–20/人工仍待；原件見文末。
 
 ## 使用者確認的範圍與順序
 
@@ -2349,3 +2349,20 @@ plan 的「fix1 同 SHA CI」已勾。「最終完整回歸」一項等人工 sm
 **已知同類殘留（未修，不在本次裁示範圍內）**：
 - M5 的 W10 bridge 檢查要求新舊兩階段 PID 必須不同（`m5-collapse-probe.ps1:635`、`run-all.ps1:125`）。Windows 回收 PID 時，這裡同樣會誤判成 FAIL。
 - `m6-harness-safety-check.ps1:203–206` 以 `ParentProcessId -in $entryPids` 判定本 case 產生的 Java，沒有用 `CreationDate` 過濾。若某個常駐 Java 的父 process 已結束、PID 被回收給 entry pwsh，就會誤判成 `M6_CI_PREFLIGHT_TEST_FAILED`。只會誤判成 FAIL，不會冒充 PASS；run-all 的 `ci-cwd-preflight` 會跑到，CI workflow 不跑。
+
+**CI 讀回**：
+- `9c6bec1` 的 CI 43182315379 attempt 2（只重跑 m6-native）success，`M6_NATIVE_VERIFIED PASS chains=9 phases=27 negativeChecks=479`。attempt 1 的 FAIL 原判保留。
+- 腳本修正 `53573fc` 的 CI 43190436125 attempt 1 三 job 全綠：
+  - 兩平台都是 default 166、M5 60、M6 35、legacy 1；Windows normal 13；
+  - m6-native `M6_NATIVE_VERIFIED PASS chains=9 phases=27 negativeChecks=479 HEAD=53573fc…`；
+  - 兩平台各 12 行 `M6_SCOPE_MISMATCH` 都是 EXPECTED_RED，各一行預期內的 reload WARN；
+  - `KEPT_CANONICAL`、`SETTINGS_FINGERPRINT_MISMATCH`、mixin 錯誤都是 0。
+
+### 2026-11-12：M6 整合（main 與 tag）
+
+使用者 2026-11-12 原話「main同意--ff-only 前進到 53573fc，可以m6 tag」。
+- 合併前在 main checkout 核對：porcelain 空，main＝origin/main＝`0d05f88`，`0d05f88` 是 `53573fc` 的祖先（前進 284 個 commit），本機與遠端都沒有 `m6` tag。
+- `git merge --ff-only 53573fc17fa665d254ed08e9327bb843a5af93e9`，之後 push main；`ls-remote` 讀回 `refs/heads/main` 與 `refs/heads/codex/m6-universe-generation` 都是 `53573fc`。
+- annotated tag `m6`：object `54a8f66f744ed741056785980c8904ef95b0a25f`，peeled `53573fc17fa665d254ed08e9327bb843a5af93e9`，已 push 並以 `ls-remote` 讀回。
+- production code pin 仍是 `6965301`；`6965301..53573fc` 只有文件與驗證腳本。8-H waiver 適用：`main` 是開發快照，不適合未備份的正式世界。
+- 本筆整合狀態 docs commit 只在 feature 分支。main 是否再同步到這筆，以及 M6 工作樹的去留，另問使用者。

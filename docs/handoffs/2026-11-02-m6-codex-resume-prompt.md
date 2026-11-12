@@ -1,6 +1,6 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
-**2026-11-12 M6 人工 smoke 完成；下一步：腳本修正 commit 的同 SHA CI，之後 main 合併與 tag（各自另問使用者）。** 使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
+**2026-11-12 M6 已以 `--ff-only` 合併 main，並建立 tag `m6`（使用者同意）。下一步：main 是否同步到本 docs commit、M6 工作樹的去留、下一個 milestone 的範圍，都等使用者裁示。** 人工 smoke：使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
 - 人工清單 10 列全部 PASS：
   - 單人三輪 NEW 抽到 same-seed、toggle（amplified）、random 三種 profile；
   - 重進與完全重啟都回到同一 U；
@@ -12,7 +12,11 @@
 - 8-H waiver 的後果仍適用：`main` 是開發快照，不適合未備份的正式世界。
 - 結果 docs `4ffadab` 的 CI 43176799947 attempt 1 三 job 全綠，plan Task 22 最後一項已勾。
 - 勾選 commit `9c6bec1` 的 CI 43182315379 attempt 1：build、windows-native success，m6-native 遇到 PID 回收誤判 FAIL（原判保留）。依使用者裁示，m6-native 以 attempt 2 重跑一次，並在合併前修正 `m6-universe-probe.ps1` 的 JVM 身分比對（只改驗證腳本，production code pin 仍 `6965301`）。細節見 M6 note「PID 回收誤判」節。
-- 剩下：讀回 attempt 2 的 m6-native 結果與腳本修正 commit 的同 SHA CI；之後 main `--ff-only` 合併、tag `m6`，兩者都要使用者另外同意。合併目標與 tag 指向的 commit，一併請使用者裁示。
+- `9c6bec1` 的 m6-native attempt 2 success（9 鏈 27 phase／479 反例）。腳本修正 `53573fc` 的 CI 43190436125 attempt 1 三 job 全綠：兩平台 default 166、M5 60、M6 35、legacy 1，Windows normal 13，m6-native `M6_NATIVE_VERIFIED PASS chains=9 phases=27 negativeChecks=479 HEAD=53573fc…`。
+- 整合（2026-11-12，使用者原話「main同意--ff-only 前進到 53573fc，可以m6 tag」）：
+  - main 從 `0d05f88` 快轉到 `53573fc17fa665d254ed08e9327bb843a5af93e9`，已 push；`ls-remote` 讀回 main 與 feature 都是 `53573fc`。
+  - annotated tag `m6`：object `54a8f66f744ed741056785980c8904ef95b0a25f`，peeled `53573fc`，已 push 並讀回。
+  - 本筆整合狀態 docs commit 只在 feature 分支；main 是否再同步到這筆，另問使用者。tag 固定在 `53573fc`，不移動。
 
 下段是 fix1 結案時的紀錄。
 
