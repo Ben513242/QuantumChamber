@@ -163,7 +163,9 @@ function Invoke-CiCwdPreflightChecks {
         $rootsBefore=@(if(Test-Path -LiteralPath $target){Get-ChildItem -LiteralPath $target -Directory -Filter 'run-all-*' | ForEach-Object FullName})
         # 所有child在guard後停止；不再以某種路徑必定拒絕作安全前提。
         $process=[Diagnostics.Process]::Start($info)
-        $entryPids.Add($process.Id);$entryTargets.Add($target);$entryStarts.Add([pscustomobject]@{pid=$process.Id;start=$process.StartTime})
+        # CIM CreationDate只到微秒；entry啟動時間先截到微秒再比較。
+        $entryStart=$process.StartTime;$entryStart=$entryStart.AddTicks(-($entryStart.Ticks % 10))
+        $entryPids.Add($process.Id);$entryTargets.Add($target);$entryStarts.Add([pscustomobject]@{pid=$process.Id;start=$entryStart})
         $out=$process.StandardOutput.ReadToEndAsync();$err=$process.StandardError.ReadToEndAsync()
         # 150秒是21 case的保守process-only總界線；各case最多10秒，總和可能超過界線而FAIL，安全本體是PreflightOnly。
         if(-not $process.WaitForExit(150000)){
@@ -203,10 +205,10 @@ function Invoke-CiCwdPreflightChecks {
     # Windows會回收PID：父PID相同但早於entry啟動的Java（例如父process已結束的舊daemon）不是本case產生。
     $ownedJava=@($afterJava | Where-Object {
         $candidate=$_
-        @($entryStarts | Where-Object {$candidate.ParentProcessId -eq $_.pid -and $candidate.CreationDate -ge $_.start}).Count -gt 0 -or @($entryTargets | Where-Object {$candidate.CommandLine -and $candidate.CommandLine.Contains($_)}).Count -gt 0
+        @($entryStarts | Where-Object {$candidate.ParentProcessId -eq $_.pid -and ($null -eq $candidate.CreationDate -or $candidate.CreationDate -ge $_.start)}).Count -gt 0 -or @($entryTargets | Where-Object {$candidate.CommandLine -and $candidate.CommandLine.Contains($_)}).Count -gt 0
     })
     $sameRun=$beforeExists -eq $afterExists -and ($beforeRun -join '|') -ceq ($afterRun -join '|')
-    $results.Add([ordered]@{name='process-only-no-world-operations';passed=($ownedJava.Count -eq 0 -and $sameRun);javaBefore=$beforeJava;javaAfter=$afterJava;ownedJava=$ownedJava;entryPids=@($entryPids.ToArray());runExistedBefore=$beforeExists;runExistsAfter=$afterExists;runNamesUnchanged=$sameRun})
+    $results.Add([ordered]@{name='process-only-no-world-operations';passed=($ownedJava.Count -eq 0 -and $sameRun);javaBefore=$beforeJava;javaAfter=$afterJava;ownedJava=$ownedJava;entryPids=@($entryPids.ToArray());entryStarts=@($entryStarts | ForEach-Object {[ordered]@{pid=$_.pid;startTimeUtc=([DateTimeOffset]$_.start).ToUniversalTime().ToString('o')}});runExistedBefore=$beforeExists;runExistsAfter=$afterExists;runNamesUnchanged=$sameRun})
     if($ownedJava.Count -or -not $sameRun){throw 'M6_CI_PREFLIGHT_TEST_FAILED：本case有Java owner或run目錄改變'}
 }
 
