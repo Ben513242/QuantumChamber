@@ -695,7 +695,11 @@ pwsh -NoProfile -File scripts/verification/run-all.ps1
 
 producer 子 shell 固定總上限 10 分鐘，內層 PhaseMinutes=8、IdleSeconds=90。timeout 保存 process/stdout/stderr 與新 root，停止整鏈；無法精確歸屬的程序不殺、不接續 import。每輪以啟動前後 root/evidence 集合辨認唯一新增 nonce，不看 mtime。import 部分失敗或已存在 attempt/result/FAIL 時不得補拷或重送；下一輪重新產新 nonce。已消費 `625a9f816af14087bc50e66896bd137b-w10` 封存原件不可重用。
 
-舊 checkout 與所有新舊 root 保留至 controller 明確處置。它不適用已退役 `.worktrees/m5-collapse` 的免備份例外；退役前須依 AGENTS 一般規則搬出世界、外部備份 run/證據、SHA256 manifest、可讀性與 lock/owner/reparse 核對。CI 目前未執行 M5 跨 JVM W10；遠端 job success 只證實其實跑 scope，不能稱 CI W10 PASS。
+原規則：舊 checkout 與所有新舊 root 保留至 controller 明確處置；它不適用已退役 `.worktrees/m5-collapse` 的免備份例外，退役前須依 AGENTS 一般規則搬出世界、外部備份 run/證據、SHA256 manifest、可讀性與 lock/owner/reparse 核對。2026-11-12 例外：依 AGENTS「M6／`.worktrees` 退役專屬裁示」，整個 `.worktrees`（含本 producer 與其中封存的 `625a9f816af14087bc50e66896bd137b-w10` 等 root）將以文字紀錄取代備份刪除，紀錄見 M6 note「同類殘留的修正與工作樹退役」節。封存 root 刪除後原件不再存在，防重用只剩程式檢查。實際狀態以 `git worktree list` 與檔案系統為準。
+- 刪除之後，任何會執行 W10 preflight 的入口之前（完整或 `-PreflightOnly` 的 run-all、不加 `-Only` 或 `-Only w10` 的 `m5-collapse-probe.ps1`、`m6-harness-safety-check.ps1 -Case ci-cwd-preflight`；CI 不跑這些），要先照上方步驟重建 producer 並核對固定身分。
+- 上方步驟的 `$consumer` 是執行重建的現版 checkout；M6 工作樹刪除後，請改在下一個 milestone 的工作樹執行。
+
+W10 的 producer pin 以 PowerShell 擷取 `git diff` 輸出算 `runnerPatchSha256`，結果受呼叫端 console code page 影響；上方重建步驟算 diff SHA 時也一樣。從非 UTF-8 console（例如 code page 950）執行會得到不同的雜湊，W10 會以 `W10_SOURCE_PIN` FAIL。請先 `chcp 65001`，或在 UTF-8 console 執行重建步驟、`run-all.ps1` 與 `m5-collapse-probe.ps1`。CI 目前未執行 M5 跨 JVM W10；遠端 job success 只證實其實跑 scope，不能稱 CI W10 PASS。
 
 ### 2026-11-10 M2 offline／pin-cap 自身清理候選
 

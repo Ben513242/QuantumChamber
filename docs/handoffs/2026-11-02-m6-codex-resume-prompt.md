@@ -1,6 +1,6 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
-**2026-11-12 M6 已以 `--ff-only` 合併 main，並建立 tag `m6`（使用者同意）。下一步：main 是否同步到本 docs commit、M6 工作樹的去留、下一個 milestone 的範圍，都等使用者裁示。** 人工 smoke：使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
+**2026-11-12 M6 已以 `--ff-only` 合併 main，並建立 tag `m6`（使用者同意）。依使用者裁示修正兩處同類的 PID 誤判；整個 `.worktrees` 將以文字紀錄取代備份後刪除。下一步：本批 commit 推送 → 同 SHA CI 全綠 → main ff 前進 → 核對後刪除 `.worktrees` → 和使用者確認下一個 milestone 的範圍與優先序。** 人工 smoke：使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
 - 人工清單 10 列全部 PASS：
   - 單人三輪 NEW 抽到 same-seed、toggle（amplified）、random 三種 profile；
   - 重進與完全重啟都回到同一 U；
@@ -17,6 +17,12 @@
   - main 從 `0d05f88` 快轉到 `53573fc17fa665d254ed08e9327bb843a5af93e9`，已 push；`ls-remote` 讀回 main 與 feature 都是 `53573fc`。
   - annotated tag `m6`：object `54a8f66f744ed741056785980c8904ef95b0a25f`，peeled `53573fc`，已 push 並讀回。
   - 本筆整合狀態 docs commit 只在 feature 分支；main 是否再同步到這筆，另問使用者。tag 固定在 `53573fc`，不移動。
+- 之後（2026-11-12，使用者裁示）：
+  - main 前進到 `a267519`，tag `m6` 留在 `53573fc`。
+  - 同類 PID 誤判修正 `c27d238`、`17e43db`：M5 W10 bridge、run-all `W10_FULL_PHASE_PAIR`、`m6-harness-safety-check.ps1`。只改驗證腳本，production code pin 仍 `6965301`。依裁示，同 SHA CI 全綠後 main 直接前進到這幾筆的 HEAD。
+  - 整個 `.worktrees`（M6 工作樹、W10 producer、兩個 T12 突變 clone）依「M6／`.worktrees` 退役專屬裁示」，在 main 前進之後以文字紀錄取代備份刪除；紀錄見 M6 note「同類殘留的修正與工作樹退役」節。實際狀態以 `git worktree list` 與檔案系統為準，刪除結果由下一個 milestone 的 Step0 docs 記錄。分支 `codex/m6-universe-generation` 在本機與 origin 都保留。
+  - 刪除之後，任何會執行 W10 preflight 的入口之前（完整或 `-PreflightOnly` 的 run-all、不加 `-Only` 或 `-Only w10` 的 `m5-collapse-probe.ps1`、`m6-harness-safety-check.ps1 -Case ci-cwd-preflight`；CI 不跑這些），要先照 `scripts/verification/README.md` 重建 W10 producer；W10 要在 UTF-8 console（code page 65001）執行。
+  - 下一個 milestone：先和使用者確認範圍與優先序，再照 milestone 順序另開新的 worktree 與 branch。
 
 下段是 fix1 結案時的紀錄。
 
@@ -197,7 +203,7 @@ attempt 1 的 windows-native 失敗（default 8 案 M2 走廊連坐，M6 已 21/
 
 ## 1. 工作區與先讀
 
-- Worktree：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`；分支 `codex/m6-universe-generation`。不在主 checkout 或 `main` 實作。
+- （歷史；2026-11-12 起依 AGENTS「M6／`.worktrees` 退役專屬裁示」，此工作樹將連同整個 `.worktrees` 刪除。以本檔最上方與 `git worktree list` 為準，下一個 milestone 另開新 worktree。）Worktree：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`；分支 `codex/m6-universe-generation`。不在主 checkout 或 `main` 實作。
 - 依序讀：本工作區 `AGENTS.md`；本檔全文；`docs/implementation-notes/2026-10-24-m6-universe-generation.md` 末四節（含 2026-11-02 裁示條目）；spec `docs/superpowers/specs/2026-10-24-m6-universe-generation-design.md` §3.1.1、§3.1.2、§8；plan `docs/superpowers/plans/2026-10-24-m6-universe-generation.md` Task 8 整段與 Task 9–22；10-31 接手檔「停點事實」與「尚未完成與原 FAIL」兩節；ignored `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md` 首段與 `progress.md` 末筆。ignored 原件不在 Git，換機先確認存在，不可補造。
 - 首先重核 `git status --porcelain --untracked-files=all`、`git rev-parse HEAD`、`git ls-remote origin refs/heads/codex/m6-universe-generation`、`git worktree list`、workspace Java owner，以及 `run/gametest-m6/world/session.lock` 可獨占。
 

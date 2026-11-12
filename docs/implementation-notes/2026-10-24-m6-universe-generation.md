@@ -2346,7 +2346,7 @@ plan 的「fix1 同 SHA CI」已勾。「最終完整回歸」一項等人工 sm
 - 本機定向：`-Chain catalog-readback -ExpectedMode FUNCTIONAL` 四階段 PASS（`M6_NATIVE PASS … phases=4`）。
 - SelfTest 沒有 JVM 重用的反例，所以 CI 的 `-VerifySummary -SelfTest` 只證明正常資料不會被誤拒。「真重用仍會被拒絕」只由上面的原件重算佐證，沒有 tracked 負控。
 
-**已知同類殘留（未修，不在本次裁示範圍內）**：
+**已知同類殘留**（寫這段時未修；2026-11-12 稍後依使用者裁示修正，見下方「同類殘留的修正」節）：
 - M5 的 W10 bridge 檢查要求新舊兩階段 PID 必須不同（`m5-collapse-probe.ps1:635`、`run-all.ps1:125`）。Windows 回收 PID 時，這裡同樣會誤判成 FAIL。
 - `m6-harness-safety-check.ps1:203–206` 以 `ParentProcessId -in $entryPids` 判定本 case 產生的 Java，沒有用 `CreationDate` 過濾。若某個常駐 Java 的父 process 已結束、PID 被回收給 entry pwsh，就會誤判成 `M6_CI_PREFLIGHT_TEST_FAILED`。只會誤判成 FAIL，不會冒充 PASS；run-all 的 `ci-cwd-preflight` 會跑到，CI workflow 不跑。
 
@@ -2366,3 +2366,68 @@ plan 的「fix1 同 SHA CI」已勾。「最終完整回歸」一項等人工 sm
 - annotated tag `m6`：object `54a8f66f744ed741056785980c8904ef95b0a25f`，peeled `53573fc17fa665d254ed08e9327bb843a5af93e9`，已 push 並以 `ls-remote` 讀回。
 - production code pin 仍是 `6965301`；`6965301..53573fc` 只有文件與驗證腳本。8-H waiver 適用：`main` 是開發快照，不適合未備份的正式世界。
 - 本筆整合狀態 docs commit 只在 feature 分支。main 是否再同步到這筆，以及 M6 工作樹的去留，另問使用者。
+
+### 2026-11-12：同類殘留的修正與工作樹退役
+
+使用者裁示（原話）：
+- 「main 也前進到 a267519，tag m6 留在 53573fc 不動。」已執行：main `53573fc` → `a267519`，已 push 並以 `ls-remote` 讀回；tag `m6` 不動。
+- 「兩處同類的檢查誤判風險一啟修」。修正位置選「M6 分支修，CI 綠後 main 直接前進（建議）」。
+- 「M6 工作樹怎麼處理：裡面有這次的測試世界和驗收證據直接文字記錄，整個.worktrees資料夾刪除」。刪除範圍選「全部刪除，要用時再重建（建議）」。下文「以文字紀錄取代備份」是 controller 對這句的轉述；執行條件見 AGENTS「M6／`.worktrees` 退役專屬裁示」。
+
+**同類殘留的修正**（只改驗證腳本，production code pin 仍 `6965301`）：
+- `c27d238`：
+  - `m5-collapse-probe.ps1` 的 `W10_BRIDGE` 與 `run-all.ps1` 的 `W10_FULL_PHASE_PAIR`，新舊兩階段改比對 `PID@javaStartTimeUtc`；startupNonce 檢查不變。
+  - `m6-harness-safety-check.ps1` 的 ci-cwd-preflight：父 PID 相同、但早於該 entry 啟動的 Java，不算本 case 產生。
+- `17e43db`（一席審查 C0/I0/M7 的補強）：
+  - run-all 任一側 `javaStartTimeUtc` 缺席就拒絕；
+  - harness 的 entry 啟動時間截到微秒，與 CIM `CreationDate` 同精度；`CreationDate` 讀不到時視為本 case 產生（fail closed）；receipt 另記 `entryStarts`（截到微秒後的時間，UTC `'o'` 格式）。
+  - 沒有採用的審查建議與理由：
+    - run-all 與 receipt `startTimeUtc` 的 1 秒交叉比對：:131 已核 receipt 的 pid 與 startupNonce，probe 端的時間也已 Parse 過；
+    - 改用 UTC：兩邊都是 Local，台灣沒有夏令時間；
+    - ExitTime 上界：那個方向只會誤判 FAIL。
+  - `run-all.ps1:489` 的 M5 collapse phases 有同樣的插值寫法、沒有缺席檢查，是既有問題，未改。
+- 舊 producer patch `m5-w10-producer-v2.patch` 裡的同類裸 PID 檢查（約 :211）刻意不動，理由：
+  - 它在舊 runner 的 spike-only import 路徑；預設 W10 流程是 producer HALT_ONLY → consumer ImportOnly → consumer Resume；
+  - 它的輸出會被 run-all `W10_FULL_RESULT` 拒收；
+  - patch SHA 與 producer pin 是固定身分，修改它要重建 producer 並改多處固定值；
+  - 它只會誤判 FAIL。
+- 驗證：
+  - 合成 RED／GREEN（只做運算）：
+    - `c27d238`：同 PID、不同啟動時間時，舊式拒絕、新式接受；PID 與啟動時間都相同時，新舊都拒絕。harness 的父 PID 被回收時（舊 daemon 建於 entry 啟動前），舊式判 owned、新式不判；真正的子程序新舊都判 owned。
+    - `17e43db`：某一側缺 `javaStartTimeUtc` 時，補強前接受、補強後拒絕；`CreationDate` 為 null 時，補強前不判 owned、補強後判 owned；與 entry 同一時刻但只到微秒時，補強前不判、補強後判 owned。
+    - 原始腳本與輸出將隨 SDD 刪除；`c27d238` 那份腳本是事後依原輸出重建，重跑輸出逐位元相同。
+  - `-Only w10` 在乾淨 `c27d238` 上 PASS（consumer restart pid 12776、producer w10-crash pid 19304，兩者啟動時間不同）。
+  - `ci-cwd-preflight` 在乾淨 `17e43db` 上 PASS（cases=6，ownedJava 0）。
+  - run-all :125 的實際路徑只有完整 run-all 才會執行，要等下一次 full 才有實跑證據；CI 不跑 M5 W10。
+- 定向驗證前三次 FAIL，原判不改（原件刪除前在 SDD，刪除後只剩本節摘要）：
+  - 第一次：從 Bash 啟動的 pwsh 繼承 code page 950，`Get-W10Pin` 解碼 `git diff`（含中文）後，runnerPatchSha256 得 `904C97FF…`，不是固定值 `54993C33…`。
+  - 第二次：修正尚未 commit，W10 要求 consumer 乾淨。
+  - 第三次：舊 producer 的 w10-crash PASS 後，讀自己的 stdout.log 時遇 sharing violation，600 秒逾時。當時新開的 Gradle daemon（pid 8980）仍在；推論它繼承了該 handle（未證，README 已記 daemon 會繼承外層管線）。daemon 依 README 不終止，第四次以新 nonce PASS。
+- 定向失敗的關鍵值（SDD 將隨工作樹刪除，所以記在這裡）：
+  - 第一次：code page 950 時 runnerPatchSha256 是 `904C97FFEAD03465E880556838CD8D2C946228983ABAE77FD8BAF6DBDD7B383F`，65001 時是固定值 `54993C33BE32E74FEF571804C91E527C912C721440F8E7B17FEDD3115EA01670`；bash 原樣的 `git diff` 與 tracked patch 逐位元相同。
+  - 第三次：producer 診斷 `process.json` 是 `timedOut=true`、`outerExit=1`、`elapsedSeconds=600.17`；stderr 是「The process cannot access the file …\w10-crash\stdout.log because it is being used by another process」。
+- 一席審查 `c27d238`：C0/I0/M7，M1–M3 改於 `17e43db`，M4–M7 改在本節與 README。複審 C0/I2/M6 → 第三輪 C0/I0/M2，兩輪的項目都已改。
+- **已知殘留（未修）**：`Get-W10Pin`（`m5-collapse-probe.ps1:146–149`）以 PowerShell 擷取 `git diff` 輸出算雜湊，結果受呼叫端 console code page 影響，非 UTF-8 時會 `W10_SOURCE_PIN` FAIL。目前只記在 README 的環境需求。
+
+**工作樹退役（文字紀錄，不備份）**：依 AGENTS「M6／`.worktrees` 退役專屬裁示」，在本批 commit 推送、同 SHA CI 全綠、main 前進之後刪除。以下是刪除前一層盤點（2026-11-12）的 4 個資料夾。
+- `m6-universe-generation`：M6 工作樹，分支 `codex/m6-universe-generation`（本機與 origin 都保留）。
+  - `run/` 一層共 3695 項：
+    - 單人測試世界 `client-base/saves/QC-M6-SP-20261112`（原世界）與 `QC-M6-SP-disabled`（U1 改 DISABLED 的複本），各有 3 個 U；
+    - 多人測試世界 `server/QC-M6-MP`；
+    - `client-base`、`client-render`、`server`、`testworlds` 與 5 個 `gametest*` runDir；
+    - gate 留下的 owned root：m5-collapse 2199、m4-recovery 992、m6-universe 289、m3-universe-m4-task9 68、m3-transfer-m4-task9 68、m6-universe-lt 5、m6-universe-lt2 6，以及 T13 對照實驗的 59 個 root。
+  - `.superpowers/`：
+    - `sdd/` 有三個 SDD 目錄：M4 1128 項、M5 2199 項、M6 806 項。M6 的含各 task 的審查紀錄、處置、RED／GREEN、mutation、CI log 與 STATUS；
+    - `verification/` 2336 項；
+    - 根目錄 64 個 `t13-*` console log。
+  - 這些內容的結論、審查計數、gate root 與 SHA，已摘要在本 note、人工清單與 plan。原件刪除後不再存在。
+- `m6-w10-m5-producer`：W10 固定使用的舊 M5 checkout，detached `a2d2b40`，只有 runner 一檔套了 `m5-w10-producer-v2.patch`。
+  - `run/` 有 22 個 W10 producer root，其中含已消費、封存的 `625a9f816af14087bc50e66896bd137b-w10`。M6 的 `run/` 與兩邊的 M5 SDD 各有一份；刪除後原件不再存在，防重用只剩 `m5-collapse-probe.ps1:208` 與 run-all 的 nonce 檢查。
+  - 刪除之後，任何會執行 W10 preflight 的入口之前（完整或 `-PreflightOnly` 的 run-all、不加 `-Only` 或 `-Only w10` 的 `m5-collapse-probe.ps1`、`m6-harness-safety-check.ps1 -Case ci-cwd-preflight`；CI 不跑這些），要在下一個 milestone 的工作樹照 `scripts/verification/README.md`「W10 每輪固定 m5 producer」節，以 UTF-8 console 重建並核對固定 SHA。
+- `t12wmb-2f7c80e1`、`t12wmp-6b91a2d4`：T12 safety fix1 的突變測試 clone，沒有登記在 git worktree。
+  - 基底 `bad4728` 已在 main；只存在本機的是 MUTATION_ONLY commit 與其 revert（`63b2bfc`／`87c5c39`、`1135eaf`／`351980c`）。
+  - 各有 gitignored 的 `.superpowers/`：`sdd/2026-10-24-m6-universe-generation`、`task12-safety-fix1-mutation/`（`MUTATION-ONLY.diff`、`pins.txt`）、`verification/` 14 項。
+- repo 外保留、不在刪除範圍：
+  - 人工 smoke 證據 `C:\Users\Ben\Documents\QC-acceptance-evidence\2026-11-12-m6\`（evidence-index 177 檔，SHA256 `84d058e4bb1ce22888d1fd7c7d91fed985e1064ffaa7522bba75851093fac8d7`）；
+  - 代操作工具複本 `C:\Users\Ben\Documents\QC-acceptance-evidence\tools\2026-11-12-m6\`。
+- 刪除前核對：canonical 路徑、非 reparse、沒有 live Java owner、`session.lock` 已釋放。刪除之後沒有工作樹可以補 commit，實際狀態以 `git worktree list` 與檔案系統為準，刪除結果由下一個 milestone 的 Step0 docs 記錄。

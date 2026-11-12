@@ -12,6 +12,7 @@
 
 - Repository（主 checkout，停在 `main`）：`C:/Users/Ben/Documents/minecraft QuantumChamber`。不要在主 checkout 或 `main` 上實作。
 - M5 歷史開發 worktree／本次退役目標：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse`，分支 `feature/m5-collapse`。M5 已合併 main 並建立 tag m5；此目錄依使用者指定不備份退役，不再作為新任務工作區。目錄是否已移除以 `git worktree list` 與實際路徑為準；後續以主 checkout 的已合併 M5 為基準，先確認 M6 範圍，再建立新 worktree，不直接在 main 實作。（M6 範圍已確認，工作樹已建立，見「目前接手入口」。）
+- M6 開發 worktree：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`。M6 已合併 main 並建立 tag `m6`；依「M6／`.worktrees` 退役專屬裁示」，將連同整個 `.worktrees` 不備份刪除，不再作為新任務工作區。實際狀態以 `git worktree list` 與檔案系統為準。下一個 milestone 先確認範圍，再另開新 worktree。
 - M1–M4 的 worktree `.worktrees/m1-chamber` 已於 2026-10-01 完成外部備份與驗證後刪除；分支 `feature/m1-chamber` 仍在本機與 `origin`。它的 `run/`、`.superpowers/`（含 M1–M4 SDD ledger 與 evidence owner）與 `.tools/` 只存在於 repo 外的備份 `C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\`（資料夾名稱去掉開頭的點：`run`、`superpowers`、`tools`；`MANIFEST-sha256.txt`、`BACKUP-LOG.txt`）。這份備份只讀參考，不得修改。
 - 主 checkout 的 git 會報 dubious ownership：對主 checkout 下指令時，每次單獨加 `git -c safe.directory="C:/Users/Ben/Documents/minecraft QuantumChamber" -C <path> ...`，不要改全域設定。
 - 每個 milestone 要等前一個 milestone ff 進 `main` 並打 tag 之後，才另開新的 worktree 與 branch。
@@ -47,7 +48,21 @@ milestone implementation → automated gates → required manual smoke → task�
 
 **後續 push 持續授權（2026-10-24）**：使用者明確指示「並且可以都push無需再問我了」。後續正常 push 不再逐次詢問，取代舊的單次 push／新 commit 另問規則；依任務需要合併推送，不為湊 CI 次數重送。這不授權 force push、刪除遠端 ref，或跳過 main 合併、tag 建立、人工 smoke 與 worktree 退役各自的門檻；本輪m5 tag已另獲同意並建立，其他tag仍須明確同意。
 
-一般規則（上述M5專屬裁示取代其搬出世界與外部備份要求）：刪除其他 worktree（包括當時的 `.worktrees/m1-chamber`）之前，必須先完成：
+**M6／`.worktrees` 退役專屬裁示（2026-11-12）**：使用者原話「M6 工作樹怎麼處理：裡面有這次的測試世界和驗收證據直接文字記錄，整個.worktrees資料夾刪除」。追問刪除範圍時，使用者選「全部刪除，要用時再重建（建議）」。
+- 範圍：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees` 底下的 4 個資料夾，連同其中 gitignored 的 `run/`、`.superpowers/` 與其他檔案：
+  - `m6-universe-generation`：已登記的 M6 工作樹；
+  - `m6-w10-m5-producer`：已登記的 W10 producer，其中的封存 root 也一起刪除；
+  - `t12wmb-2f7c80e1`、`t12wmp-6b91a2d4`：未登記的 T12 突變 clone，只存在本機的 MUTATION commit 也一起刪除。
+- 不做外部備份，也不另留副本；以 tracked 文字紀錄取代（「以文字紀錄取代備份」是 controller 對原話的轉述），紀錄見 M6 note「同類殘留的修正與工作樹退役」節。
+- 執行順序：
+  1. 本批 commit 推送；
+  2. 同 SHA CI 全綠；
+  3. main 依使用者另一項裁示「M6 分支修，CI 綠後 main 直接前進（建議）」ff 前進；
+  4. 核對唯一 canonical absolute target、非 reparse、沒有 live Java owner、`session.lock` 已釋放；
+  5. 兩個已登記的 worktree 以 `git worktree remove --force` 移除後 prune，兩個 clone 直接移除，最後移除空的 `.worktrees`。
+- 不授權刪除其他 worktree、主 repo 的本機或遠端分支（T12 clone 內自己的分支隨 clone 刪除），也不授權移動 tag。刪除後沒有工作樹可以補 commit，實際狀態以 `git worktree list` 與檔案系統為準；刪除結果由下一個 milestone 的 Step0 docs 記錄。
+
+一般規則（上述 M5 與 M6 專屬裁示取代各自指定範圍的搬出世界與外部備份要求）：刪除其他 worktree（包括當時的 `.worktrees/m1-chamber`）之前，必須先完成：
 
 - 使用者世界與驗收世界移到 repo 外，例如使用者自有世界 `run/client-base/saves/新的世界test (1)`（2026-09-29 做過 B-5 預驗，已含 DORMANT receipt；處置見人工驗收清單 2.5 (a)）。
 - `run/` 與 `.superpowers/` 備份到 repo 外，建立 SHA-256 manifest，並驗證備份可讀。
@@ -103,7 +118,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-12 M6 已以 `--ff-only` 合併 main，並建立 tag `m6`（使用者同意）。下一步：main 是否同步到本 docs commit、M6 工作樹的去留、下一個 milestone 的範圍，都等使用者裁示。** 人工 smoke：使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
+**2026-11-12 M6 已以 `--ff-only` 合併 main，並建立 tag `m6`（使用者同意）。依使用者裁示修正兩處同類的 PID 誤判；整個 `.worktrees` 將以文字紀錄取代備份後刪除。下一步：本批 commit 推送 → 同 SHA CI 全綠 → main ff 前進 → 核對後刪除 `.worktrees` → 和使用者確認下一個 milestone 的範圍與優先序。** 人工 smoke：使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
 - 人工清單 10 列全部 PASS：
   - 單人三輪 NEW 抽到 same-seed、toggle（amplified）、random 三種 profile；
   - 重進與完全重啟都回到同一 U；
@@ -120,6 +135,12 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
   - main 從 `0d05f88` 快轉到 `53573fc17fa665d254ed08e9327bb843a5af93e9`，已 push；`ls-remote` 讀回 main 與 feature 都是 `53573fc`。
   - annotated tag `m6`：object `54a8f66f744ed741056785980c8904ef95b0a25f`，peeled `53573fc`，已 push 並讀回。
   - 本筆整合狀態 docs commit 只在 feature 分支；main 是否再同步到這筆，另問使用者。tag 固定在 `53573fc`，不移動。
+- 之後（2026-11-12，使用者裁示）：
+  - main 前進到 `a267519`，tag `m6` 留在 `53573fc`。
+  - 同類 PID 誤判修正 `c27d238`、`17e43db`：M5 W10 bridge、run-all `W10_FULL_PHASE_PAIR`、`m6-harness-safety-check.ps1`。只改驗證腳本，production code pin 仍 `6965301`。依裁示，同 SHA CI 全綠後 main 直接前進到這幾筆的 HEAD。
+  - 整個 `.worktrees`（M6 工作樹、W10 producer、兩個 T12 突變 clone）依「M6／`.worktrees` 退役專屬裁示」，在 main 前進之後以文字紀錄取代備份刪除；紀錄見 M6 note「同類殘留的修正與工作樹退役」節。實際狀態以 `git worktree list` 與檔案系統為準，刪除結果由下一個 milestone 的 Step0 docs 記錄。分支 `codex/m6-universe-generation` 在本機與 origin 都保留。
+  - 刪除之後，任何會執行 W10 preflight 的入口之前（完整或 `-PreflightOnly` 的 run-all、不加 `-Only` 或 `-Only w10` 的 `m5-collapse-probe.ps1`、`m6-harness-safety-check.ps1 -Case ci-cwd-preflight`；CI 不跑這些），要先照 `scripts/verification/README.md` 重建 W10 producer；W10 要在 UTF-8 console（code page 65001）執行。
+  - 下一個 milestone：先和使用者確認範圍與優先序，再照 milestone 順序另開新的 worktree 與 branch。
 
 下段是 fix1 結案時的紀錄。
 
@@ -310,7 +331,7 @@ attempt 1 的 windows-native 失敗（default 8 案 M2 走廊連坐，M6 已 21/
 
 **2026-10-29 Claude 接手後：C1d-D1a 已結案（只限 named PROCESSOR_LIST empty／NOP／LAVA 局部閉包），code pin `9d97cd0854b1139d040063ac3d58424a3b76462c`（877d20f＋fix1 165b8b9＋test-only fix2）。乾淨 M6Compile、CanonicalizerTest 雙 focused 88/88、完整 `run-all-3990c81a33b84ee9961ae54b63f4b752` 自然 END ALL exit0（JUnit850 f0e0 skip2），獨立 spec C0/I0/M5、quality C0/I0/M6；11 項 Minor 交下一個 C1d 切片 Step0。fix2 只把量到的 template 冷成本移出 lease，降低 100ms 偶發風險，不宣稱根治或認定成因；fix1 兩次原 FAIL 原件保留。D1a 遠端 CI run `40836148542`（`307565f`）兩 job success。其後 C1d Step0（D1a Minor 收斂）code `242c20b` 也已結案：乾淨雙 focused 93/93、完整 `run-all-41d76dffa3104602a75c8836ff2184ae` END ALL exit0（JUnit855），spec C0/I0/M0、quality C0/I0/M4，遠端 CI run `40845641782`（`0998f67`）兩 job success。D1b 設計 v2 經設計審查與窄複審 C0/I0/M5 放行；D1b-0（Step0）code `0efb058` 已結案：乾淨雙 focused 95/95、完整 `run-all-359153a6930a42c7a8b9a05df4901f9e` END ALL exit0（JUnit857），spec C0/I0/M1、quality C0/I0/M2，遠端 CI run `40863093293`（`b7d539a`）兩 job success。D1b-1（BLOCK static leaf）code `58a2ff9` 已結案：乾淨 Canon focused 103/103×2、LeafTest 7/7×2、完整 `run-all-9b4906c116d14c6ab5b42da9723209f3` END ALL exit0（JUnit872），spec C0/I0/M2、quality C0/I0/M5；`58a2ff9` 的遠端 CI 待本筆 push 後讀回。Canon 的 EndFixture 會 freeze 全域 static registry，`ModBlocks` 須在 Canon `@BeforeAll` 先初始化，`ModItems` 不得引用（見 M6 note）。D1b-1 遠端 CI run `40875796265`（`4b16cb0`）兩 job success。D1b-2（ITEM static leaf）code `3fbe626` 已結案：乾淨 Canon focused 109/109×2、LeafTest 15/15×2、完整 `run-all-cb0f99493892472ab1f63860f3ed3ad4` END ALL exit0（JUnit886），spec C0/I0/M3、quality C0/I0/M5；`3fbe626` 的遠端 CI 待本筆 push 後讀回。BLOCK／ITEM static leaf 局部閉合；D1b-2 遠端 CI run `40888610474`（`b6004de`）兩 job success。D1b-3（引用其他 registry 的 default component）設計經全新審查 C0/I0/M10 放行：component codec 改用 lease registries 加固定 identity 證明，切分 3-0（Step0）→3a→3b→3c→3d（見 M6 note）。D1b-3-0（Step0）code `2823985` 已結案：乾淨 Canon focused 110/110×2、LeafTest 21/21×2、完整 `run-all-42034bb2a7144d8bb4841f9a10b242c4` END ALL exit0（JUnit893），spec C0/I0/M2、quality C0/I0/M3；D1b-3-0 遠端 CI run `40911589298`／`40911636980` success。D1b-3a code `36fdd36` 已結案：component codec 改用 lease registries 加固定 identity 證明，接受 8 型 literal／空 DEFAULT；乾淨 Canon focused 112/112×2、LeafTest 25/25×2、完整 `run-all-8aba2dc201f94d959e0e886b6be6ea4f` END ALL exit0（JUnit899），spec C0/I0/M4、quality C0/I0/M3；`36fdd36` 的遠端 CI 待本筆 push 後讀回。W-OPS 等價突變只有 3d 能殺，列為 3d 結案條件。3a 遠端 CI run `40926054933` success。D1b-3b code `ff3aecc` 已結案：單一分派 per-type contract、attribute／food／直接 tool、ATTRIBUTE 與 STATUS_EFFECT leaf、ITEM 出邊；乾淨 Canon focused 115/115×2、LeafTest 34/34×2；首輪 full 因 AccessDenied（M5 已知限制）FAIL 保留原 root，新 nonce `run-all-090bcb63a6e04cff9650b9aaba5281bd` END ALL exit0（JUnit911）；spec C0/I0/M4、quality C0/I0/M4；`ff3aecc` 的遠端 CI 待本筆 push 後讀回。3b 遠端 CI run `40948195881` success。D1b-3c-0（Step0）code `be9d408` 已結案：codec 前以已驗元素重建三型 record（具名 RED 證實等值替換風險並修正）、ref key 比對、M9 模型無關交叉檢查、Unsafe 補 ITEM seam 見證；1267 件 ACCEPTED 逐件內容 hash 不變；乾淨 Canon focused 116/116×2、LeafTest 36/36×2、完整 `run-all-a465f127b08a431db4f24eeda83ebf8c` END ALL exit0（JUnit914），spec C0/I0/M3、quality C0/I0/M4；`be9d408` 的遠端 CI 待本筆 push 後讀回。3c-0 遠端 CI run `40962495545` success。D1b-3c-0b（硬化）code `ae25614` 已結案：私有 ops identity 隔離 CodecCache 快取端（具名 RED 證實）、tool Optional、potion 等三型正規化、copy 保真度全族群 gating、M9 逐件雙向；1267 件逐件 hash 不變；乾淨 Canon focused 116/116×2、LeafTest 41/41×2、完整 `run-all-89f998ff5a984fe4ac109f88431f6da9` END ALL exit0（JUnit919），spec C0/I0/M2、quality C0/I0/M4；`ae25614` 的遠端 CI 待本筆 push 後讀回。controller 範圍裁示：須繞過存取限制才能觸發的殘餘只文件化、不再另開硬化切片（見 M6 note）。下一步 3c 本體（tool tag rule、TAG 單次展開、tag 測試技法）。D1a 之外的 C1d、100ms live hold I-1、8B3、Task8 終局與 Task9–20 仍待；v4 父 FAIL／B27 FAIL 原判保留。結果與下一步見 [`docs/handoffs/2026-10-29-m6-claude-resume-prompt.md`](docs/handoffs/2026-10-29-m6-claude-resume-prompt.md) 末節「交回紀錄」與 M6 note 末節。**
 
-- 唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
+- （歷史；2026-11-12 起依「M6／`.worktrees` 退役專屬裁示」將連同整個 `.worktrees` 刪除，見本節最上方。）唯一 M6 工作樹：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`；所有指令明確指定 workdir／git -C。不在主 checkout 或 main 實作。
 - （歷史，2026-10-29；現行唯一入口是本節最上方與 2026-11-02 handoff。）先讀新的 [Claude 接續提示詞](docs/handoffs/2026-10-29-m6-claude-resume-prompt.md)；2026-10-28 Task8A handoff 與 M5 舊 handoff 保留歷史約束。再讀 [M6 note](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 末節與本工作樹 `.superpowers/sdd/2026-10-24-m6-universe-generation/STATUS.md` 最前current。
 - （歷史，已被 spec v1.7 取代：2026-11-10 起宇宙只有主世界、共用原版 Nether／End，不做 family 與 portal／gateway。）使用者已確認完整 M6 的順序：測試腳本安全與生成競態 → random seed → same-seed fresh／profile → 完整 Nether／End family、portal／gateway 與 respawn；各段驗收，M7 不納入。先完成 binding spec 的獨立 review，再寫 plan 並獨立 review；Critical／Important 清零後直接實作，不另問是否開始。
 - 使用者2026-10-28指定子代理只用 gpt-5.6-sol、gpt-6-sol 或 gpt-6-astra（Codex 時期）；較早6.1 SOL紀錄只屬歷史。2026-10-29 起由 Claude Code 接手，controller 改用 Claude 子代理，並已在接手對話中告知使用者；這是 controller 的預設，不是使用者的新裁示，使用者尚未回覆此點。短派工、一個writer配有界獨立review，沿用未變已審部分。使用者要求加速、不鬼打牆：v4 child23真PASS＋v5離線父修證據可銜接完整B，必要的合併窄審一次完成，不另重跑相同focused；保留重要安全與完整B/平台/人工門檻。
@@ -423,6 +444,6 @@ M5 第一切片的硬界線（使用者 2026-10-01 指示；細節以 M5 spec �
 2. 實作採 Subagent-Driven Development（見上方「開發與 review 流程」）。每次派工明列允許修改的路徑；不在別的 task 裡順手修已排入其他 task 或 milestone 的項目。
 3. 前置 hardening 已完成（plan 的 H1–H4）：codec strictness、只看相關 chunks 的存檔 checkpoint、未 checked authority 的 fail-closed 收斂、凍結時的位置修正。2026-09-30 留給 M5 的 4 項，處置見 M5 spec §4 與 §17 的延後清單 triage。
 4. Gate：以 `pwsh -NoProfile -File scripts/verification/run-all.ps1` 作為回歸基線。T0 已在 clean clone 實跑通過。M5 新增的 gate 擴充進 `scripts/verification/`，並經 review。以重導輸出的方式呼叫 `run-all.ps1` 時，外層要等 Gradle daemon 結束才會返回；判斷完成請看 `END ALL` 行。
-5. Milestone 收尾，順序固定：automated gates → required manual smoke（寫入tracked note）→ task及whole-branch review → docs truth → 依持續授權push feature → GitHub Actions雙平台通過 → 依上述條件授權 `--ff-only`合併main後push main → 另獲同意建立tag `m5`（正常tag推送依持續push授權）→ 依M5退役專屬裁示刪指定工作樹、不備份/不留副本。其他worktree仍適用一般備份規則。
+5. Milestone 收尾，順序固定：automated gates → required manual smoke（寫入tracked note）→ task及whole-branch review → docs truth → 依持續授權push feature → GitHub Actions雙平台通過 → 依上述條件授權 `--ff-only`合併main後push main → 另獲同意建立tag `m5`（正常tag推送依持續push授權）→ 依M5退役專屬裁示刪指定工作樹、不備份/不留副本。M6收尾依「M6／`.worktrees` 退役專屬裁示」刪整個 `.worktrees`。其他worktree仍適用一般備份規則。
 
 `docs/handoffs/2026-09-24-m4-task9-resume*.md` 已完成，只保留為歷史紀錄，不再是接手入口。
