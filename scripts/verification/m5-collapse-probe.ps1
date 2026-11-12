@@ -632,7 +632,8 @@ if ($ResumeImportedW10) {
         $probeContext.RunId=$checked.nonce.Substring(0,32)
         Invoke-M5Phase $checked.nonce 'w10-restart' $checked.root 'stop' ''
         $newIdentity=$taskResults[0]
-        if ($newIdentity.startupNonce -ceq $checked.source.phase.startupNonce -or $newIdentity.javaPid -eq $checked.source.phase.javaPid) { throw 'W10_BRIDGE：必須全新PID/startupNonce' }
+        # Windows會回收PID；JVM身分以(PID, StartTime)判定。
+        if ($newIdentity.startupNonce -ceq $checked.source.phase.startupNonce -or "$($newIdentity.javaPid)@$($newIdentity.javaStartTimeUtc)" -ceq "$($checked.source.phase.javaPid)@$($checked.source.phase.javaStartTimeUtc)") { throw 'W10_BRIDGE：必須全新JVM(PID, StartTime)/startupNonce' }
         # 成功marker必須最後寫；source讀回涵蓋完整集合、manifest、halt、pin與owner/lock。
         $finalSource=Get-W10Source $checked.source.root
         Assert-W10Same $checked.source $finalSource 'restart後source'
