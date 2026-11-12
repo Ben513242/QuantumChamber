@@ -80,6 +80,12 @@ public final class UniverseProfileRegistry {
         return resolved;
     }
 
+    /** {@link #resolve} 中不需要 lease 的部分：provider 綁定與 Parameters 檢查，失敗訊息相同。 */
+    public void requireBindable(GenerationSettingsSnapshot snapshot) {
+        Objects.requireNonNull(snapshot, "snapshot");
+        validateParameters(requireBound(snapshot.providerId(), snapshot.providerVersion()), snapshot.parameters());
+    }
+
     private synchronized Registration requireBound(String id, int version) {
         if (!frozen) throw new IllegalStateException("Profile registry 尚未凍結");
         var registration = registrations.get(new Key(id, version));

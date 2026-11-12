@@ -1,6 +1,7 @@
 package dev.quantumchamber.persistence;
 import dev.quantumchamber.candidate.QuantumCandidate;
 import dev.quantumchamber.candidate.NewUniverseIntent;
+import dev.quantumchamber.universe.GenerationSettingsSnapshot;
 import dev.quantumchamber.universe.Minecraft121SettingsLifecycle;
 import dev.quantumchamber.universe.UniverseProfileRegistry;
 import dev.quantumchamber.universe.ServerSettingsContext;
@@ -53,16 +54,30 @@ public final class SessionRecoveryState extends PersistentState {
     SessionRecoveryState(JournalReadback readback, M6IntentValidator validator) {
         this.readback = Objects.requireNonNull(readback); this.intentValidator = Objects.requireNonNull(validator);
     }
+    /**
+     * provider 綁定每次都檢查；需要 lease 的 resolve 每個 snapshot 在本 validator 只做一次，整批成功才記住（Task 22 整分支審查 fix1）。
+     * validator 隨 state 建立，生命期是一個 server instance；同一 instance 內 resolve 依賴的 worldgen registry 不隨 {@code /reload} 改變，
+     * 所以已 resolve 過的 snapshot 在 reload 期間或失敗的 reload 之後，journal 仍可讀寫，不必再取 lease。
+     */
     static M6IntentValidator m6Validator(Supplier<UniverseProfileRegistry> registry, Supplier<ServerSettingsContext> acquire) {
         Objects.requireNonNull(registry); Objects.requireNonNull(acquire);
+        var resolved = new HashSet<NbtCompound>();
         return intents -> {
             if (intents.isEmpty()) return;
-            var profiles = registry.get(); var lease = acquire.get(); lease.requireValid();
+            var profiles = registry.get();
+            var pending = new LinkedHashMap<NbtCompound, GenerationSettingsSnapshot>();
             for (var intent : intents) {
-                profiles.resolve(intent.sourceSettingsSnapshot(), lease);
-                profiles.resolve(intent.targetSettingsSnapshot(), lease);
+                for (var snapshot : List.of(intent.sourceSettingsSnapshot(), intent.targetSettingsSnapshot())) {
+                    profiles.requireBindable(snapshot);
+                    pending.putIfAbsent(snapshot.toNbt(), snapshot);
+                }
             }
+            synchronized (resolved) { pending.keySet().removeAll(resolved); }
+            if (pending.isEmpty()) return;
+            var lease = acquire.get(); lease.requireValid();
+            for (var snapshot : pending.values()) profiles.resolve(snapshot, lease);
             lease.requireValid();
+            synchronized (resolved) { resolved.addAll(pending.keySet()); }
         };
     }
     private enum InstallationPhase { LOADING, INSTALLED, FAILED }

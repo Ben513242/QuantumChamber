@@ -6,6 +6,7 @@ import java.nio.file.*;
 import java.util.zip.GZIPOutputStream;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import dev.quantumchamber.universe.*;
 import net.minecraft.registry.DynamicRegistryManager;
 import net.minecraft.registry.RegistryLoader;
@@ -330,19 +331,25 @@ class SessionJournalSchemaFiveTest {
     @Test void schemaFiveWriteReadbackReloadExact() throws Exception {
         try (var fixture = settings()) {
             var registry = builtin(); var acquisitions = new java.util.ArrayList<TestLease>();
-            var validator = SessionRecoveryState.m6Validator(() -> registry, () -> {
+            java.util.function.Supplier<ServerSettingsContext> newLease = () -> {
                 var lease = new TestLease(fixture.registries()); acquisitions.add(lease); return lease;
-            });
+            };
+            var validator = SessionRecoveryState.m6Validator(() -> registry, newLease);
             var lease = new TestLease(fixture.registries());
             var legacy = fixtureRecord(1, false, registry, lease); var fresh = fixtureRecord(2, true, registry, lease);
             var state = new SessionRecoveryState(SessionJournalStore::read, validator); state.markCollapseAuthoritiesInitialized();
             var file = directory.resolve("mixed.dat"); state.put(legacy); state.save(file.toFile(), null);
             assertEquals(0, acquisitions.size()); assertEquals(4, SessionJournalStore.read(file).getCompound("data").getInt("SchemaVersion"));
             state.put(fresh); assertDoesNotThrow(() -> state.save(file.toFile(), null));
-            assertFalse(state.isDirty()); assertEquals(2, acquisitions.size()); assertNotSame(acquisitions.get(0), acquisitions.get(1));
+            // fix1 F2：preflight 取一次 lease resolve 新 snapshot；讀回與同一 validator 的重載都已 resolve 過，不再取 lease。
+            assertFalse(state.isDirty()); assertEquals(1, acquisitions.size());
             assertEquals(5, SessionJournalStore.read(file).getCompound("data").getInt("SchemaVersion"));
             var reloaded = SessionRecoveryState.load(file, validator); assertDoesNotThrow(reloaded::requireHealthy);
-            assertEquals(state.flushedRecords(), reloaded.flushedRecords()); assertEquals(3, acquisitions.size());
+            assertEquals(state.flushedRecords(), reloaded.flushedRecords()); assertEquals(1, acquisitions.size());
+            // 新的 validator（下一次開服）會重新 resolve，而且每次取得的都是新的 lease。
+            var restarted = SessionRecoveryState.load(file, SessionRecoveryState.m6Validator(() -> registry, newLease));
+            assertDoesNotThrow(restarted::requireHealthy); assertEquals(state.flushedRecords(), restarted.flushedRecords());
+            assertEquals(2, acquisitions.size()); assertNotSame(acquisitions.get(0), acquisitions.get(1));
             assertFalse(reloaded.m5ReadyThisInstance()); assertTrue(reloaded.m5Evidence());
             state.remove(fresh.sessionUuid()); state.remove(legacy.sessionUuid()); state.save(file.toFile(), null);
             assertEquals(5, SessionJournalStore.read(file).getCompound("data").getInt("SchemaVersion"));
@@ -640,8 +647,61 @@ class SessionJournalSchemaFiveTest {
             var wrong = data.copy(); firstIntent(wrong).putInt("FamilyCapabilityVersion", 1);
             assertThrows(IllegalStateException.class, () -> SessionRecoveryState.fromNbt(wrong, validator).requireHealthy());
             lease.valid = false;
-            assertThrows(IllegalStateException.class, () -> SessionRecoveryState.fromNbt(data, validator).requireHealthy());
+            // 已 resolve 過的 validator 不再取 lease（見 verifiedSnapshotsNeedNoLeaseOnLaterValidation）；lease 無效時，新的 validator 仍須拒絕。
+            var fresh = SessionRecoveryState.m6Validator(() -> registry, () -> lease);
+            assertThrows(IllegalStateException.class, () -> SessionRecoveryState.fromNbt(data, fresh).requireHealthy());
         }
+    }
+    // 整分支審查 fix1 F2：reload 期間或失敗的 reload 之後 lease 不可用，journal 仍須能讀寫已驗過的 M6 intent。
+    @Test void verifiedSnapshotsNeedNoLeaseOnLaterValidation() {
+        try (var fixture = settings()) {
+            var registry = builtin(); var lease = new TestLease(fixture.registries());
+            var data = validSnapshots(validM6Wrapper(), registry, lease).getCompound("data");
+            var calls = new AtomicInteger();
+            var validator = SessionRecoveryState.m6Validator(() -> registry, () -> { calls.incrementAndGet(); return lease; });
+            assertDoesNotThrow(() -> SessionRecoveryState.fromNbt(data, validator).requireHealthy());
+            lease.valid = false;
+            assertDoesNotThrow(() -> SessionRecoveryState.fromNbt(data, validator).requireHealthy());
+            assertEquals(1, calls.get());
+        }
+    }
+    @Test void providerBindingIsCheckedEvenForVerifiedSnapshots() {
+        try (var fixture = settings()) {
+            var registry = builtin(); var lease = new TestLease(fixture.registries());
+            var data = validSnapshots(validM6Wrapper(), registry, lease).getCompound("data");
+            var current = new AtomicReference<>(registry);
+            var validator = SessionRecoveryState.m6Validator(current::get, () -> lease);
+            assertDoesNotThrow(() -> SessionRecoveryState.fromNbt(data, validator).requireHealthy());
+            var missing = new UniverseProfileRegistry(); missing.freeze(); current.set(missing);
+            var failure = assertThrows(IllegalStateException.class, () -> SessionRecoveryState.fromNbt(data, validator).requireHealthy());
+            assertTrue(failure.getMessage().contains("PROFILE_CLOSURE_UNBOUND"), failure.getMessage());
+        }
+    }
+    @Test void failedValidationRemembersNoSnapshot() {
+        try (var fixture = settings()) {
+            var registry = builtin(); var lease = new TestLease(fixture.registries());
+            var data = validSnapshots(validM6Wrapper(), registry, lease).getCompound("data");
+            var badTarget = data.copy(); var target = firstIntent(badTarget).getCompound("TargetSettingsSnapshot");
+            var fp = target.getByteArray("OutputFingerprint").clone(); fp[0] ^= 1; target.putByteArray("OutputFingerprint", fp);
+            var baseline = new CountingLease(fixture.registries());
+            assertDoesNotThrow(() -> SessionRecoveryState.fromNbt(data,
+                    SessionRecoveryState.m6Validator(() -> registry, () -> baseline)).requireHealthy());
+            var counting = new CountingLease(fixture.registries());
+            var validator = SessionRecoveryState.m6Validator(() -> registry, () -> counting);
+            assertThrows(IllegalStateException.class, () -> SessionRecoveryState.fromNbt(badTarget, validator).requireHealthy());
+            counting.reads = 0;
+            assertDoesNotThrow(() -> SessionRecoveryState.fromNbt(data, validator).requireHealthy());
+            // source 在失敗的那一批已 resolve 成功，但整批失敗就不得記住：重驗時 source 與 target 都要 resolve，讀 registry 的次數與全新 validator 相同。
+            assertTrue(baseline.reads > 0);
+            assertEquals(baseline.reads, counting.reads);
+        }
+    }
+    private static final class CountingLease implements ServerSettingsContext {
+        private final DynamicRegistryManager.Immutable registries; int reads;
+        CountingLease(DynamicRegistryManager.Immutable registries) { this.registries = registries; }
+        public void requireValid() { }
+        public DynamicRegistryManager.Immutable registries() { reads++; return registries; }
+        public boolean sourceGenerateStructures() { throw new AssertionError("不得覆寫 frozen bool"); }
     }
     @Test void getOrInstallKeepsExactDirtyStateWithoutNativeLoader() {
         var server = new Object(); var manager = new NoReadManager(directory); var calls = new AtomicInteger();

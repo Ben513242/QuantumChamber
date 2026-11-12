@@ -11,9 +11,12 @@ import java.util.function.Supplier;
 import net.fabricmc.fabric.api.event.Event;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** 單一 M6 設定入口；短鎖只保護 exact server 與票據 metadata。 */
 public final class Minecraft121SettingsLifecycle {
+    private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
     private static final Minecraft121SettingsLifecycle INSTANCE = new Minecraft121SettingsLifecycle();
     private static final UniverseProfileRegistry REGISTRY = new UniverseProfileRegistry();
     private static boolean initialized;
@@ -87,14 +90,28 @@ public final class Minecraft121SettingsLifecycle {
         catch (RuntimeException failure) { onStopping(server); throw failure; }
     }
 
+    /** 失敗轉換的 WARN 在離開 monitor 之後才記（Task 22 整分支審查 fix1）；原因只帶字串，不持 server。 */
+    private static void warnUnavailable(String[] reason) {
+        if (reason[0] != null) LOGGER.warn("M6 設定 context 已停用到重啟：{}。在此之前新的量子艙會被拒絕，進行中的 NEW 塌縮會等待", reason[0]);
+    }
+
     ReloadAction onReloadStarted(Object server) {
+        String[] poisoned = {null};
+        try { return startReloadLocked(server, poisoned); }
+        finally { warnUnavailable(poisoned); }
+    }
+
+    private ReloadAction startReloadLocked(Object server, String[] poisoned) {
         synchronized (monitor) {
             Entry entry = entries.get(server);
             if (entry == null || entry.phase == Phase.STOPPED || entry.phase == Phase.POISONED) return null;
             Minecraft121SettingsContexts.ReloadTicket ticket;
             try { ticket = entry.revoke.revokeReloadStart(); }
-            catch (IllegalStateException rejected) { entry.phase = Phase.POISONED; return null; }
+            catch (IllegalStateException rejected) {
+                entry.phase = Phase.POISONED; poisoned[0] = "reload START 被拒：" + rejected.getMessage(); return null;
+            }
             if (entry.phase != Phase.IDLE) {
+                poisoned[0] = "上一次 reload 尚未結束就收到新的 START（phase=" + entry.phase + "）";
                 entry.phase = Phase.POISONED;
                 entry.ticket = null;
                 return null;
@@ -122,11 +139,18 @@ public final class Minecraft121SettingsLifecycle {
     }
 
     ReloadAction prepareEnd(Object server) {
+        String[] poisoned = {null};
+        try { return prepareEndLocked(server, poisoned); }
+        finally { warnUnavailable(poisoned); }
+    }
+
+    private ReloadAction prepareEndLocked(Object server, String[] poisoned) {
         synchronized (monitor) {
             Entry entry = entries.get(server);
             if (entry == null || entry.phase != Phase.RELOADING || !owner(entry)) return null;
             if (entry.finishing) {
                 entry.phase = Phase.POISONED;
+                poisoned[0] = "同一次 reload 收到重複的 END";
                 return null;
             }
             var action = new ReloadAction(entry, entry.ticket);
@@ -149,6 +173,7 @@ public final class Minecraft121SettingsLifecycle {
             entry.finishing = false;
             entry.phase = Phase.IDLE;
         }
+        if (!success) LOGGER.warn("M6 reload 沒有成功，設定 context 不可用，直到下一次成功的 reload 或重啟。在此之前新的量子艙會被拒絕，進行中的 NEW 塌縮會等待");
     }
 
     void onReloadFinished(Object server, boolean success, Minecraft121SettingsContexts.Sources sources) {
@@ -250,7 +275,11 @@ public final class Minecraft121SettingsLifecycle {
             if (!success) { core.finishEnd(action, false, null); return; }
             Minecraft121SettingsContexts.Sources sources;
             try { sources = factory.apply(server); }
-            catch (RuntimeException failure) { core.finishEnd(action, false, null); return; }
+            catch (RuntimeException failure) {
+                LOGGER.warn("M6 reload 之後讀取設定來源失敗：{}", failure.toString());
+                core.finishEnd(action, false, null);
+                return;
+            }
             core.finishEnd(action, true, sources);
         });
         registrar.register(ServerLifecycleEvents.SERVER_STOPPING, core::stop);

@@ -134,6 +134,8 @@ public final class UniverseLifecycleService {
      *     current 與 flushed 的這筆相同、availability 為 {@code EAGER_ENABLED}、有 exact catalog role 的 OVERWORLD descriptor
      *     （{@link MaterializeOutcome.Status#NOT_ELIGIBLE}）。</li>
      * <li>已經 ACTIVE：回傳同一個 world instance（{@link MaterializeOutcome.Status#ALREADY_ACTIVE}）。</li>
+     * <li>schema2 的設定 context 暫時不可用（{@code /reload} 進行中，或 reload 失敗、重疊之後）：{@link MaterializeOutcome.Status#NOT_READY}，
+     *     不呼叫 backend、不記失敗，見 {@link #settingsNotReady}。</li>
      * <li>同一個 server instance 內這個 descriptor 物化失敗過：直接拒絕（{@link MaterializeOutcome.Status#FAILED_BEFORE}）。runtime registry
      *     不允許原地重試（{@link UniverseRuntimeRegistry#fail}）；backend 沒有留下 receipt 的失敗（例如 REJECTED）也一樣拒絕。</li>
      * <li>backend 失敗（{@link MaterializeOutcome.Status#FAILED}）：記入本 instance 的失敗集合；會留下 runtime receipt 或未證明安全的失敗
@@ -167,9 +169,27 @@ public final class UniverseLifecycleService {
         }
         var active = context.backend.resolveActive(server, descriptor);
         if (active.isPresent()) return MaterializeOutcome.succeeded(MaterializeOutcome.Status.ALREADY_ACTIVE, active.get());
+        var settings = settingsNotReady(record, () -> Minecraft121SettingsLifecycle.acquire(server));
+        if (settings.isPresent()) return settings.get();
         var checked = record;
         return attemptMaterialize(descriptor, context.failedDescriptors, context.materializeFailures,
                 () -> new UniverseMaterializationService(context.backend).materializeChecked(server, checked, descriptor));
+    }
+
+    /**
+     * schema2 的 U 在 factory 內要取設定 lease；lease 暫時不可用時若照常呼叫 backend，會在 {@code beginMaterialize} 之後失敗，
+     * 讓 backend 要求停機、catalog 改成 DISABLED。這裡先檢查，不可用就回 {@code NOT_READY} 讓 collapse 等待（Task 22 整分支審查 fix1）。
+     * schema1 不需要設定 context，不呼叫 {@code settings}。lease 只綁定當下 epoch、不佔 inflight，先取一次沒有副作用。
+     */
+    static Optional<MaterializeOutcome> settingsNotReady(UniverseRecord record, Supplier<ServerSettingsContext> settings) {
+        if (record.definition().schemaVersion() != 2) return Optional.empty();
+        try {
+            settings.get().requireValid();
+            return Optional.empty();
+        } catch (IllegalStateException unavailable) {
+            return Optional.of(MaterializeOutcome.refused(MaterializeOutcome.Status.NOT_READY,
+                    "settings context 不可用：" + unavailable.getMessage()));
+        }
     }
 
     /**
