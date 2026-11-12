@@ -1,6 +1,6 @@
 # QuantumChamber M6：Codex 接續提示（2026-11-02，Task 8 縮範圍裁示）
 
-**2026-11-12 M6 人工 smoke 完成；下一步：本 docs commit push 與同 SHA CI，之後 main 合併與 tag（各自另問使用者）。** 使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
+**2026-11-12 M6 人工 smoke 完成、結果 docs 的同 SHA CI 已綠；下一步：main 合併與 tag（各自另問使用者）。** 使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
 - 人工清單 10 列全部 PASS：
   - 單人三輪 NEW 抽到 same-seed、toggle（amplified）、random 三種 profile；
   - 重進與完全重啟都回到同一 U；
@@ -10,7 +10,8 @@
   - release JAR＋Fabric Loader 0.17.2 開啟 named 世界，mixin 錯誤與指紋不符都是 0。
 - 沒有改程式，code pin 仍 `6965301`。證據在 repo 外 `C:\Users\Ben\Documents\QC-acceptance-evidence\2026-11-12-m6\`；細節見人工清單與 M6 note「人工 smoke 實際操作與結果」節。
 - 8-H waiver 的後果仍適用：`main` 是開發快照，不適合未備份的正式世界。
-- 剩下：本 docs commit 的同 SHA CI → 勾 plan Task 22 最後一項 → main `--ff-only` 合併、tag `m6`，兩者都要使用者另外同意。
+- 結果 docs `4ffadab` 的 CI 43176799947 attempt 1 三 job 全綠，plan Task 22 最後一項已勾。
+- 剩下：本勾選 commit（純文件）的 CI 照常讀回；之後 main `--ff-only` 合併、tag `m6`，兩者都要使用者另外同意。合併目標與 tag 指向的 commit，一併請使用者裁示。
 
 下段是 fix1 結案時的紀錄。
 

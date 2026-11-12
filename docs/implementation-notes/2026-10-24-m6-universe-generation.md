@@ -2324,3 +2324,5 @@ plan 的「fix1 同 SHA CI」已勾。「最終完整回歸」一項等人工 sm
 - 其他操作性偏差與佈置列在人工清單「本輪實際操作」節，完整紀錄在證據 `notes.md`。
 
 沒有改程式，`6965301` 是最終 code pin。plan 已勾 6 項：Task R「重啟登入仍在同一 U、床點有效」、8-H「只實作裁示為必須者」，以及 Task 22 的最終完整回歸、單人／多人輪、宇宙內重生、人工清單明列已知行為；整分支審查與 docs truth 那一項等本 commit 的同 SHA CI。之後只剩 main 合併與 tag，各自另問使用者。
+
+**結果 docs 的 CI**：`4ffadab` 的 CI 43176799947 attempt 1 三 job 全綠。兩平台都是 default 166、M5 60、M6 35、legacy 1；Windows normal 13；m6-native 9 鏈 27 phase／479 反例（`M6_NATIVE_VERIFIED PASS`，HEAD 相符）；兩平台各 12 行 `M6_SCOPE_MISMATCH` 都是 EXPECTED_RED。兩平台各有一行預期內的「M6 reload 沒有成功」WARN（batch `m6_universe_reload_materialize`）；`KEPT_CANONICAL`、`SETTINGS_FINGERPRINT_MISMATCH`、mixin 錯誤都是 0。plan Task 22 最後一項依此勾選。
