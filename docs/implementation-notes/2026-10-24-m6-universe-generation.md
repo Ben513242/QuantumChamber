@@ -2244,3 +2244,51 @@ plan Task R 的「具名正反控制」與出口兩項已勾選，**Task R close
 - 這個測試只證明 named 環境下兩個平台算出相同指紋，不證明 intermediary 環境或 release JAR 能啟動。spec §3.1.3 要求評估「intermediary 與 named 的 SHALLOW_V1 FP 是否相同」，評估結論：這一點交由人工清單的「release JAR」一列一次性取證（尚未執行）。預期是世界在 named 開發 runtime 建立、由 release JAR 開啟時，兩種 U 都沒有 `SETTINGS_FINGERPRINT_MISMATCH`。
 
 **出口**：push 後同 SHA 三 job CI 全綠，才算固定指紋值測試完成；plan 8-H 第三項要等兩個人工列也完成才勾。之後進 Task 22 收尾。
+
+### 2026-11-12：Task 22 收尾與 fix1（reload 期間不停機）
+
+**固定指紋值測試完成**：CI `43123630195`（head `373f67b`）attempt 1 三 job 全 success；兩平台 `Minecraft121ShallowSettingsCanonicalizerTest` 都是 15/15，`shallowFingerprintsMatchPinnedValues` 通過。
+
+**第一次最終完整回歸**：`run-all-01f3a7de64a94340a2a6270d05a14b51`（HEAD `373f67b`，code pin `a9871e8`）FAIL，原判保留。full、m4-normal、legacy 通過；m5-gametest 1/60 FAIL：`prepare_validates_the_site_of_an_existing_complete_entry_before_repairing` 寫 projection 時遇到 `AccessDeniedException`（`quantumchamber_projections.dat` 原子替換，`CheckedNbtFile.java:70`），屬 M5 已知限制（2026-10-21 裁示）。fix1 改了程式，所以沒有在該 pin 重跑。
+
+**整分支審查**（SDD `t22-wbr-20261112/`，三席平行、唯讀）：
+- A 席（範圍、正式路徑、release、文件真實性）C0/I2/M2；B 席（設定、閉包、template gate、lifecycle）C0/I1/M3；C 席（生成競態、持久化、collapse、候選、世界建立、重生）C0/I2/M3。
+- B-I1＝C-I1：設定 context 不可用時 NEW 物化失敗。create 失敗時世界尚未建立，`finishFailure` 沒有東西可撤回，改呼叫 `failUnhealthy`，也就是 `server.stop(false)`；`DestinationResolver` 再把 catalog 改 DISABLED、session SEALED（MATERIALIZE_FAILED）。→ fix1 F1。
+- C-I2：journal 每次寫入都要 live lease，並 resolve 全部 M6 intent。→ fix1 F2。
+- A-I1：H1／H2 範圍的 mixin 在正式版仍會套用，但沒有正式路徑使用它們；文件原本沒有揭露。→ 人工清單揭露，release JAR 一列加驗。A 席報告寫 12 個 mixin，controller 依 `quantumchamber.mixins.json` 只核得 11 個（template gate 2、template accessor 2、noise／density 狀態 6、refresh seal 1），清單以 11 個為準。不改 production：H1／H2 已 waiver，拔掉會連動 testmod 的 S1a observer 與閉包 JUnit。
+- A-I2：AGENTS 尾段的舊範圍敘述已標為歷史（`aed4073`）。
+- Minor：B-M1 由 F3 處理；C-M3 寫入人工清單；B-M2 同 A-I1。其餘記為殘留：
+  - A-M1：只給測試用的 public API（`UniverseLifecycleService.rootSeed`、`Minecraft121ServerWorldFactory.constructionPending`）；
+  - A-M2：Ubuntu `runGameTest`／`runGameTestM5` 的 step 逾時由 20 分鐘降為 15 分鐘（收緊，觀察）；
+  - B-M3：settings 的 SERVER_STOPPING 比其他 listener 先執行，目前沒有實害；
+  - C-M1：`exactOwner` 在已有 owner、尚未發布時回原版值（fail-open），目前沒有可觸發路徑；
+  - C-M2：`create()` 在 owner 檢查失敗時沒有 close 已建好的世界，只有 mixin 沒套用才會發生。
+- B-I1、C-I1、C-I2 的共同根因：`Minecraft121SettingsLifecycle.acquire` 只在 IDLE 時給 lease，而物化、journal、候選三條路徑都把它當成必須成功的前置條件。
+
+**fix1**：依 8-H 第 3 題選項說明「若發現 reload 後量子艙不能用，就開 production 修正 task」開立；是否符合這個條件由 controller 判定，觸發證據是整分支審查與 GameTest RED，不是人工 `/reload` 那一列。設計 SDD `t22-fix1-reload-materialize-design-20261112.md`，窄審第一輪 C0/I2/M5，修訂後 C0/I0/M2。code `6965301`，production 四檔：
+- F1 `UniverseLifecycleService.materializeAllocated`：ACTIVE 檢查之後、呼叫 backend 之前，schema2 U 先經 `settingsNotReady`；context 不可用就回 NOT_READY，由 `DestinationResolver` 既有的 waiting 分支處理。
+- F2 `SessionRecoveryState.m6Validator` 與新增的 `UniverseProfileRegistry.requireBindable`：綁定每次檢查；resolve 在同一個 validator 內每份 snapshot 只做一次，全部成功才記住。
+- F3 `Minecraft121SettingsLifecycle`：進 POISONED、reload 結束但失敗、reload 後讀取設定來源失敗時記 WARN，記在 monitor 之外。
+- 測試：
+  - 新 `M6UniverseReloadGameTests`，batch `m6_universe_reload_materialize`。直接觸發 Fabric 的 `START_DATA_PACK_RELOAD`／`END_DATA_PACK_RELOAD`，不呼叫 `reloadResources`，以避開 S1a observer 的 `UNEXPECTED_RELOAD`。依序驗 reload 進行中、失敗的 reload 之後、成功的 reload 之後、已 ACTIVE 時再 reload。M6 宣告數 34→35。
+  - 新 JUnit `UniverseLifecycleSettingsGateTest`（4 案）。
+  - `SessionJournalSchemaFiveTest` 新增三案：`verifiedSnapshotsNeedNoLeaseOnLaterValidation`、`providerBindingIsCheckedEvenForVerifiedSnapshots`、`failedValidationRemembersNoSnapshot`。
+- 刻意改變的契約（不是放寬判定）：
+  - `journalRejectsWrongSnapshotOrCapability` 末段改用新的 validator；
+  - `schemaFiveWriteReadbackReloadExact` 的 lease 取用次數改為：首次寫入 1 次、同一 validator 重載仍 1 次、新 validator 重載第 2 次且是不同物件。這一處是 GREEN 時才發現：第一次 GREEN root `focused-t22fix1-green-sessionjournalschemafivetest-e56de585bb5b429c8aa47987471b051c` 51/52，FAIL 原判保留；記為設計勘誤。
+- RED：
+  - GameTest `focused-t22fix1-red-gametest-66d3edb299db495095f0f19d976a7080`：預期 NOT_READY，實際 FAILED（backend 狀態 FAILED_UNHEALTHY）；log 有「動態 world backend 已不健康 … 請求正常停止」，重現 B／C 席 I-1。
+  - JUnit `focused-t22fix1-red-junit-18276da8861b49dab6d5e407787c2b5b`：`verifiedSnapshotsNeedNoLeaseOnLaterValidation` 丟 `CONTEXT_UNAVAILABLE`。同一 root 的 `failedValidationRemembersNoSnapshot` 是測試寫錯，不算 RED，已改寫。
+- mutation：8/8 killed，逐位元組還原並核 SHA（SDD `t22-fix1-mutations-dryrun/mutations-summary.md`）。第一次執行 8 個都是 SETUP_FAIL：比對字串是 LF、兩個來源檔是 CRLF，所以沒有套用、沒有跑測試；原判保留。F3 只加 log，不列 mutation。
+- 雙 focused（乾淨 HEAD `aed4073`）：兩輪各 Journal 52、Gate 4、Lifecycle 12、ProfileRegistry 12、GameTest 1，全部 0 failure。
+- 完整回歸（乾淨 HEAD `aed4073`）：
+  - 第一次 `run-all-38b596681b3f4f65b2b24d9539169ccb` FAIL，原判保留。full、m4-normal、legacy、m5-gametest、m6-oracle-and-safety、m6-gametest、main、main-oracle、m3、recovery 都通過；m5-collapse 在 `sealmembranejoined-crash` FAIL，之後的 m6-native、ci-rule、summary 沒有執行，也沒有 `END ALL` 行。失敗訊息：`stepBounded：step halt 在 600 個 tick 內沒有完成 … state=SEALED crash=PROJECTION_SEALED reached=1 hits=0`。原因是 SEALED 的 journal 寫入在 `SessionJournalStore.write:38` 的 `Files.move` 遇到 `AccessDeniedException`（`quantumchamber_sessions.dat` 原子替換）。這一步走 schema≤4 的 legacy 寫入，在 validator 與讀回之前，與 fix1 無關；SEALED 沒有寫成 durable，PROJECTION_SEALED 切點因此沒有命中。歸 spec §8 第 4 項的已知偶發（Windows 原子移動 AccessDenied）。原件在 SDD `2026-10-01-m5-collapse-passage/collapse-f1f9f4468f4c406ab38854874b9d87a3-sealmembranejoined/`。
+  - 依 §8 第 4 項，同 pin 以新 nonce 重跑一次：`run-all-831ad7e2c3d14bccbd32c07a86bd65d3` 自然 `END ALL exit=0`。default 166/166、normal 13/13、legacy 1/1、M5 60/60、M6 35/35、JUnit 1135（skipped 2）、m5collapse 69、原生 9 鏈 27 phase（479 反例）、release 570 entries／523 classes、sources 266、testmodHits 0、mainOnly PASS、m3 4+5、recovery 25。log SDD `t22-fix1-full-aed4073-r2-20261112/run-all.log`（SHA256 `f70f2e36b79eb17a8bf4e8e45e0202283b1048c4ed6d3a9b063fa04b6c6a2fd3`）。這個 pin 的唯一一次重跑已用掉。
+- spec／quality 兩席（唯讀子代理，範圍 `373f67b..6965301`）：spec ✅ C0/I0/M4、quality Approved C0/I0/M5。Minor 都不改程式或測試，因為改任何 src 都會換掉最終 code pin；它們只影響診斷或風格，或目前不可觸發，行為已有其他測試守住。處置明細在 SDD `t22-fix1-review-dispositions-20261112.md`，要點如下：
+  - 閘門判 `schemaVersion() != 2`，factory 取 lease 的條件是 `seedPolicy() == EXPLICIT_ROOT_SEED_V1`。目前兩者等價（`UniverseRecord.Generation` 拒絕 `MIGRATED_SCHEMA1`）；日後若開放 `MIGRATED_SCHEMA1`（原 T15，已取消排程），要一併改閘門。
+  - JUnit 沒有直接測「supplier 本身丟例外」；production `acquire` 走的正是這條路，由 GameTest 守住（mutation M1、M4 由它殺掉）。
+  - reload 後讀取設定來源失敗的 WARN 沒帶 stack trace；GameTest 收尾的例外會蓋掉原本的失敗訊息；`*Locked` 命名、一處訊息措辭、`fabric.mod.json` 少一個空格；`SessionJournalSchemaFiveTest` 一處 `assertThrows` 沒斷言原因（該案已實際殺掉 mutation M5、M6）。
+  - spec 席指出 `failedValidationRemembersNoSnapshot` 的做法與設計不同：設計原寫「target 錯、source 對的 intent 失敗後，source 仍要重新 resolve」，但 random 目標必須是 normal 並保留來源的 GenerateStructures，這種 intent 組不出來；改為比較 registry 讀取次數，要與全新 validator 相同，強度等同或更強。已補進設計勘誤。
+  - 觀察（quality 席推論，未驗）：F2 的快取也讓 journal 在 SERVER_STOPPING 之後、快取命中時仍可通過驗證，方向安全。
+
+**出口**：push 後同 SHA 三 job CI 全綠，fix1 才算完成。之後是人工 smoke（單人、多人、宇宙內重生、release JAR、/reload），要使用者操作或另行授權代操作。

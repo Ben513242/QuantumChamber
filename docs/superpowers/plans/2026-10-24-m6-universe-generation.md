@@ -992,7 +992,7 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
   - 8C-2 異常 END／dispatch 不永久停用（盤點稿 E-3）：屬 H2 範圍，隨第 1 題。
   - 使用者若不同意，可單獨改列必須。
 
-- [ ] 只實作裁示為必須者，每片按實際改動分流：production 原 RED／mutation／雙 focused／full／兩席；僅測試／腳本／文件一席、必要 focused 與 CI，不 mutation／本機 full；waiver 項寫入 Task 22 人工清單與接手入口，標示 `main` 是開發快照、不適合未備份的正式世界。所有 retained FAIL 不因 waiver 改判。（2026-11-12：固定指紋值 JUnit `a9871e8` 雙 focused 15/15，待本 commit CI；兩個人工項排入 Task 22。CI 全綠且人工兩列完成才勾。）
+- [ ] 只實作裁示為必須者，每片按實際改動分流：production 原 RED／mutation／雙 focused／full／兩席；僅測試／腳本／文件一席、必要 focused 與 CI，不 mutation／本機 full；waiver 項寫入 Task 22 人工清單與接手入口，標示 `main` 是開發快照、不適合未備份的正式世界。所有 retained FAIL 不因 waiver 改判。（2026-11-12：固定指紋值 JUnit `a9871e8` 雙 focused 15/15，CI 43123630195（head `373f67b`）三 job 已全綠；兩個人工項排入 Task 22，仍待完成。人工兩列完成才勾。）
 
 ## Milestone 收尾（與 code task 分離）
 
@@ -1001,7 +1001,14 @@ PENDING fault 方法在 RESOLVE callback、注入讀回fault前先用原 `forceP
 **Files:** Create `docs/manual-acceptance/2026-10-24-m6-manual-smoke.md`；Modify M6 implementation note、`scripts/verification/README.md`、`AGENTS.md` 接手入口；SDD ledger ignored。
 **Interfaces:** 最終 code SHA→受影響 focused→完整回歸→CI→review→人工結果。T13／T14／宇宙內重生與使用者裁示的 8-H 必須項完成；所有 waiver 與舊 FAIL 明列，不包含取消排程的 T15–T19／T21。
 
-- [ ] 完成本範圍最終乾淨 code pin 完整 run-all，自然 `END ALL exit=0`；核 M6 原生鏈、M5／legacy、main-only、release／sources、實際 case 集合及 WARN／ERROR。同 code pin 已知偶發只許新 nonce 重跑一次，第二次停報，原根原判保留。
+**2026-11-12 Task 22 fix1（production）**：整分支審查（code pin `a9871e8`；三席 A C0/I2/M2、B C0/I1/M3、C C0/I2/M3）發現，設定 context 不可用時 NEW 物化會讓 server 停機、catalog 改 DISABLED，journal 也寫不進去（B-I1＝C-I1、C-I2）。依 8-H 第 3 題選項說明「若發現 reload 後量子艙不能用，就開 production 修正 task」開 fix1；是否符合這個條件由 controller 判定，觸發證據是整分支審查與 GameTest RED，不是人工 `/reload` 那一列。
+- code `6965301`：F1 物化前檢查 context，不可用回 NOT_READY；F2 journal validator 每次檢查綁定、每份 snapshot 只 resolve 一次；F3 lifecycle 失敗轉換記 WARN。契約見 spec §3.3。
+- 測試：新 GameTest batch `m6_universe_reload_materialize`（M6 宣告數 34→35）、新 JUnit `UniverseLifecycleSettingsGateTest`；`SessionJournalSchemaFiveTest` 新增三案、修改兩案（刻意改變的 lease 契約）。
+- 門檻依 production 原門檻，本機部分已完成：具名 RED、mutation 8/8、雙 focused、spec ✅ C0/I0/M4、quality Approved C0/I0/M5（Minor 都不改 src：spec 席 M-4 補設計勘誤，其餘記為殘留）。完整回歸第一次 `run-all-38b596681b3f4f65b2b24d9539169ccb` 遇已知 AccessDenied FAIL（原判保留），依 spec §8 第 4 項重跑一次 `run-all-831ad7e2c3d14bccbd32c07a86bd65d3` 自然 `END ALL exit=0`。細節見 note「Task 22 收尾與 fix1」節。
+- A-I1（H1／H2 範圍的 mixin 在正式版仍套用）以文件揭露，release JAR 一列加驗；A-I2 AGENTS 舊段已標歷史（`aed4073`）。
+- [ ] fix1 同 SHA CI 三 job 全綠。
+
+- [ ] 完成本範圍最終乾淨 code pin 完整 run-all，自然 `END ALL exit=0`；核 M6 原生鏈、M5／legacy、main-only、release／sources、實際 case 集合及 WARN／ERROR。同 code pin 已知偶發只許新 nonce 重跑一次，第二次停報，原根原判保留。（2026-11-12：fix1 pin `6965301`（HEAD `aed4073`）第一次 `run-all-38b596681b3f4f65b2b24d9539169ccb` 遇已知 AccessDenied FAIL（原判保留）；依 spec §8 第 4 項以新 nonce 重跑一次 `run-all-831ad7e2c3d14bccbd32c07a86bd65d3`，自然 `END ALL exit=0`，本 pin 的重跑額度已用完。重跑結果：default 166、normal 13、legacy 1、M5 60、M6 35、JUnit 1135（skipped 2）、m5collapse 69、原生 9 鏈 27 phase、mainOnly PASS、testmodHits 0。同 SHA CI 全綠後才勾。）
 - [ ] 人工清單分單人、多人各一輪：由來源艙選 NEW，receipt 證實不同 seed 的 random U；記錄 Universe UUID／world key、seed／profile，重進不重抽，正常存退重啟後仍在同一 U。不同 profile 依 receipt 辨別，不把 same-seed 結果當 random 或重抽同收據求差異。每項操作／預期／實際結果分欄，保存版本、世界、操作者與 log／receipt；未實玩不寫通過。
 - [ ] 加一輪宇宙內死亡重生：有效床／錨跨世界照原版優先；無床或床失效、而且死在 exact live U 時，原版的 canonical fallback 改成留在同一 U，位置照原版重生規則（U spawn 附近依 spawnRadius 找地面）；既有 EAGER_ENABLED bootstrap 後，床點與正常登入都在同一 U，DISABLED 不新增登入物化。與原版主世界／共用 Nether／End 的原版死亡行為分列，不用自動測試代人工結果。
 - [ ] 人工清單明列 SHALLOW_V1 僅 id 層 FP、same-seed／toggle 保證以同 datapack／mod 配置為前提，地獄門回程一律落在原版主世界；終界出口照原版看床，床在 U 回 U、沒床回原版主世界的已知行為，以及使用者核定的 8-H waiver；不宣稱 Nether／End family、portal／gateway／respawn no-leak 或 T21 U→U 已驗。

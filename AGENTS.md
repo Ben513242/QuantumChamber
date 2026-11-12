@@ -103,6 +103,19 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-12 Task 22 收尾中：fix1（reload 期間物化不停機、journal 不卡）待本 commit CI。**
+- 固定指紋值測試已完成：CI 43123630195（head `373f67b`）三 job 全 success。
+- 第一次最終 full `run-all-01f3a7de…`（code pin `a9871e8`）FAIL，M5 已知的 AccessDenied，原判保留。
+- 整分支審查三席的 Important：reload 期間 NEW 物化會停服、journal 寫不進去，controller 依 8-H 第 3 題選項說明的條件判定，開 production 修正 fix1（code `6965301`；觸發證據是整分支審查與 GameTest RED，不是人工 `/reload`）；mixin 揭露與 AGENTS 舊段標歷史以文件處理。
+- fix1 本機：
+  - 具名 RED、mutation 8/8、雙 focused；
+  - 完整回歸：第一次 `run-all-38b59668…` 遇已知 AccessDenied FAIL（原判保留），重跑 `run-all-831ad7e2…` 自然 `END ALL exit=0`，M6 35/35；這個 pin 的唯一一次重跑已用掉；
+  - spec ✅ C0/I0/M4、quality Approved C0/I0/M5。Minor 都不改 src：spec 席 M-4 補設計勘誤，其餘記為殘留。
+  - 細節見 M6 note「Task 22 收尾與 fix1」節。
+- 下一步：本 commit 同 SHA CI 三 job 全綠後，進人工 smoke（單人、多人、宇宙內重生、release JAR、/reload）。client、人工 smoke、main 合併、tag 都未啟動，各自另問。
+
+下段是 8-H triage 時的紀錄。
+
 **2026-11-12 8-H triage 已裁示；固定指紋值測試 `a9871e8` 待本 commit CI。** 使用者四題都選建議項。這裡只列選項標籤，題目與選項說明的原文以 plan「Task 8-H triage」節為準：
 - 「只出簡易版（建議）」：M6 只出 SHALLOW_V1，H1、H2 waiver。
 - 「人工一次＋自動指紋測試（建議）」：H3 只做 release JAR 實跑一次（人工）加固定指紋值 JUnit（`a9871e8`）。

@@ -1,6 +1,6 @@
 # M6 Overworld 人工 smoke 清單
 
-狀態：2026-11-10 Task R 開工前修正裁示之待驗清單，本次唯一窄審 C0／I0／M0 已採用；2026-11-12 依 8-H 裁示新增兩列與 waiver 段。尚未實玩，所有結果待填。人工代操作另需使用者明確授權；不以本清單當 client 啟動授權。
+狀態：2026-11-10 Task R 開工前修正裁示之待驗清單，本次唯一窄審 C0／I0／M0 已採用；2026-11-12 依 8-H 裁示新增兩列與 waiver 段；同日 Task 22 fix1 後改寫 H4 waiver，並揭露 H1／H2 範圍的 mixin 與 journal 讀回失敗的限制。尚未實玩，所有結果待填。人工代操作另需使用者明確授權；不以本清單當 client 啟動授權。
 
 範圍：平行宇宙只有主世界，FamilyCapabilityVersion=0；共用原版 Nether／End。SHALLOW_V1 僅 id 層設定 fingerprint，same-seed／toggle 保證以兩端 datapack／mod 配置相同為前提。8-H 已由使用者 2026-11-12 裁定：必要項是下表的「release JAR」與「/reload」兩列，其餘 waiver 列在文末；全部舊 FAIL 不改判。
 
@@ -16,8 +16,8 @@
 | 宇宙內重生加一輪 | 有效床／錨位於另一 U 或 canonical；在 U 死亡 | 床／錨依原版優先，不另判合法性、不改錨消耗 | 未執行 |
 | 宇宙內重生加一輪 | 拆床／無有效床，在 exact live U 主世界死亡 | 只有原版的 canonical fallback 改成留在同一 U，位置照原版重生規則：在 U spawn（與原版主世界 spawn 同座標）附近依 spawnRadius 找地面；拆床時仍顯示原版「床不見了」提示。已知行為：U spawn 若在海上且附近沒有地面，會落到海底重生（使用者 2026-11-11 接受） | 未執行 |
 | 宇宙內重生加一輪 | DISABLED 重啟登入；另驗 canonical／共用 Nether／End 死亡 | DISABLED 不在登入時物化，保持既有行為；其他維度死亡照原版 | 未執行 |
-| release JAR（8-H 必要，2026-11-12） | 先在 named 開發 runtime（`runClient` 或 `runServer`，可含 testmod）建立受控驗收世界，裡面要有 normal 與 amplified 兩種 U，並記下兩者的 world key。再把同一個世界交給 release JAR（`remapJar` 產物）加 Fabric Loader 0.17.2、Fabric API 0.102.0+1.21 的 dedicated server（不放 testmod）開啟，各進出一次 U | log 沒有 mixin 套用錯誤（例如 `InvalidInjectionException`）；兩種 U 都能開，沒有 `SETTINGS_FINGERPRINT_MISMATCH`。世界在 named 建立、在 intermediary 開啟，所以這一列同時是「兩種 mapping 的 SHALLOW_V1 指紋相同」的一次性證據。精確的 `Missing data pack quantumchamber-testmod` 只算過期存檔警告。這是一次性人工證據，不是回歸 gate | 未執行 |
-| /reload（8-H 必要，2026-11-12） | 單人（開作弊）與 dedicated 各做一次：`/reload` 成功後再啟動一次量子艙 | 量子艙正常啟動並完成一般流程。若 reload 後量子艙不能用，就保存原件並開 production 修正 task | 未執行 |
+| release JAR（8-H 必要，2026-11-12） | 先在 named 開發 runtime（`runClient` 或 `runServer`，可含 testmod）建立受控驗收世界，裡面要有 normal 與 amplified 兩種 U，並記下兩者的 world key。再把同一個世界交給 release JAR（`remapJar` 產物）加 Fabric Loader 0.17.2、Fabric API 0.102.0+1.21 的 dedicated server（不放 testmod）開啟，各進出一次 U | log 沒有 mixin 套用錯誤（例如 `InvalidInjectionException`），包括文末 H1／H2 所列、正式版沒有使用者的 mixin；兩種 U 都能開，沒有 `SETTINGS_FINGERPRINT_MISMATCH`。世界在 named 建立、在 intermediary 開啟，所以這一列同時是「兩種 mapping 的 SHALLOW_V1 指紋相同」的一次性證據。精確的 `Missing data pack quantumchamber-testmod` 只算過期存檔警告。這是一次性人工證據，不是回歸 gate | 未執行 |
+| /reload（8-H 必要，2026-11-12） | 單人（開作弊）與 dedicated 各做一次：`/reload` 成功後再啟動一次量子艙 | 量子艙正常啟動並完成一般流程；log 沒有 lifecycle 的 WARN（開頭是「M6 設定 context 已停用到重啟」「M6 reload 沒有成功」或「M6 reload 之後讀取設定來源失敗」）。若 reload 後量子艙不能用，就保存原件並開 production 修正 task | 未執行 |
 
 DISABLED 重啟登入等控制只在受控驗收世界做，不改正式使用者存檔。End 出口／credits 因有效 U 床返回 U 是預期行為；與預期不符才保存原件並回報，不新增 portal 注入點。
 
@@ -32,13 +32,19 @@ DISABLED 重啟登入等控制只在受控驗收世界做，不改正式使用�
 以下項目 M6 不做，列為已知限制；題目與選項原文見 plan「Task 8-H triage」節。因此 `main` 是開發快照，不適合未備份的正式世界。retained FAIL 都保留原判。
 - H1 完整資料閉包（ProviderVersion≥2）：M6 只出 SHALLOW_V1。設定指紋只比對 id、型別 id、Parameters 與 GenerateStructures，不比對被引用 registry 元素的內容；換 datapack 不會被偵測，行為與原版換 datapack 相同（spec §3.1.3 已知限制）。
 - H2 正式 lifecycle 完整證明：refresh seal 不在正式路徑。單人（integrated server）的啟動，由本清單的單人輪第一次實際覆蓋。同屬 H2 範圍的還有 8C-2 的一項 production 行為：從其他 thread 送來的異常 END／dispatch 不會讓 lifecycle 永久停用（只在異常情況出現，tracked 最小契約已守）。
+- H1／H2 範圍的 mixin 在正式版仍會套用，但正式路徑沒有使用者（Task 22 整分支審查 A-I1）：
+  - 共 11 個：template gate 兩個（`StructureTemplateManagerSettingsGateMixin`、`StructureTemplateSettingsGateMixin`）、template accessor 兩個、noise／density 狀態六個（EndIslands、Simplex、DensityBinary、Interpolated、OctavePerlin、Perlin）與 refresh seal 一個（`DataPackContentsRefreshSealMixin`）。
+  - 其中 template gate 會包住原版的 template 存取，多一層讀鎖與兩個全域 monitor；寫鎖路徑在正式版不可達。另有 `TEMPLATE_OWNER_AMBIGUOUS` 失敗路徑，要同一個 template 實例經兩個 manager 取得才會觸發；原版每個 server 只有一個 manager，推論正常遊玩不會發生。
+  - 這些 mixin 在 GameTest、原生鏈、完整回歸與 CI 都一直套用著，沒有出錯；在 release JAR 是否套用無誤，由上表「release JAR」一列驗證。
 - H3 三 bundle 全套（intermediary 腳本、ci-rule 負例、workflow）：只做上表「release JAR」一列，加上固定指紋值 JUnit `a9871e8`。
-- H4 完整 reload GameTest、重疊 reload 與失敗的 reload：只做上表「/reload」一列，只驗成功路徑。
-  - 兩次 reload 重疊時，設定 context 會停在不可用狀態，要重啟 server（單人就是退出重進世界）才恢復。
-  - 失敗的 reload（例如 datapack 壞掉）也會讓 context 不可用，直到下一次成功的 reload 或重啟。
-  - 不可用期間新的量子艙都會啟動失敗，玩家看不到原因。進行中的 NEW 若在這段期間走到物化，是否會留下持久的 `DISABLED`／`MATERIALIZE_FAILED`，尚未確認。
+- H4 真 `/reload` 的完整 GameTest、重疊 reload 與失敗的 reload：真 `/reload` 只做上表「/reload」一列，只驗成功路徑。
+  - 設定 context 不可用的時段：reload 進行中；失敗的 reload（例如 datapack 壞掉）之後，到下一次成功的 reload 或重啟；兩次 reload 重疊（或收到不合序的 reload 事件）之後，要重啟 server（單人就是退出重進世界）才恢復。
+  - Task 22 fix1（code `6965301`）之後，這段期間進行中的 NEW 走到物化會等待，context 恢復後續行，不會停服，也不會留下 `DISABLED`／`MATERIALIZE_FAILED`。journal 寫入照常，只有包含新 snapshot 的寫入會被拒；這類寫入只來自候選 batch，該 session 會安全返還。
+  - 自動驗證的範圍：batch `m6_universe_reload_materialize` 的 GameTest 直接觸發 reload 事件，在物化這一層驗證 reload 進行中與失敗的 reload 之後都回 NOT_READY、server 仍在執行、沒有物化失敗紀錄、U 不是 ACTIVE、catalog 仍是 EAGER_ENABLED；成功的 reload 之後能物化；已 ACTIVE 的 U 在 reload 進行中仍能解析。session 的等待與「不留下 `MATERIALIZE_FAILED`」由程式保證，沒有直接測；journal 由 JUnit 驗證。真 `/reload`、重疊 reload（POISONED）與讀取設定來源失敗沒有自動測試。
+  - 仍有的限制：這段期間新的量子艙無法啟動，玩家看不到原因，被拒時也不記 log。reload 進行中完全沒有 log；失敗或重疊的 reload 之後，server log 才有 lifecycle 的 WARN。兩次 reload 重疊後，等待中的 NEW 會一直等到重啟（超過 600 ticks 記一次 WARN）。
 - H5 保留 journal slot 的事前攔截：沒有事前保護。其他 mod 若用保留 id `quantumchamber_sessions` 呼叫 `PersistentStateManager`，本模組要到下一次讀寫才會發現並停寫；在那之前，原版 autosave 可能把 foreign state 寫進該檔、覆蓋 checked journal，進行中 session 的收尾可能做不下去（使用者 2026-11-05 已接受此風險）。
 - H6 `WorldGenerationOwnerAccess` public setter：canonical 主世界、共用 Nether／End 等 owner 為空的世界，刻意使用本模組內部 API 的其他 mod 能裝上偽 owner。之後的新 chunk 會用錯 seed 與結構旗標，生成後被存檔，屬持久污染。正常原版與本模組路徑都不會觸發。
+- schema5 journal 讀回遇到暫時性的 IOException（例如 Windows AccessDenied）之後，該次開服不再寫 journal，要重啟才恢復（Task 22 整分支審查 C-M3）。這比 schema≤4 嚴格，符合 2026-10-21 AccessDenied 維持 fail-closed 的裁示。
 - 其他已知殘留（只影響測試診斷或 CI）：
   - 走廊測試：一般 `TrustedSpace` 案逾時不自清、ARMING 逾時沒被強制驗過、靜態登記表保留未 close 測試的引用、通過的案例留下 session；
   - Task R：log 欄位沒有直接斷言，兩項極小建議（沒被讀取的欄位、`playerIn` catch 內的 `addSuppressed`）；
