@@ -119,6 +119,8 @@
 
 2026-11-14 fix2僅State共同lease聯集合計＋既有JUnit兩上限/去重/checked後重試＋inventory，source f3a79ec。focused125/M7 23/4已核，先原唯一席N2，C/I0才full/CI；未預勾閉合。
 
+2026-11-14 N2原席C0/I0/M1（N0=5→N1=1→N2=0），source f3a79ec；M02舊時態已同步。可接修後完整full/同SHA全CI，仍未closed，最末項未預勾。
+
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 
 **產出**　`sealed interface JournalSession` 共同提供 `UUID sessionUuid()/chamberUuid()`、`List<Participant> participants()`、`List<SpaceLease> spaceLeases()`、`SessionState state()`。舊 record 與新 `HomeSessionRecord` 實作；新列提供 `ChamberOriginAuthority rootAnchor()`、`HomeSessionRecord.EntryEndpoint entryEndpoint()`、`HomeSessionRecord.Home home()`。
