@@ -22,7 +22,7 @@
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
-## T2 正式資料層候選已凍結，完整回歸待跑（2026-11-13）
+## T2 初候選回歸界線／N0=5；進入整改第1輪（2026-11-13）
 
 - controller `/root/m7_t2_onward`；BASE `6032027`，續行狀態 docs `670c782`；fresh implementer `t2_implementer`（gpt-6-astra/high/fork none）。source 初候選 `8c6e542`、兩個未知版本負例修正 `363d4df`，首次未知寫入占用修正後最終 production code pin `81bd13e7ccebe167fcb36341c1416384e305ebec`；均未 push。T1 不重做、B activation guard 仍封至 T7。
 - 新 `JournalSession`／`HomeSessionRecord`／`HomeJournalCodec`／`HomeJournalBudget`／`HomeReceiptStore` 與共用 journal owner 完成候選。current/flushed/quarantine/pending 由同一資料源管理；pending exact-attempt 未確認時保守占用，向後提供 typed `pendingSessions()`。T3 busy、T4 root fence/CLOSE event owner、T5 startup space 留各自 task，不因本候選宣稱 M7 完成。
@@ -32,7 +32,12 @@
 - 必要routine擴檔：兩M7 runner的T1硬編suite改接新集合，保T1既有4JUnit；SlotAllocator既有restore驗證最小共用、SessionRecoveryManager僅typed convergence／全列readback；舊兩類「6=未知」負例依正式升6改未知7，保-1/0、重鍵與5→4 readback全部斷言，直接舊row decoder(6)仍拒。初次 schema5 52案1FAIL保原根與XML SHA `FA41BD70…`，不改判。這些同task同席review，不增加工具標準。
 - 真舊reader採 `2255027` SessionJournalStore 原blob `ac764b16b1093399607182e6e6fb57a16b421784`，controller核saved source exact；隔離classes CodeSource，實際 `read` 以具體「journal版本缺失或未知」IOException拒固定schema6（bytes SHA `B22FFD16…`），不是classloading/反射錯誤。最後wrapper將CP950 log當UTF8顯示致outer1，原FAIL保留；只讀正確解碼取證，不重跑Java。`T2_OLD_READER_CONSOLE_ENCODING`連續1；controller另一次UTF8 source誤用預設CP950的只讀操作事件獨立保留，不加/抵/重置原工具計數。
 - 既有 W10 producer 未重建／重套。初核02、候選前03均只讀 PASS（固定tag/head/blob/patch/runner/diff exact、detached唯一dirty、祖先非reparse、32鎖可獨占、runtimeOwners0、65001）；正式full前再核。自寫只讀helper首次DirectoryInfo provider屬性誤判FAIL保原件，修正後PASS；不併舊Native/Evidence。staged whitespace檢查抓真格式問題是正常品質RED，修後過關，不是工具故障。
-- 此筆只同步候選與已發生的focused，隨後獨立docs pin／乾淨HEAD進自然完整run-all；full、獨立spec＋quality review、正常push、同SHA全部required CI仍待。N0尚待首次獨立review，整改0輪；T2 OPEN，未啟T3。人工開始/main/tag/PR/LICENSE/退役仍未授。
+- 初次長SDD EvidenceRoot full在既有CI cwd preflight native267而outer1；成功fixture258字元、失敗265且存在，長路徑列推論，原根與FAIL保留。第二次改回既有短預設 `.superpowers/verification`（不改harness/acceptance/source），HEAD `71c47bad2dbe5e47f7ffb43d72b679fd85a0ea4b`／source81，新root `run-all-611806be445a42148e0a012c293d6bb7`。
+- 第二次內層自然 `END ALL exit=0`、summary PASS SHA `83A01553383CD957FA9A342514AA316221F24B021FF5A999BD4333BDFA377702`：JUnit1151（failure/error0，2個既有NonWindows專用案在Windows條件skip；M7仍零skip）、default166/normal13/legacy1/M560/M635、M7 16JUnit/3GT、main-only、M3、recovery、M5 69phase（31個預定halt，不能稱全正常停服）、M6 9鏈27phase、CI規則按各自scope完成。
+- 但外wrapper PID2320未自然返回，無run-all子程序僅conhost，exit.txt缺失；不能冒稱outer0。確認同一process handle／start／command+唯一root、無world owner、94把本樹鎖可獨占後，僅受控停止本次wrapper，實際exit -1，自然outer為UNKNOWN；Gradle/Java未動。`outer-before-stop.json`／`outer-stop.json`及外log SHA `E53BF9EF…`保留。停止前可選open-log hash遇file in use一案保留，未當停止必要條件或補假退出碼。controller `t2-initial-full-controller-readback.json`如實記innerPASS／outerUNKNOWN，不採為完整full門檻已過。
+- 唯一獨立原席 `task-2-review.md` 首審規格❌／品質Needs fixes，C0/I5/M1、**N0=5**。T2-I01純容量拒絕導致舊candidate/remap取消團隊；I02同SID current遮蔽未確認flushed資源；I03 schema6舊列漏同SID歷史；I04 receipt漏完整wrapper DataVersion exact；I05永久SEALED/root latch不可達組合仍被strict/峰值接受。全部屬binding正式資料/現有caller正確性，不列超M6工具殘留。M01診斷schema名稱可順手最小修，非阻塞。
+- 舊full消費source期間全程未改HEAD/source；作者只在SDD準備fix1。controller postcheck07核95鎖（含producer）獨占、runtimeOwners0、固定pins/hash exact，已到安全邊界。整改1由原作者依 `task-2-fix1-brief.md`／`task-2-fix1-design.md` 核具體反例後修正；I02每row沿原 `sameAuthority`／`occupies`，不改已Returned舊M5規則。I01允必要舊caller最小接線；純容量retry不得吞一般IO/型別/深度/重鍵故障。修後需新pin RED/GREEN/mutation/focused/full（含真自然外部0）及同席N1、同SHA全CI。當前N1/N2尚待，N0=5保留，連續兩整改輪未下降就停。
+- T2 OPEN，未push／CI、未啟T3，沒有人工/main/tag/PR/LICENSE/退役。初候選內層PASS與原fixed32反證修復不抵I5，也不抵整改後完整門檻。
 
 ## 使用者async裁示：只補I11後原席清零、push同SHA CI（2026-11-13）
 

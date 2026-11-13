@@ -113,6 +113,8 @@
 
 2026-11-13 routine擴檔：SlotAllocator只共用既有restore的shape/coverage/collision驗證，RecoveryManager只typed convergence/全列readback；舊兩類6=未知負例改7以配合正式升6，保全部其他舊strict斷言。source候選81bd13e7、五類focused118與M7 16/3已通過；full/review/CI未完成，未勾項仍待獨立審查/完整門檻。
 
+整改第1輪（N0=5）：原席T2-I01～I05皆正式正確性，回原作者核實；必要最小擴檔含 `P/candidate/CandidateLedgerService.java`、`P/corridor/{CorridorPageManager,CorridorRepositionService}.java` 及具名資料／caller測試與exact inventory。不得改舊sameAuthority/occupies、不得以純容量pending吞真正IO/strict錯誤，不新增nativePoC或驗證框架。初候選full innerPASS/outerUNKNOWN受控終止，修後另新pin/full，未預勾最末閉合項。
+
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 
 **產出**　`sealed interface JournalSession` 共同提供 `UUID sessionUuid()/chamberUuid()`、`List<Participant> participants()`、`List<SpaceLease> spaceLeases()`、`SessionState state()`。舊 record 與新 `HomeSessionRecord` 實作；新列提供 `ChamberOriginAuthority rootAnchor()`、`HomeSessionRecord.EntryEndpoint entryEndpoint()`、`HomeSessionRecord.Home home()`。
