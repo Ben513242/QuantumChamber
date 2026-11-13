@@ -15,6 +15,10 @@ final class JournalNbt {
     static void requireType(NbtCompound nbt, String key, int type) {
         if (!nbt.contains(key, type)) throw new IllegalArgumentException(key + " 缺失或 NBT 型別錯誤");
     }
+    static long longValue(NbtCompound nbt, String key) {
+        requireType(nbt,key,NbtElement.LONG_TYPE);
+        return nbt.getLong(key);
+    }
     static UUID uuid(NbtCompound nbt, String key) {
         if (!nbt.containsUuid(key)) throw new IllegalArgumentException(key + " 必須是有效 UUID");
         return nbt.getUuid(key);

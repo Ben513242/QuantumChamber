@@ -467,7 +467,7 @@ try {
         'M7Runtime' {
             if($M7Nonce -cnotmatch '^[0-9a-f]{32}$'){throw 'M7_NONCE'}
             $runtime=Join-Path $repo "run/gametest-m7-$M7Nonce";Check-Path $runtime|Out-Null;if(Test-Path $runtime){throw 'M7_FRESH_ROOT_REQUIRED'}
-            try{$tasks=@('test','--tests','dev.quantumchamber.persistence.M7BudgetSpikeTest','--tests','dev.quantumchamber.persistence.M7PublishSpikeTest','runGameTestM7','remapJar','remapSourcesJar',"-Pm7GameNonce=$M7Nonce","-Pm7Head=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())",'--rerun-tasks');$exit=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $runtime '' 180)[-1];if($exit -ne 0){throw "M7_RUNTIME_EXIT $exit"}}
+            try{$tasks=@('test','--tests','dev.quantumchamber.persistence.M7BudgetSpikeTest','--tests','dev.quantumchamber.persistence.M7PublishSpikeTest','--tests','dev.quantumchamber.persistence.M7HomeJournalTest','--tests','dev.quantumchamber.persistence.M7HomeHistoryTest','runGameTestM7','remapJar','remapSourcesJar',"-Pm7GameNonce=$M7Nonce","-Pm7Head=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())",'--rerun-tasks');$exit=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $runtime '' 180)[-1];if($exit -ne 0){throw "M7_RUNTIME_EXIT $exit"}}
             finally{Copy-Build (Join-Path $gate 'result-build')}
         }
         'M6GameTest' {Fresh-Game $false 'm6'}

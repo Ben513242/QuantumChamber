@@ -65,6 +65,11 @@ public final class SlotAllocator {
         leases.put(slotId, new SlotLease(slotId, bounds.getCenter(), bounds));
         peakCoverage=Math.max(peakCoverage,coverage.size());
     }
+    /** 用獨立配置器重播熱 journal 租約，採用正式上限、碰撞與區塊覆蓋規則。 */
+    public static void validateSavedLeases(Collection<dev.quantumchamber.persistence.SessionRecoveryRecord.SpaceLease> saved) {
+        var replay=new SlotAllocator();
+        for(var lease:saved) replay.restore(lease.slotId(),lease.bounds());
+    }
     int peakCoverage() { return peakCoverage; }
     static void validateShape(BlockBox bounds) {
         long x=(long)bounds.getMaxX()-bounds.getMinX()+1,y=(long)bounds.getMaxY()-bounds.getMinY()+1,z=(long)bounds.getMaxZ()-bounds.getMinZ()+1;

@@ -175,21 +175,22 @@ public final class SessionRecoveryState extends PersistentState {
             throw failure;
         }
     }
-    private final Map<UUID, SessionRecoveryRecord> records = new LinkedHashMap<>();
+    private final Map<UUID, JournalSession> records = new LinkedHashMap<>();
     // 僅存活於本 process；remove 與空 journal flush 都不能抹去同 UUID 的最後 authority。
-    private final Map<UUID, SessionRecoveryRecord> authorityHistory = new LinkedHashMap<>();
+    private final Map<UUID, JournalSession> authorityHistory = new LinkedHashMap<>();
     // 最後一份經 strict load／readback 承認的 authority（一般 remove 後仍保留）；只供 restoreCheckedAuthority 還原 history
     // （abortUnchecked、convergeQuarantined、commitRestore 與 terminate 的失敗還原）。checked 終局讀回確認後才修剪該 session。
-    private final Map<UUID, SessionRecoveryRecord> checkedAuthority = new LinkedHashMap<>();
+    private final Map<UUID, JournalSession> checkedAuthority = new LinkedHashMap<>();
     // CAS 還原失敗或 owner 未能還原的 session：未 checked current 永不寫出，寫入時只用上一份 flushed authority；由 convergeQuarantined 收斂。
     private final java.util.Set<UUID> quarantined = new HashSet<>();
-    private Map<UUID, SessionRecoveryRecord> flushed = Map.of();
+    private Map<UUID, JournalSession> flushed = Map.of();
     // Schema 3 envelope 本身是不可撤銷的初始化證據；不新增 NBT 欄位。
     private boolean candidateInitialized;
     // m5Evidence：讀到 schema 4／5 或本 instance 初始化成功時為真；schemaFiveEvidence 另守單向升級，不混用。
     // m5ReadyThisInstance 只決定能不能提交新的 COLLAPSING：只有本 instance 的 M5 authority 初始化成功才為真，讀到 schema 4 不算。
     private boolean m5Evidence;
     private boolean schemaFiveEvidence;
+    private boolean schemaSixEvidence;
     // 不改 schema1–4 的既有重試流程；但讀回未確認時，不能直接跨進首次 schema5 提交。
     private boolean legacyWriteUnconfirmed;
     // 只有正式 load／正常 exact readback 才能建立 wrapped provenance；純 fromNbt 不猜 DataVersion 或磁碟不存在。
@@ -199,8 +200,8 @@ public final class SessionRecoveryState extends PersistentState {
     private PendingAttempt pending;
     private boolean pendingRestartRequired;
     private record PendingAttempt(Path target, SessionJournalStore.PreparedWrite prepared,
-            Map<UUID, SessionRecoveryRecord> expectedRecords, NbtCompound oldWrapped,
-            Map<UUID, SessionRecoveryRecord> oldRecords, boolean oldAbsent) {
+            Map<UUID, JournalSession> expectedRecords, NbtCompound oldWrapped,
+            Map<UUID, JournalSession> oldRecords, boolean oldAbsent) {
         private PendingAttempt {
             expectedRecords = Map.copyOf(expectedRecords); oldRecords = Map.copyOf(oldRecords);
             oldWrapped = oldWrapped == null ? null : oldWrapped.copy();
@@ -248,12 +249,25 @@ public final class SessionRecoveryState extends PersistentState {
             var wrapped = SessionJournalStore.read(path);
             var state = fromNbt(wrapped.getCompound("data"), validator);
             if (state.loadError == null) {
+                if (state.schemaSixEvidence) {
+                    HomeJournalBudget.requireReserved(wrapped);
+                    verifyReceipts(path,state.flushed);
+                }
                 state.checkedWrapped = wrapped.copy(); state.checkedPath = path.toAbsolutePath().normalize();
             }
             return state;
         } catch (IOException | RuntimeException exception) {
             // 已見到檔案後消失也屬讀取失敗，不退回空 journal。
             return failed("journal 無法讀取：" + exception);
+        }
+    }
+
+    private static void verifyReceipts(Path file, Map<UUID,JournalSession> rows) throws IOException {
+        if(rows.values().stream().noneMatch(HomeSessionRecord.class::isInstance)) return;
+        var store=new HomeReceiptStore(file.toAbsolutePath().normalize().getParent().getParent());
+        for(var row:rows.values()) if(row instanceof HomeSessionRecord h) {
+            var historic=store.lookup(h.sessionUuid());
+            if(historic.isPresent() && !historic.get().equals(h)) throw new IOException("熱 journal 與歷史收據不符");
         }
     }
 
@@ -264,19 +278,22 @@ public final class SessionRecoveryState extends PersistentState {
         try {
             JournalNbt.requireType(nbt, "SchemaVersion", NbtElement.INT_TYPE);
             int schema=nbt.getInt("SchemaVersion");
-            if (schema < 1 || schema > 5) throw new IllegalArgumentException("不支援 journal schema");
+            if (schema < 1 || schema > 6) throw new IllegalArgumentException("不支援 journal schema");
             if (schema >= 3) JournalNbt.keys(nbt, "SchemaVersion", "Records");
             var state = new SessionRecoveryState(SessionJournalStore::read, validator);
             // schema 4／5 都是 candidate 與 M5 authority 已初始化的證據，但不代表本 instance 已就緒。
             state.candidateInitialized = schema >= 3;
             state.m5Evidence = schema >= 4;
-            state.schemaFiveEvidence = schema == 5;
+            state.schemaFiveEvidence = schema >= 5;
+            state.schemaSixEvidence = schema == 6;
             for (var raw : JournalNbt.compounds(nbt, "Records", schema)) {
-                var record = SessionRecoveryRecord.fromNbt((NbtCompound) raw,schema);
+                var row = (NbtCompound)raw;
+                JournalSession record = schema == 6 && row.contains("RecordVersion") ? HomeJournalCodec.decode(row)
+                        : SessionRecoveryRecord.fromNbt(row, Math.min(schema,5));
                 if (state.records.putIfAbsent(record.sessionUuid(), record) != null) throw new IllegalArgumentException("session UUID 重複");
             }
             validateOwnership(state.records);
-            var newIntents = state.records.values().stream().flatMap(record -> record.candidateLedger().stream())
+            var newIntents = state.records().values().stream().flatMap(record -> record.candidateLedger().stream())
                     .map(entry -> entry.candidate()).filter(candidate -> candidate instanceof QuantumCandidate.New fresh && fresh.intent().isM6())
                     .map(candidate -> ((QuantumCandidate.New) candidate).intent()).toList();
             if (!newIntents.isEmpty()) state.intentValidator.validate(newIntents);
@@ -292,8 +309,15 @@ public final class SessionRecoveryState extends PersistentState {
     public void requireHealthy() {
         if (loadError != null) throw new IllegalStateException("拒絕使用損壞的 " + STATE_ID + "：" + loadError);
     }
-    public Map<UUID,SessionRecoveryRecord> records() { requireHealthy(); return Map.copyOf(records); }
-    public Map<UUID,SessionRecoveryRecord> flushedRecords() { requireHealthy(); return flushed; }
+    public Map<UUID,JournalSession> allSessions() { requireHealthy(); return Map.copyOf(records); }
+    public Map<UUID,JournalSession> allFlushedSessions() { requireHealthy(); return flushed; }
+    private static Map<UUID,SessionRecoveryRecord> legacyRows(Map<UUID,JournalSession> rows) {
+        var result = new LinkedHashMap<UUID,SessionRecoveryRecord>();
+        rows.forEach((id,row) -> { if(row instanceof SessionRecoveryRecord old) result.put(id,old); });
+        return Map.copyOf(result);
+    }
+    public Map<UUID,SessionRecoveryRecord> records() { requireHealthy(); return legacyRows(records); }
+    public Map<UUID,SessionRecoveryRecord> flushedRecords() { requireHealthy(); return legacyRows(flushed); }
     public boolean candidateInitialized() { requireHealthy(); return candidateInitialized; }
     /** M5 authority 已初始化的證據（決定寫出 schema 4）。在本 instance 呼叫 {@link #markCollapseAuthoritiesInitialized} 之前，它等於「flushed envelope 已是 schema 4」。 */
     public boolean m5Evidence() { requireHealthy(); return m5Evidence; }
@@ -332,7 +356,11 @@ public final class SessionRecoveryState extends PersistentState {
         for(var current : records.values()) if(!quarantined.contains(current.sessionUuid()) && !authorityChecked(current)) unchecked.add(current.sessionUuid());
         return java.util.Set.copyOf(unchecked);
     }
-    private boolean authorityChecked(SessionRecoveryRecord current) {
+    private boolean authorityChecked(JournalSession current) {
+        if (current instanceof HomeSessionRecord) return current.equals(flushed.get(current.sessionUuid())) || rollForwardPending.contains(current.sessionUuid());
+        return legacyAuthorityChecked((SessionRecoveryRecord)current);
+    }
+    private boolean legacyAuthorityChecked(SessionRecoveryRecord current) {
         if(!candidateChecked(current)) return false;
         if(!current.state().collapseState()) return true;
         var durable=flushed.get(current.sessionUuid());
@@ -340,7 +368,7 @@ public final class SessionRecoveryState extends PersistentState {
     }
     private boolean candidateChecked(SessionRecoveryRecord current) {
         if(current.candidateContext().isEmpty()) return true;
-        var previous=flushed.get(current.sessionUuid());
+        var previous=(SessionRecoveryRecord)flushed.get(current.sessionUuid());
         return previous!=null && previous.candidateContext().equals(current.candidateContext())
                 && previous.candidateLedger().equals(current.candidateLedger())
                 && previous.candidateSelection().equals(current.candidateSelection());
@@ -359,7 +387,7 @@ public final class SessionRecoveryState extends PersistentState {
     public boolean abortUnchecked(SessionRecoveryRecord expected) {
         requireMutationThread();
         requireHealthy();
-        var sid=expected.sessionUuid(); var current=records.get(sid);
+        var sid=expected.sessionUuid(); var current=(SessionRecoveryRecord)records.get(sid);
         if(!expected.equals(current)) {
             if(current==null || candidateChecked(current)) return true;
             quarantine(sid);
@@ -397,15 +425,20 @@ public final class SessionRecoveryState extends PersistentState {
      * 只由同 package 的 {@link SessionRecoveryManager} 呼叫，由它負責 checked flush 與確認。
      * @return 收斂目標；空值代表移除
      */
-    java.util.Optional<SessionRecoveryRecord> convergeQuarantined(UUID sessionUuid) {
+    java.util.Optional<JournalSession> convergeQuarantined(UUID sessionUuid) {
         requireMutationThread();
         requireHealthy();
         if(!quarantined.contains(sessionUuid)) throw new IllegalStateException("只有隔離中的 session 可以收斂");
         var durable=flushed.get(sessionUuid);
-        var target=durable==null ? null : convergenceTarget(durable);
+        JournalSession target=durable;
+        if(durable instanceof SessionRecoveryRecord old) target=convergenceTarget(old);
+        if(durable instanceof HomeSessionRecord h && (h.state()==SessionState.ARMING || h.state()==SessionState.SUPERPOSITION))
+            target=new HomeSessionRecord(h.sessionUuid(),h.chamberUuid(),h.rootAnchor(),h.entryEndpoint(),h.participants(),
+                    h.spaceLeases(),SessionState.RETURNING,h.home());
         var candidate=new LinkedHashMap<>(records);
         if(target==null) candidate.remove(sessionUuid); else candidate.put(sessionUuid,target);
         validateOwnership(candidate);
+        requireRoom(candidate);
         restoreCheckedAuthority(sessionUuid);
         if(target!=null && !target.equals(durable)) { records.put(sessionUuid,target); authorityHistory.put(sessionUuid,target); }
         quarantined.remove(sessionUuid);
@@ -459,7 +492,8 @@ public final class SessionRecoveryState extends PersistentState {
      */
     public Optional<SessionRecoveryRecord> collapseView(UUID session) {
         requireHealthy();
-        return Optional.ofNullable(rollForwardPending.contains(session) && !quarantined.contains(session) ? records.get(session) : flushed.get(session));
+        var row = rollForwardPending.contains(session) && !quarantined.contains(session) ? records.get(session) : flushed.get(session);
+        return row instanceof SessionRecoveryRecord old ? Optional.of(old) : Optional.empty();
     }
 
     /** 該 session 是否有尚未經 checked flush 讀回確認的 roll-forward 寫入；成立期間塌縮流程只重試寫出（spec §7）。 */
@@ -713,6 +747,90 @@ public final class SessionRecoveryState extends PersistentState {
     }
 
     /** start 前 ownership 預檢：只看 {@link #occupies}；未確認移除的 flushed record 仍佔用。 */
+    public CommitResult admitHome(MinecraftServer server, HomeSessionRecord next) {
+        requireServerThread(server);
+        return admitHome(new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)), () -> flush(server),next);
+    }
+    CommitResult admitHome(HomeReceiptStore receipts, Runnable flush, HomeSessionRecord next) {
+        requireMutationThread(); requireHealthy();
+        var sid=next.sessionUuid();
+        if(next.state()!=SessionState.ARMING || next.participants().stream().anyMatch(SessionRecoveryRecord.Participant::returned)
+                || !m5ReadyThisInstance || legacyWriteUnconfirmed || pending!=null || !rollForwardPending.isEmpty()
+                || !quarantined.isEmpty() || !records.equals(flushed) || authorityHistory.containsKey(sid) || terminated.contains(sid))
+            return CommitResult.of(CommitResult.Status.REJECTED,new IllegalStateException("HOME 入場前置不符"));
+        try {
+            receipts.requireAdmissible(sid);
+            stageHome(next,false);
+        } catch(IOException ex) { return CommitResult.of(CommitResult.Status.REJECTED,new UncheckedIOException(ex)); }
+        catch(RuntimeException ex) { return CommitResult.of(CommitResult.Status.REJECTED,ex); }
+        return finishHome(next,true,flush);
+    }
+    public CommitResult commitHomeRestore(MinecraftServer server, HomeSessionRecord expected, HomeSessionRecord next) {
+        requireServerThread(server); return commitHome(() -> flush(server),expected,next,true);
+    }
+    public CommitResult commitHomeRollForward(MinecraftServer server, HomeSessionRecord expected, HomeSessionRecord next) {
+        requireServerThread(server); return commitHome(() -> flush(server),expected,next,false);
+    }
+    CommitResult commitHome(Runnable flush,HomeSessionRecord expected,HomeSessionRecord next,boolean restore) {
+        requireMutationThread(); requireHealthy(); var sid=expected.sessionUuid();
+        if(!expected.equals(records.get(sid)) || !expected.equals(flushed.get(sid)) || quarantined.contains(sid)
+                || pending!=null || terminated.contains(sid) || !HomeSessionRecord.edge(expected,next,restore)
+                || next.state()==SessionState.COLLAPSING && expected.state()!=next.state() && !m5ReadyThisInstance)
+            return CommitResult.of(CommitResult.Status.REJECTED,new IllegalStateException("HOME CAS 或提交邊不符"));
+        try { stageHome(next,!restore); } catch(RuntimeException invalid) { return CommitResult.of(CommitResult.Status.REJECTED,invalid); }
+        return finishHome(next,restore,flush);
+    }
+    /** 所有玩家返還、原生清理與門 checkpoint 已由呼叫端確認後，才要求移除熱列。 */
+    public TerminalResult terminateHome(MinecraftServer server,HomeSessionRecord expected) {
+        requireServerThread(server);
+        return terminateHome(new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)),() -> flush(server),expected);
+    }
+    TerminalResult terminateHome(HomeReceiptStore store,Runnable flush,HomeSessionRecord expected) {
+        requireMutationThread(); requireHealthy(); var sid=expected.sessionUuid();
+        if(!expected.equals(records.get(sid)) || !expected.equals(flushed.get(sid)) || quarantined.contains(sid)
+                || pending!=null || rollForwardPending.contains(sid))
+            return TerminalResult.of(TerminalResult.Status.REJECTED,new IllegalStateException("HOME 移除 CAS 不符"));
+        try {
+            if(expected.home().closeIntent() instanceof HomeSessionRecord.Close) {
+                if(!store.lookup(sid).equals(Optional.of(expected))) throw new IOException("HOME 終局缺少相符收據");
+            } else if(expected.state()!=SessionState.RETURNING || expected.participants().stream().anyMatch(p -> !p.returned()))
+                throw new IOException("HOME 尚未完成返還或結案");
+        } catch(IOException failure) { return TerminalResult.of(TerminalResult.Status.REJECTED,new UncheckedIOException(failure)); }
+        records.remove(sid); markDirty(); var failure=checkedFlush(flush);
+        if(!flushed.containsKey(sid)) {
+            afterConfirmedWrite(sid,"HOME 終局",failure); authorityHistory.remove(sid); checkedAuthority.remove(sid);
+            terminated.add(sid); confirmedFailureWarnings.remove(sid);
+            return new TerminalResult(TerminalResult.Status.REMOVED,Optional.empty());
+        }
+        var cause=failure.orElseGet(() -> new IllegalStateException("HOME 終局讀回尚有該 SID"));
+        if(!records.containsKey(sid) && !quarantined.contains(sid)) {
+            restoreCheckedAuthority(sid); return TerminalResult.of(TerminalResult.Status.RESTORED,cause);
+        }
+        quarantine(sid); return TerminalResult.of(TerminalResult.Status.QUARANTINED,cause);
+    }
+    private void stageHome(HomeSessionRecord next,boolean forward) {
+        var candidate=new LinkedHashMap<>(records); candidate.put(next.sessionUuid(),next);
+        validateOwnership(candidate); requireRoom(candidate);
+        records.put(next.sessionUuid(),next); authorityHistory.put(next.sessionUuid(),next);
+        if(forward) rollForwardPending.add(next.sessionUuid());
+        markDirty();
+    }
+    private CommitResult finishHome(HomeSessionRecord next,boolean restore,Runnable flush) {
+        var sid=next.sessionUuid(); var failure=checkedFlush(flush);
+        if(next.equals(flushed.get(sid))) {
+            afterConfirmedWrite(sid,"HOME "+next.state(),failure);
+            return new CommitResult(CommitResult.Status.COMMITTED,Optional.empty());
+        }
+        var cause=failure.orElseGet(() -> new IllegalStateException("HOME 尚未 exact 讀回"));
+        markDirty();
+        if(!restore) return CommitResult.of(CommitResult.Status.ROLL_FORWARD_PENDING,cause);
+        if(next.equals(records.get(sid)) && !quarantined.contains(sid)) {
+            restoreCheckedAuthority(sid);
+            return CommitResult.of(CommitResult.Status.RESTORED,cause);
+        }
+        quarantine(sid);
+        return CommitResult.of(CommitResult.Status.QUARANTINED,cause);
+    }
     public boolean participantsAvailable(java.util.Collection<UUID> players) {
         requireHealthy();
         return Stream.concat(records.values().stream(),flushed.values().stream())
@@ -731,9 +849,11 @@ public final class SessionRecoveryState extends PersistentState {
         if (candidateInitialized && record.candidateContext().isEmpty()) {
             throw new IllegalArgumentException("已初始化 candidate 的 journal 不得重新加入 legacy record");
         }
-        var current=records.get(record.sessionUuid());
-        var durable=flushed.get(record.sessionUuid());
-        var historical=authorityHistory.get(record.sessionUuid());
+        if (Stream.of(records,flushed,authorityHistory).anyMatch(rows -> rows.get(record.sessionUuid()) instanceof HomeSessionRecord))
+            throw new IllegalArgumentException("舊 session 不得取代 HOME");
+        var current=(SessionRecoveryRecord)records.get(record.sessionUuid());
+        var durable=(SessionRecoveryRecord)flushed.get(record.sessionUuid());
+        var historical=(SessionRecoveryRecord)authorityHistory.get(record.sessionUuid());
         if (record.state().collapseState()) requireCollapseWrite(record,current,durable,historical,restoreCommit);
         // 同時保護 dirty、durable 與已移除紀錄的 authority。
         if ((current!=null && !SessionRecoveryRecord.sameAuthority(current,record))
@@ -743,6 +863,7 @@ public final class SessionRecoveryState extends PersistentState {
         }
         var candidate = new LinkedHashMap<>(records); candidate.put(record.sessionUuid(), record);
         validateOwnership(candidate);
+        requireRoom(candidate);
         records.put(record.sessionUuid(), record); authorityHistory.put(record.sessionUuid(), record);
         candidateInitialized |= record.candidateContext().isPresent();
         if (record.state().collapseState() && !restoreCommit) {
@@ -768,7 +889,7 @@ public final class SessionRecoveryState extends PersistentState {
         requireHealthy();
         requireNotQuarantined(id);
         if(Stream.of(records.get(id),flushed.get(id),authorityHistory.get(id))
-                .anyMatch(record -> record!=null && receiptRetained(record.state())))
+                .anyMatch(record -> record!=null && (record instanceof HomeSessionRecord || receiptRetained(record.state()))))
             throw new IllegalStateException("MEASURED 與塌縮狀態的 receipt 必須保留，不能經一般 remove 消耗（只有 checked 終局 API 可以移除）");
         if (records.remove(id) == null) return false;
         markDirty(); return true;
@@ -781,25 +902,29 @@ public final class SessionRecoveryState extends PersistentState {
     public NbtCompound writeNbt(NbtCompound nbt) {
         requireHealthy();
         var writable = writable();
-        int schema = writtenSchema(writable);
+        return encode(nbt,writable,writtenSchema(writable));
+    }
+    private NbtCompound encode(NbtCompound nbt, Map<UUID,JournalSession> writable, int schema) {
         nbt.putInt("SchemaVersion", schema);
-        var entries = new NbtList(); writable.values().forEach(record -> entries.add(record.toNbt(schema)));
+        var entries = new NbtList(); writable.values().forEach(record -> entries.add(record instanceof HomeSessionRecord home ? HomeJournalCodec.encode(home) : ((SessionRecoveryRecord)record).toNbt(Math.min(5,schema))));
         nbt.put("Records", entries); return nbt;
     }
     /**
      * 已確認 schema5 永不降版；首次 M6 Context 寫出另守初始化與未知寫入。
      * 其餘維持舊式子：legacy → 2；candidateInitialized → (m5Evidence ? 4 : 3)；空且未初始化 → 2。
      */
-    private int writtenSchema(Map<UUID, SessionRecoveryRecord> writable) {
+    private int writtenSchema(Map<UUID, JournalSession> writable) {
         // envelopeSchema 先驗證不混裝 legacy 與 candidate（混裝時丟例外，寫出因此失敗）；它的回傳值（有 candidate → 3，否則 2）
         // 只在最後一行使用。
         int envelope = envelopeSchema(writable);
+        if(schemaSixEvidence || writable.values().stream().anyMatch(HomeSessionRecord.class::isInstance)) return 6;
+        var legacy=legacyRows(writable);
         if (schemaFiveEvidence) {
-            if (writable.values().stream().anyMatch(record -> record.candidateContext().isEmpty()))
+            if (legacy.values().stream().anyMatch(record -> record.candidateContext().isEmpty()))
                 throw new IllegalStateException("schema5 不可降回無 Context 的 legacy session");
             return 5;
         }
-        if (writable.values().stream().anyMatch(record -> record.candidateContext().map(context -> context.isM6()).orElse(false))) {
+        if (legacy.values().stream().anyMatch(record -> record.candidateContext().map(context -> context.isM6()).orElse(false))) {
             if (!m5ReadyThisInstance || legacyWriteUnconfirmed || !rollForwardPending.isEmpty())
                 throw new IllegalStateException("首次 schema5 必須完成 M5 初始化且沒有其他未確認寫入");
             // 先從 durable 集合確認每筆舊 authority 仍原樣存在；只巡 writable 會漏掉未 flush 的 remove。
@@ -807,25 +932,26 @@ public final class SessionRecoveryState extends PersistentState {
                 if (!Objects.equals(confirmed.getValue(), writable.get(confirmed.getKey())))
                     throw new IllegalStateException("首次 schema5 不可併入尚未 checked 的舊 session 移除或變更");
             }
-            for (var record : writable.values()) {
+            for (var record : legacy.values()) {
                 if (!record.candidateContext().orElseThrow().isM6() && !flushed.containsKey(record.sessionUuid()))
                     throw new IllegalStateException("首次 schema5 不可夾帶其他未確認 candidate authority");
             }
             return 5;
         }
-        if (writable.values().stream().anyMatch(record -> record.candidateContext().isEmpty())) return 2;
+        if (legacy.values().stream().anyMatch(record -> record.candidateContext().isEmpty())) return 2;
         if (candidateInitialized) return m5Evidence ? 4 : 3;
         // 空 journal → 2。有 candidate record 時 candidateInitialized 必為真，走不到這裡；仍沿用 envelope 判斷，不寫出錯誤的 2。
         return envelope;
     }
     /** 所有寫出（checked flush、原生 autosave／stop）共用：隔離 session 只寫上一份 flushed authority，其他 session 照常。 */
-    private Map<UUID, SessionRecoveryRecord> writable() {
+    private Map<UUID, JournalSession> writable() {
         if (quarantined.isEmpty()) return records;
-        var result = new LinkedHashMap<UUID, SessionRecoveryRecord>();
+        var result = new LinkedHashMap<UUID, JournalSession>();
         records.forEach((id, record) -> {
             var checked = quarantined.contains(id) ? flushed.get(id) : record;
             if (checked != null) result.put(id, checked);
         });
+        for(var id:quarantined) if(!result.containsKey(id) && flushed.containsKey(id)) result.put(id,flushed.get(id));
         return result;
     }
     @Override public NbtCompound writeNbt(NbtCompound nbt, RegistryWrapper.WrapperLookup lookup) { return writeNbt(nbt); }
@@ -850,16 +976,17 @@ public final class SessionRecoveryState extends PersistentState {
         NbtHelper.putDataVersion(wrapped);
         var expected = Map.copyOf(writable());
         try {
-            if (wrapped.getCompound("data").getInt("SchemaVersion") == 5) {
+            if (wrapped.getCompound("data").getInt("SchemaVersion") >= 5) {
                 var candidate = new SessionRecoveryState[1];
                 var prepared = SessionJournalStore.prepareSchemaFive(wrapped, data -> {
                     var decoded = fromNbt(data, intentValidator); decoded.requireHealthy();
-                    if (!expected.equals(decoded.records())) throw new IllegalStateException("schema5 preflight records 不符");
+                    if (!expected.equals(decoded.allSessions())) throw new IllegalStateException("schema5 preflight records 不符");
                     candidate[0] = decoded;
                 });
                 var target = file.toPath().toAbsolutePath().normalize();
+                if(prepared.schema()==6) verifyReceipts(target,expected);
                 boolean sameCheckedPath = target.equals(checkedPath);
-                pending = new PendingAttempt(target, prepared, candidate[0].flushedRecords(),
+                pending = new PendingAttempt(target, prepared, candidate[0].allFlushedSessions(),
                         sameCheckedPath ? checkedWrapped : null, flushed, sameCheckedPath && checkedAbsent);
                 try { SessionJournalStore.writePrepared(file.toPath(), prepared); }
                 catch (SessionJournalStore.WriteFailure failure) {
@@ -873,14 +1000,16 @@ public final class SessionRecoveryState extends PersistentState {
             var actual = readback.read(file.toPath());
             var decoded = fromNbt(actual.getCompound("data"), intentValidator);
             decoded.requireHealthy();
-            if (!wrapped.equals(actual) || !expected.equals(decoded.records())) {
+            if (!wrapped.equals(actual) || !expected.equals(decoded.allSessions())) {
                 throw new IOException("journal 正式檔 exact readback 不符");
             }
             var checkedCopy = actual.copy();
-            flushed = decoded.flushedRecords();
+            flushed = decoded.allFlushedSessions();
             authorityHistory.putAll(flushed);
             checkedAuthority.putAll(flushed);
-            schemaFiveEvidence |= actual.getCompound("data").getInt("SchemaVersion") == 5;
+            candidateInitialized |= actual.getCompound("data").getInt("SchemaVersion") >= 3;
+            schemaFiveEvidence |= actual.getCompound("data").getInt("SchemaVersion") >= 5;
+            schemaSixEvidence |= actual.getCompound("data").getInt("SchemaVersion") == 6;
             legacyWriteUnconfirmed = false;
             checkedWrapped = checkedCopy; checkedPath = file.toPath().toAbsolutePath().normalize(); checkedAbsent = false;
             pending = null;
@@ -919,9 +1048,9 @@ public final class SessionRecoveryState extends PersistentState {
             decoded = fromNbt(actual.getCompound("data"), intentValidator); decoded.requireHealthy();
         } catch (RuntimeException unreadable) { throw new IOException("JOURNAL_PENDING_UNREADABLE", unreadable); }
         if (attempt.oldWrapped() != null && attempt.oldWrapped().equals(actual)
-                && attempt.oldRecords().equals(decoded.records())) return;
+                && attempt.oldRecords().equals(decoded.allSessions())) return;
         if (actual.getCompound("data").getInt("SchemaVersion") == attempt.prepared().schema()
-                && attempt.prepared().wrapped().equals(actual) && attempt.expectedRecords().equals(decoded.records()))
+                && attempt.prepared().wrapped().equals(actual) && attempt.expectedRecords().equals(decoded.allSessions()))
             throw new IOException("JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED");
         throw new IOException("JOURNAL_PENDING_AUTHORITY_UNKNOWN");
     }
@@ -940,11 +1069,29 @@ public final class SessionRecoveryState extends PersistentState {
         if (quarantined.contains(id)) throw new IllegalStateException("session 的未 checked authority 已隔離，拒絕再寫入");
     }
     /** DORMANT＝MEASURED+SELECTED、全員 returned 且無 lease；它只封鎖自己的 Chamber（spec §11）。 */
+    public static boolean occupies(JournalSession row, UUID player) {
+        if(row instanceof SessionRecoveryRecord old) return occupies(old,player);
+        return row.participants().stream().anyMatch(p -> p.playerUuid().equals(player) && switch(row.state()) {
+            case ARMING, SUPERPOSITION, RETURNING -> true;
+            case MEASURED -> !row.spaceLeases().isEmpty();
+            case COLLAPSING,PASSAGE_READY,SEALED -> !p.returned();
+        });
+    }
+    private void requireRoom(Map<UUID,JournalSession> candidate) {
+        if(!schemaSixEvidence && candidate.values().stream().noneMatch(HomeSessionRecord.class::isInstance)) return;
+        var visible=new LinkedHashMap<>(candidate);
+        // 尚未讀回的移除仍持有原 Chamber、玩家與租約。
+        flushed.forEach(visible::putIfAbsent);
+        validateOwnership(visible);
+        var wrapped=new NbtCompound(); NbtHelper.putDataVersion(wrapped);
+        wrapped.put("data",encode(new NbtCompound(),candidate,6));
+        HomeJournalBudget.requireReserved(wrapped);
+    }
     private static boolean dormant(SessionRecoveryRecord record) {
         return record.state() == dev.quantumchamber.superposition.SessionState.MEASURED
                 && MeasuredRecoveryPhase.from(record) == MeasuredRecoveryPhase.DORMANT;
     }
-    private static void validateOwnership(Map<UUID, SessionRecoveryRecord> records) {
+    private static void validateOwnership(Map<UUID, JournalSession> records) {
         envelopeSchema(records);
         var chambers = new HashSet<UUID>(); var players = new HashSet<UUID>(); var slots = new HashSet<Integer>();
         for (var record : records.values()) {
@@ -954,11 +1101,14 @@ public final class SessionRecoveryState extends PersistentState {
                 if (occupies(record, person.playerUuid()) && !players.add(person.playerUuid())) throw new IllegalArgumentException("玩家跨 session 重複");
             for (var lease : record.spaceLeases()) if (!slots.add(lease.slotId())) throw new IllegalArgumentException("slot 跨 session 重複");
         }
+        if(records.values().stream().anyMatch(HomeSessionRecord.class::isInstance))
+            dev.quantumchamber.corridor.SlotAllocator.validateSavedLeases(records.values().stream()
+                    .flatMap(row -> row.spaceLeases().stream()).toList());
     }
-    private static int envelopeSchema(Map<UUID, SessionRecoveryRecord> records) {
+    private static int envelopeSchema(Map<UUID, JournalSession> records) {
         boolean legacy = false; boolean candidate = false;
         for (var record : records.values()) {
-            if (record.candidateContext().isPresent()) candidate = true; else legacy = true;
+            if (record instanceof HomeSessionRecord || ((SessionRecoveryRecord)record).candidateContext().isPresent()) candidate = true; else legacy = true;
         }
         if (legacy && candidate) throw new IllegalArgumentException("同一 journal envelope 不可混裝 legacy 與 candidate sessions");
         return candidate ? 3 : 2;

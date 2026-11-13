@@ -5,7 +5,18 @@
       "dev.quantumchamber.persistence.M7BudgetSpikeTest.legalHomeAtAndBeyondTrackerLimit",
       "dev.quantumchamber.persistence.M7BudgetSpikeTest.sameBytesSnapshotDepthAndDuplicatePaths",
       "dev.quantumchamber.persistence.M7PublishSpikeTest.publishesCompleteBytesWithoutClobber",
-      "dev.quantumchamber.persistence.M7PublishSpikeTest.unsupportedVolumeRejectsAdmissionWithoutReplacement"
+      "dev.quantumchamber.persistence.M7PublishSpikeTest.unsupportedVolumeRejectsAdmissionWithoutReplacement",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.mixedRowsAndEmptyJournalKeepSix",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.fixed_lease_reserve_covers_root_latch_and_collapsing",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.legacyAppendCannotSpendUnselectedRemapAndCloseReserve",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.sameHandleAndBoundedTrackerRejectOversize",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.homeEdgesAndOwnershipShareDurableAuthority",
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.duplicateRawKeysAndHistoryMismatchFailClosed",
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.concurrentPublicationKeepsWinner",
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.bothReadersRejectRawDuplicateAtEveryHomeDepth",
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.closeMatrixRejectsMismatchedOriginOrEvidence",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.terminalRemovalRequiresHistoryAndKeepsEmptySix",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.quarantineRollsUnselectedIntoReturningAndRejectsCrossRowLeaseCollision"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",

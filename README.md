@@ -30,6 +30,8 @@ M4 當時，完整側門右鍵只會 checked 鎖定候選，門保持關閉、�
 
 **不可降版與存檔檔案**：M4 曾把 session journal 寫成 schema 3，M4 之前的 build 不能讀。M5 第一次完成 M5 authority 初始化後的 checked 寫入會把 journal 升為 schema 4；此後 M4 build 讀取會 fail closed。M5 的 `data/quantumchamber_universe_allocations.dat` 與 `data/quantumchamber_projections.dat` 不可刪除或用舊備份覆蓋。測試新版本請用世界複本。
 
+首次確認 HOME 的 ARMING 寫入會將熱 journal 升至 schema 6。旅程結束後即使熱 journal 清空，也會保留版本 6。舊版無法讀取此存檔。請在升級前備份整個世界，並一併保留單趟回程收據 `data/quantumchamber_home_receipts/<sid>.dat`。
+
 2026-09-30 已記錄人工驗收：單人玩法（清單 A、B-0、B-1、B-3、B-6）、近玩家 seam（C-4）、shader 與 GPU（B-2：Sodium 0.6.13、Iris 1.8.8、Complementary Reimagined r5.9.3，RTX 4090）都是 PASS；32 chunk 遠望與手持照明依使用者 2026-09-24 的回報採計（清單 D 段，沒有 build 紀錄）。合併 main 前的完整 gate 順序見 [AGENTS.md](AGENTS.md)「下一步」。
 
 逐項人工驗收步驟、預期結果與紀錄欄位見 [M1–M4 人工驗收清單](docs/manual-acceptance/2026-09-24-m1-m4-manual-acceptance.md)。

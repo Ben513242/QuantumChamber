@@ -30,7 +30,7 @@ public final class SessionRecoveryManager {
     private final Map<UUID,Integer> returnTicks=new HashMap<>();
     private final Map<UUID,Set<UUID>> moveWarnings=new HashMap<>(),landingWarnings=new HashMap<>();
     // 已以最後 checked authority 取代 current、尚待 checked 寫出確認的隔離 session（值為收斂目標，空值代表移除）。
-    private final Map<UUID,Optional<SessionRecoveryRecord>> converging=new LinkedHashMap<>();
+    private final Map<UUID,Optional<JournalSession>> converging=new LinkedHashMap<>();
     private final Map<UUID,String> convergenceFailures=new HashMap<>();
     // 收斂寫出失敗的 WARN 去重鍵（FailureText.dedupeKey）與顯示文字（FailureText.describe）；恢復時的 INFO 印顯示文字。
     private String convergenceWarning,convergenceWarningText;
@@ -230,7 +230,7 @@ public final class SessionRecoveryManager {
             convergenceWarning=cause; convergenceWarningText=FailureText.describe(failure); return;
         }
         // checked 寫出成功：逐一以 flushed 比對收斂目標，只有 exact 相符才宣告收斂。
-        var flushed=journal.flushedRecords();
+        var flushed=journal.allFlushedSessions();
         converging.forEach((sid,target) -> {
             var durable=flushed.get(sid);
             // 收斂對象不限 candidate authority，也包含 M5 restore 類寫入的殘留（uncheckedSessions）。

@@ -57,10 +57,10 @@ function Verify-M7([string]$Root){
     if($manifest.schema -ne 1 -or $manifest.head -cne $ExpectedHead -or $manifest.platform -cne $Platform -or $manifest.actualPlatform -cne $actualPlatform){throw 'M7_INPUT_IDENTITY'}
     $inputs=@($manifest.inputs);foreach($input in $inputs){$path=[IO.Path]::GetFullPath((Join-Path $Root $input.relative));if(-not $path.StartsWith($Root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'M7_INPUT_PATH'};if((Get-FileHash $path).Hash -cne $input.sha256){throw 'M7_INPUT_HASH'}}
     $xmls=@($inputs|Where-Object {$_.kind -ceq 'gametest'});$junit=@($inputs|Where-Object {$_.kind -ceq 'junit'});$logs=@($inputs|Where-Object {$_.relative -ceq 'raw/runtime/logs/latest.log'})
-    if($xmls.Count -ne 1 -or $junit.Count -ne 2 -or $logs.Count -ne 1 -or @(@($xmls)+@($junit)+@($logs)|Where-Object {-not $_.fresh}).Count){throw 'M7_NOT_CURRENT'}
+    if($xmls.Count -ne 1 -or $junit.Count -ne 4 -or $logs.Count -ne 1 -or @(@($xmls)+@($junit)+@($logs)|Where-Object {-not $_.fresh}).Count){throw 'M7_NOT_CURRENT'}
     $declarations=@(Declared-GameTests $SourceRoot|Where-Object {$_.scope -ceq 'm7_home' -and ($_.batch -notmatch '_(windows|ubuntu)$' -or $_.batch.EndsWith('_'+$Platform.ToLowerInvariant(),[StringComparison]::Ordinal))}|ForEach-Object identity)
     Exact-M7 $expectedGame $declarations 'M7_DECLARATION_SET'
-    $declaredJUnit=@();foreach($name in @('M7BudgetSpikeTest','M7PublishSpikeTest')){$text=Get-Content -LiteralPath (Join-Path $repo "src/test/java/dev/quantumchamber/persistence/$name.java") -Raw;foreach($m in [regex]::Matches($text,'@Test\s+void\s+(\w+)\(')){$declaredJUnit+="dev.quantumchamber.persistence.$name."+$m.Groups[1].Value}}
+    $declaredJUnit=@();foreach($name in @('M7BudgetSpikeTest','M7PublishSpikeTest','M7HomeJournalTest','M7HomeHistoryTest')){$text=Get-Content -LiteralPath (Join-Path $repo "src/test/java/dev/quantumchamber/persistence/$name.java") -Raw;foreach($m in [regex]::Matches($text,'@Test\s+void\s+(\w+)\(')){$declaredJUnit+="dev.quantumchamber.persistence.$name."+$m.Groups[1].Value}}
     Exact-M7 $expectedJUnit $declaredJUnit 'M7_JUNIT_DECLARATION_SET'
     [xml]$gt=Get-Content -LiteralPath (Join-Path $Root $xmls[0].relative) -Raw
     Exact-M7 $expectedGame @($gt.SelectNodes('//testcase')|ForEach-Object {$_.classname+'|'+$_.name}) 'M7_GAME_SET'
@@ -105,7 +105,7 @@ if($launched){
     $start=[DateTime]::UtcNow;$failure=$null
     try{
         if($IsWindows){& (Join-Path $PSScriptRoot 'gates.ps1') -Mode M7Runtime -Label m7-runtime -EvidenceRoot $OutputRoot -Gradle $Gradle -M7Nonce $GameNonce}
-        else{& $Gradle test --tests dev.quantumchamber.persistence.M7BudgetSpikeTest --tests dev.quantumchamber.persistence.M7PublishSpikeTest runGameTestM7 remapJar remapSourcesJar "-Pm7GameNonce=$GameNonce" "-Pm7Head=$head" --rerun-tasks --console=plain *> (Join-Path $OutputRoot 'gradle.log');if($LASTEXITCODE -ne 0){throw "M7_RUNTIME_EXIT $LASTEXITCODE"}}
+        else{& $Gradle test --tests dev.quantumchamber.persistence.M7BudgetSpikeTest --tests dev.quantumchamber.persistence.M7PublishSpikeTest --tests dev.quantumchamber.persistence.M7HomeJournalTest --tests dev.quantumchamber.persistence.M7HomeHistoryTest runGameTestM7 remapJar remapSourcesJar "-Pm7GameNonce=$GameNonce" "-Pm7Head=$head" --rerun-tasks --console=plain *> (Join-Path $OutputRoot 'gradle.log');if($LASTEXITCODE -ne 0){throw "M7_RUNTIME_EXIT $LASTEXITCODE"}}
     }catch{$failure=$_}
     finally{Save-M7Inputs $start $runtime}
     if($failure){Save-Json (Join-Path $OutputRoot 'failure.json') @{head=$ExpectedHead;platform=$Platform;status='FAIL';message=$failure.Exception.Message};throw $failure}

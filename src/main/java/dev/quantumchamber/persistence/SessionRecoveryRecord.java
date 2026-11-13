@@ -39,7 +39,7 @@ import net.minecraft.world.World;
 public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberOriginAuthority origin,
         List<Participant> participants, List<SpaceLease> spaceLeases, SessionState state, boolean restoreEntryEffectOnReturn,
         SessionSemantics semantics, Optional<CandidatePolicySnapshot> candidateContext,
-        List<CandidateLedgerEntry> candidateLedger, Optional<CandidateSelection> candidateSelection, CollapseFields collapse) {
+        List<CandidateLedgerEntry> candidateLedger, Optional<CandidateSelection> candidateSelection, CollapseFields collapse) implements JournalSession {
     private static final Comparator<CandidateLedgerEntry> LEDGER_ORDER = Comparator
             .comparingLong((CandidateLedgerEntry entry) -> entry.doorKey().logicalStationIndex())
             .thenComparing(entry -> entry.doorKey().wallSide());
@@ -329,32 +329,9 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
         if (envelopeSchema < 4 && !collapse.isEmpty()) throw new IllegalStateException("schema 4 之前的 envelope 不得寫出塌縮欄位");
         var nbt = new NbtCompound();
         nbt.putUuid("SessionUuid", sessionUuid); nbt.putUuid("ChamberUuid", chamberUuid);
-        var source = new NbtCompound();
-        source.putUuid("ChamberUuid", origin.chamberUuid());
-        source.putString("WorldKey", origin.worldKey().toString()); source.putString("Role", origin.role().name());
-        var pos = origin.controllerPos();
-        source.putIntArray("ControllerPos", new int[] {pos.getX(), pos.getY(), pos.getZ()});
-        source.putString("Facing", origin.facing().name()); source.putString("InstanceKind", origin.instanceKind().name());
-        nbt.put("Origin", source);
-        var people = new NbtList();
-        for (var participant : participants) {
-            var person = new NbtCompound();
-            person.putUuid("PlayerUuid", participant.playerUuid());
-            person.put("SourcePosition", vector(participant.sourcePosition()));
-            person.put("SourceVelocity", vector(participant.sourceVelocity()));
-            person.putFloat("Yaw", participant.yaw()); person.putFloat("Pitch", participant.pitch());
-            person.put("QuantumState", participant.quantumStateSnapshot());
-            person.putBoolean("Returned", participant.returned()); people.add(person);
-        }
-        nbt.put("Participants", people);
-        var leases = new NbtList();
-        for (var lease : spaceLeases) {
-            var encoded = new NbtCompound(); var box = lease.bounds();
-            encoded.putInt("SlotId", lease.slotId());
-            encoded.putIntArray("Bounds", new int[] {box.getMinX(), box.getMinY(), box.getMinZ(), box.getMaxX(), box.getMaxY(), box.getMaxZ()});
-            leases.add(encoded);
-        }
-        nbt.put("SpaceLeases", leases);
+        nbt.put("Origin", encodeOrigin(origin));
+        nbt.put("Participants", encodePeople(participants));
+        nbt.put("SpaceLeases", encodeLeases(spaceLeases));
         nbt.putString("State", state.name()); nbt.putBoolean("RestoreEntryEffectOnReturn", restoreEntryEffectOnReturn);
         nbt.putString("SessionSemantics",semantics.name());
         if (candidateContext.isPresent()) {
@@ -387,37 +364,9 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
                 : SessionSemantics.valueOf(string(nbt,"SessionSemantics"));
         var source = compound(nbt, "Origin");
         if (strict) keys("Origin", source, "ChamberUuid", "WorldKey", "Role", "ControllerPos", "Facing", "InstanceKind");
-        int[] pos = ints(source, "ControllerPos", 3);
-        // 依原本的求值順序讀取（ControllerPos → ChamberUuid → WorldKey → 其餘），legacy 的錯誤訊息不變。
-        var chamberUuid = uuid(source, "ChamberUuid");
-        var worldKey = strict ? canonicalIdentifier("Origin", source, "WorldKey") : Identifier.of(string(source, "WorldKey"));
-        var origin = new ChamberOriginAuthority(chamberUuid, worldKey,
-                DimensionRole.valueOf(string(source, "Role")), new BlockPos(pos[0], pos[1], pos[2]),
-                Direction.valueOf(string(source, "Facing")), ChamberInstanceKind.valueOf(string(source, "InstanceKind")));
-        var people = new ArrayList<Participant>();
-        var rawPeople = compounds(nbt, "Participants", envelopeSchema);
-        for (int index = 0; index < rawPeople.size(); index++) {
-            var person = (NbtCompound) rawPeople.get(index);
-            if (strict) keys("Participants[" + index + "]", person, "PlayerUuid", "SourcePosition", "SourceVelocity",
-                    "Yaw", "Pitch", "QuantumState", "Returned");
-            requireType(person, "Yaw", NbtElement.FLOAT_TYPE); requireType(person, "Pitch", NbtElement.FLOAT_TYPE);
-            people.add(new Participant(uuid(person, "PlayerUuid"), vector(person, "SourcePosition"),
-                    vector(person, "SourceVelocity"), person.getFloat("Yaw"), person.getFloat("Pitch"),
-                    compound(person, "QuantumState"), bool(person, "Returned")));
-        }
-        var leases = new ArrayList<SpaceLease>();
-        var rawLeases = compounds(nbt, "SpaceLeases", envelopeSchema);
-        for (int index = 0; index < rawLeases.size(); index++) {
-            var lease = (NbtCompound) rawLeases.get(index);
-            if (strict) keys("SpaceLeases[" + index + "]", lease, "SlotId", "Bounds");
-            requireType(lease, "SlotId", NbtElement.INT_TYPE);
-            int[] bounds = ints(lease, "Bounds", 6);
-            // BlockBox 會自行交換反向座標；必須在建構前拒絕壞資料。
-            if (bounds[0] > bounds[3] || bounds[1] > bounds[4] || bounds[2] > bounds[5]) {
-                throw new IllegalArgumentException("空間邊界反向");
-            }
-            leases.add(new SpaceLease(lease.getInt("SlotId"), new BlockBox(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5])));
-        }
+        var origin = decodeOrigin(source, strict);
+        var people = decodePeople(nbt, envelopeSchema);
+        var leases = decodeLeases(nbt, envelopeSchema);
         var context = Optional.<CandidatePolicySnapshot>empty();
         var ledger = new ArrayList<CandidateLedgerEntry>();
         var selection = Optional.<CandidateSelection>empty();
@@ -445,6 +394,80 @@ public record SessionRecoveryRecord(UUID sessionUuid, UUID chamberUuid, ChamberO
                 SessionState.valueOf(string(nbt, "State")), bool(nbt, "RestoreEntryEffectOnReturn"),semantics,context,ledger,selection,
                 // schema 3 讀入時在記憶體內補成空的 Collapse；塌縮狀態因此在 schema 3 一律被建構子拒絕。
                 envelopeSchema >= 4 ? CandidateJournalCodec.collapse(compound(nbt, "Collapse")) : CollapseFields.EMPTY);
+    }
+
+    static NbtCompound encodeOrigin(ChamberOriginAuthority origin) {
+        var source = new NbtCompound();
+        source.putUuid("ChamberUuid", origin.chamberUuid());
+        source.putString("WorldKey", origin.worldKey().toString()); source.putString("Role", origin.role().name());
+        var pos = origin.controllerPos();
+        source.putIntArray("ControllerPos", new int[] {pos.getX(), pos.getY(), pos.getZ()});
+        source.putString("Facing", origin.facing().name()); source.putString("InstanceKind", origin.instanceKind().name());
+        return source;
+    }
+    static NbtList encodePeople(List<Participant> participants) {
+        var people = new NbtList();
+        for (var participant : participants) {
+            var person = new NbtCompound();
+            person.putUuid("PlayerUuid", participant.playerUuid());
+            person.put("SourcePosition", vector(participant.sourcePosition()));
+            person.put("SourceVelocity", vector(participant.sourceVelocity()));
+            person.putFloat("Yaw", participant.yaw()); person.putFloat("Pitch", participant.pitch());
+            person.put("QuantumState", participant.quantumStateSnapshot());
+            person.putBoolean("Returned", participant.returned()); people.add(person);
+        }
+        return people;
+    }
+    static NbtList encodeLeases(List<SpaceLease> spaceLeases) {
+        var leases = new NbtList();
+        for (var lease : spaceLeases) {
+            var encoded = new NbtCompound(); var box = lease.bounds();
+            encoded.putInt("SlotId", lease.slotId());
+            encoded.putIntArray("Bounds", new int[] {box.getMinX(), box.getMinY(), box.getMinZ(), box.getMaxX(), box.getMaxY(), box.getMaxZ()});
+            leases.add(encoded);
+        }
+        return leases;
+    }
+    static ChamberOriginAuthority decodeOrigin(NbtCompound source, boolean strict) {
+        int[] pos = ints(source, "ControllerPos", 3);
+        // 依原本的求值順序讀取（ControllerPos → ChamberUuid → WorldKey → 其餘），legacy 的錯誤訊息不變。
+        var chamberUuid = uuid(source, "ChamberUuid");
+        var worldKey = strict ? canonicalIdentifier("Origin", source, "WorldKey") : Identifier.of(string(source, "WorldKey"));
+        return new ChamberOriginAuthority(chamberUuid, worldKey,
+                DimensionRole.valueOf(string(source, "Role")), new BlockPos(pos[0], pos[1], pos[2]),
+                Direction.valueOf(string(source, "Facing")), ChamberInstanceKind.valueOf(string(source, "InstanceKind")));
+    }
+    static List<Participant> decodePeople(NbtCompound nbt, int envelopeSchema) {
+        boolean strict = envelopeSchema >= 3;
+        var people = new ArrayList<Participant>();
+        var rawPeople = compounds(nbt, "Participants", envelopeSchema);
+        for (int index = 0; index < rawPeople.size(); index++) {
+            var person = (NbtCompound) rawPeople.get(index);
+            if (strict) keys("Participants[" + index + "]", person, "PlayerUuid", "SourcePosition", "SourceVelocity",
+                    "Yaw", "Pitch", "QuantumState", "Returned");
+            requireType(person, "Yaw", NbtElement.FLOAT_TYPE); requireType(person, "Pitch", NbtElement.FLOAT_TYPE);
+            people.add(new Participant(uuid(person, "PlayerUuid"), vector(person, "SourcePosition"),
+                    vector(person, "SourceVelocity"), person.getFloat("Yaw"), person.getFloat("Pitch"),
+                    compound(person, "QuantumState"), bool(person, "Returned")));
+        }
+        return people;
+    }
+    static List<SpaceLease> decodeLeases(NbtCompound nbt, int envelopeSchema) {
+        boolean strict = envelopeSchema >= 3;
+        var leases = new ArrayList<SpaceLease>();
+        var rawLeases = compounds(nbt, "SpaceLeases", envelopeSchema);
+        for (int index = 0; index < rawLeases.size(); index++) {
+            var lease = (NbtCompound) rawLeases.get(index);
+            if (strict) keys("SpaceLeases[" + index + "]", lease, "SlotId", "Bounds");
+            requireType(lease, "SlotId", NbtElement.INT_TYPE);
+            int[] bounds = ints(lease, "Bounds", 6);
+            // BlockBox 會自行交換反向座標；必須在建構前拒絕壞資料。
+            if (bounds[0] > bounds[3] || bounds[1] > bounds[4] || bounds[2] > bounds[5]) {
+                throw new IllegalArgumentException("空間邊界反向");
+            }
+            leases.add(new SpaceLease(lease.getInt("SlotId"), new BlockBox(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5])));
+        }
+        return leases;
     }
 
     // PlayerRecoveryCheckpoint 仍以 SessionRecoveryRecord 取用這三個 strict helper；實作在 JournalNbt。

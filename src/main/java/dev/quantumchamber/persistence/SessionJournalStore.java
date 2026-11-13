@@ -23,9 +23,9 @@ public final class SessionJournalStore {
     public static void write(Path target, NbtCompound wrapped) throws IOException {
         validateWrapper(wrapped);
         var data = wrapped.getCompound("data");
-        if (!data.contains("SchemaVersion", 3) || data.getInt("SchemaVersion") < 1 || data.getInt("SchemaVersion") > 5)
+        if (!data.contains("SchemaVersion", 3) || data.getInt("SchemaVersion") < 1 || data.getInt("SchemaVersion") > 6)
             throw new IOException("journal 寫入版本缺失或未知");
-        if (data.getInt("SchemaVersion") == 5) {
+        if (data.getInt("SchemaVersion") >= 5) {
             writePrepared(target, prepareSchemaFive(wrapped, value -> SessionRecoveryState.fromNbt(value).requireHealthy()));
             return;
         }
@@ -47,11 +47,12 @@ public final class SessionJournalStore {
     static PreparedWrite prepareSchemaFive(NbtCompound wrapped, java.util.function.Consumer<NbtCompound> strict) throws IOException {
         validateWrapper(wrapped);
         if (!wrapped.getCompound("data").contains("SchemaVersion", 3)
-                || wrapped.getCompound("data").getInt("SchemaVersion") != 5)
+                || (wrapped.getCompound("data").getInt("SchemaVersion") != 5 && wrapped.getCompound("data").getInt("SchemaVersion") != 6))
             throw new IOException("schema5 preflight 不接受其他版本");
         var bytes = new ByteArrayOutputStream(); NbtIo.writeCompressed(wrapped, bytes);
         var snapshot = new Snapshot(bytes.toByteArray()); var decoded = snapshot.decode();
         strict.accept(decoded.getCompound("data"));
+        if (decoded.getCompound("data").getInt("SchemaVersion") == 6) HomeJournalBudget.requireReserved(decoded);
         if (!wrapped.equals(decoded)) throw new IOException("schema5 preflight exact readback 不符");
         return new PreparedWrite(snapshot, decoded);
     }
@@ -111,17 +112,32 @@ public final class SessionJournalStore {
         NbtCompound decode() throws IOException {
             try {
                 int schema = new RawWalker(compressed, false).scan();
-                var tracker = schema == 5 ? NbtSizeTracker.of(SCHEMA_FIVE_BUDGET) : NbtSizeTracker.ofUnlimitedBytes();
+                var tracker = schema >= 5 ? NbtSizeTracker.of(SCHEMA_FIVE_BUDGET) : NbtSizeTracker.ofUnlimitedBytes();
                 var wrapped = NbtIo.readCompressed(new ByteArrayInputStream(compressed), tracker);
                 validateWrapper(wrapped);
                 var data = wrapped.getCompound("data");
                 if (!data.contains("SchemaVersion", 3) || data.getInt("SchemaVersion") != schema)
                     throw new IOException("journal probe 與正式版本不符");
+                if (schema == 6) {
+                    if (!wrapped.getKeys().equals(Set.of("data","DataVersion"))) throw new IOException("schema6 wrapper 非預期欄位");
+                    new RawWalker(compressed, true, true, false).scan();
+                }
                 if (schema == 5 && new RawWalker(compressed, true).scan() != schema)
                     throw new IOException("journal raw 版本不符");
                 return wrapped;
             } catch (RuntimeException error) { throw new IOException("journal NBT 無法解析", error); }
         }
+    }
+
+    static NbtCompound readReceipt(Path path) throws IOException {
+        var snapshot = readSnapshot(path);
+        try {
+            var wrapped = NbtIo.readCompressed(new ByteArrayInputStream(snapshot.compressed), NbtSizeTracker.of(SCHEMA_FIVE_BUDGET));
+            validateWrapper(wrapped);
+            JournalNbt.keys(wrapped,"DataVersion","data");
+            if (new RawWalker(snapshot.compressed,true,true,true).scan() != 1) throw new IOException("收據版本不符");
+            return wrapped;
+        } catch (RuntimeException malformed) { throw new IOException("無法解析收據",malformed); }
     }
 
     private static void validateWrapper(NbtCompound wrapped) throws IOException {
@@ -130,7 +146,7 @@ public final class SessionJournalStore {
     }
 
     private enum Scope { ROOT, DATA, RECORDS, RECORD, LEDGER, ENTRY, CANDIDATE, CONTEXT, SOURCE, INTENT, SNAPSHOT, PARAMETERS, OTHER }
-    private static final class Row { boolean m6; boolean duplicate; }
+    private static final class Row { boolean m6; boolean home; boolean innerDuplicate; boolean duplicate; }
 
     /** 第一趟只探版本；第二趟在有界物化成功後才累積新形狀的 raw 檢重。 */
     private static final class RawWalker {
@@ -145,6 +161,11 @@ public final class SessionJournalStore {
         private int version;
         RawWalker(byte[] compressed, boolean inspectRows) { this.compressed = compressed; this.inspectRows = inspectRows; }
 
+        private boolean six;
+        private boolean receipt;
+        RawWalker(byte[] compressed, boolean inspectRows, boolean six, boolean receipt) {
+            this(compressed,inspectRows); this.six=six; this.receipt=receipt;
+        }
         int scan() throws IOException {
             try (var stream = new DataInputStream(new GZIPInputStream(new ByteArrayInputStream(compressed)))) {
                 input = stream;
@@ -153,7 +174,7 @@ public final class SessionJournalStore {
                 compound(Scope.ROOT, null, 0);
                 // 必須讀到底，連 gzip trailer 的截斷也不能以 root END 掩蓋。
                 if (input.read() != -1) throw new IOException("journal root END 後有多餘資料");
-                if (dataCount != 1 || versionCount != 1 || version < 1 || version > 5)
+                if (dataCount != 1 || versionCount != 1 || version < 1 || version > 6)
                     throw new IOException("journal 版本缺失或未知");
                 return version;
             }
@@ -161,14 +182,16 @@ public final class SessionJournalStore {
 
         private void compound(Scope scope, Row row, int depth) throws IOException {
             int nested = enter(depth);
-            Set<String> names = inspectRows && (scope == Scope.DATA || tracked(scope)) ? new HashSet<>() : null;
+            Set<String> names = inspectRows && (receipt || six || scope == Scope.DATA || tracked(scope)) ? new HashSet<>() : null;
             while (true) {
                 int type = input.readUnsignedByte();
                 if (type == 0) return;
                 String key = input.readUTF();
                 if (names != null && !names.add(key)) {
+                    if (receipt || six && scope == Scope.ROOT) throw new IOException("wrapper 或收據重鍵");
+                    if (six && row != null) row.innerDuplicate = true;
                     if (scope == Scope.DATA) throw new IOException("schema5 data 直接鍵重複：" + key);
-                    if (row != null) row.duplicate = true;
+                    if (row != null && tracked(scope)) row.duplicate = true;
                 }
                 if (scope == Scope.ROOT && key.equals("data")) {
                     if (++dataCount != 1 || type != 10) throw new IOException("journal data 重複或型別錯誤");
@@ -178,6 +201,7 @@ public final class SessionJournalStore {
                     version = input.readInt(); continue;
                 }
                 if (inspectRows && row != null) {
+                    if (scope == Scope.RECORD && key.equals("RecordVersion")) row.home = true;
                     if (scope == Scope.INTENT && INTENT_MARKERS.contains(key)) row.m6 = true;
                     if (scope == Scope.CONTEXT) {
                         if (key.equals("FamilyCapabilityVersion")) row.m6 = true;
@@ -218,6 +242,7 @@ public final class SessionJournalStore {
             for (int i = 0; i < count; i++) {
                 if (inspectRows && scope == Scope.RECORDS) {
                     var current = new Row(); value(held, Scope.RECORD, current, nested);
+                    if (six && current.home && current.innerDuplicate) throw new IOException("HOME 列有重複鍵");
                     if (current.m6 && current.duplicate) throw new IOException("M6 row 新形狀或祖先鍵重複");
                 } else value(held, scope == Scope.LEDGER ? Scope.ENTRY : scope, row, nested);
             }
