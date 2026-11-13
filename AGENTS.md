@@ -119,7 +119,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 現行：T1 CLOSED，使用者已授權 T2 起連續推進；T2 OPEN，正式 schema6／I2 保留金實作中（fresh implementer 已核當次授權、schema6 writer 行為 RED 已落檔；I2 分離 RED／GREEN／mutation／full／review／CI 待）。** controller `/root/m7_t2_onward` 為狀態文件唯一 writer。使用者原文及完整規則見 M7 note 最上方「T2 起連續推進與新止損」節、SDD `user-t2-continuation-ruling-20261113.md`。每 task 必須 production RED／GREEN／直接 owner mutation／focused／完整 full／獨立 C/I0／同 SHA required CI 真全綠才 closed，短報五欄後直接下一 task，不再受下方 T1「不 T2」舊 hold 限制。I2 必在 T2 正式解決，M6 同等是工具／證據標準，超標工具意見列殘留，不豁免正式資料正確性。
+**2026-11-13 現行：T1 CLOSED；T2 OPEN，production code pin `81bd13e7ccebe167fcb36341c1416384e305ebec` 已凍結，focused118案與Windows M7 16JUnit/3GT/11SelfTest通過，full/review/同SHA CI待。** controller `/root/m7_t2_onward` 為狀態文件唯一 writer。正式I2 fixed32保留48（50397→50445）與pending首次未知readback占用已具名RED/GREEN；9個直接owner mutation KILLED/bytes還原，原FAIL及各pin分列於M7 note與SDD。此筆docs不冒充production新測試。使用者已授 T2→T8自動化/wholebranch/docs，C/I0＋同SHArequired全綠才closed並直接下task，T3尚未啟動。M6同等僅工具證據標準，正式schema/預算不豁免；B guard至T7仍封。
 - 新止損：同 task 同範圍 N0/N1/N2… Important 總數含新項，任一兩整改輪窗口未下降即停；同穩定 problem ID 驗證工具連續第三次非預期 FAIL 即停，不再疊修。expected RED／negative／mutation 正確拒絕分列；舊 FAIL／UNKNOWN／Evidence3／NativeStartup3／main-only2 保留。
 - T1 source67／CI57 的 CI43418385083 attempt1 五 job 真 success 原判不變，不重做 T1／PoC。既有 W10 producer 只核不重建／重套；production full 前照 README 核實並 UTF-8。人工代操作開始、main／tag／PR／LICENSE／退役仍未授。
 

@@ -22,13 +22,17 @@
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
-## T2 正式資料層進行中（2026-11-13）
+## T2 正式資料層候選已凍結，完整回歸待跑（2026-11-13）
 
-- controller `/root/m7_t2_onward`；續行授權 docs `6032027`（未 push）為 T2 BASE。fresh implementer `t2_implementer`（gpt-6-astra/high/fork none）已核實當次使用者原文授權並開始變更；T1 不重做。
-- 已落兩新 JUnit 與五個新資料模型／codec／budget／receipt owner，舊三個共用 journal 檔正接線；目前僅 dirty 實作，不宣稱 GREEN 或完成。作者已報正式 schema6 writer 行為 RED 原件、API 缺失 compile RED 分列；I2 另以可編譯正式 owner 行為 RED 核固定 lease root latch／COLLAPSING，不以缺類別編譯失敗充證。
-- routine ruling：T2 兩新 suite 必須真正由兩平台 runner 執行；`gates.ps1` M7Runtime 與 `m7-ci-gametest.ps1` 原 T1 硬編類別需同 task 最小接線，保 T1 既有4案並與 inventory/source/XML exact；新增改檔已註記 plan，獨立 task reviewer 同審。沒有增加工具標準或另開 spec 審批。
-- 既有 W10 producer 只讀身份核實 `t2-w10-identity-02.json`：固定 tag/head/blob/patch/runner/diff exact、detached 唯一 dirty、祖先非 reparse、32鎖可獨占、runtimeOwners0、UTF8 65001。未重建／重套／執行 W10；full 前重核。controller 自寫只讀 helper 首次 DirectoryInfo provider 屬性誤判 FAIL 已保 `t2-w10-identity-01-failure.json` 轉錄與 ledger，修正後 PASS；是獨立 problem ID，不併舊 Native/Evidence。
-- I2/GREEN/mutation/focused/乾淨 candidate full、獨立 review 與同 SHA 全 CI 尚待；T2 OPEN。沒有人工／main／tag／PR／退役。
+- controller `/root/m7_t2_onward`；BASE `6032027`，續行狀態 docs `670c782`；fresh implementer `t2_implementer`（gpt-6-astra/high/fork none）。source 初候選 `8c6e542`、兩個未知版本負例修正 `363d4df`，首次未知寫入占用修正後最終 production code pin `81bd13e7ccebe167fcb36341c1416384e305ebec`；均未 push。T1 不重做、B activation guard 仍封至 T7。
+- 新 `JournalSession`／`HomeSessionRecord`／`HomeJournalCodec`／`HomeJournalBudget`／`HomeReceiptStore` 與共用 journal owner 完成候選。current/flushed/quarantine/pending 由同一資料源管理；pending exact-attempt 未確認時保守占用，向後提供 typed `pendingSessions()`。T3 busy、T4 root fence/CLOSE event owner、T5 startup space 留各自 task，不因本候選宣稱 M7 完成。
+- 正式 schema6 writer 三案行為 RED、歷史 API 缺失 compile RED 分列；I2 可編譯正式 owner 特定行為 RED 真 3 案恰1FAIL，SHA `2629BA16…`。I2 同32租約 current50,397→COLLAPSING＋root latch50,445，保留48；64租約亦48，1租約2,010、8租約162。另第一次 HOME atomic move 後 readback未知的占用缺口真 RED1/8→GREEN8/8，未確認時不借用玩家／Chamber／slot，修後 pin81。
+- 9個直接 production owner mutation：I2、raw重鍵、tracker、未選remap、CLOSE、舊append、receipt覆寫、空journal降版、pending占用，均由具名正式測試 KILLED，保存 before/mutant/還原bytes與SHA。原8項已controller逐XML/hash及保存source bytes核，pending第9原件見 report。變異時間點與其後改碼分列，不把早期測試冒充最終候選。
+- 最終 pin81 focused 原根 `t2-final-focused-75621f8aa7784c70a159fa3b93309e03`：五類JUnit 8/4/52/13/41，共118案，XML failure/error/skip全0；Windows M7 16JUnit＋3GT，11個 readonly SelfTest正/負例全按預期，兩JAR隔離。controller `t2-final-focused-controller-readback.json` 已核五XML/hash、M7 pin/platform/九份raw hash與實際16/3零nonPass；原件仍在SDD/run，不以build唯一副本採計。
+- 必要routine擴檔：兩M7 runner的T1硬編suite改接新集合，保T1既有4JUnit；SlotAllocator既有restore驗證最小共用、SessionRecoveryManager僅typed convergence／全列readback；舊兩類「6=未知」負例依正式升6改未知7，保-1/0、重鍵與5→4 readback全部斷言，直接舊row decoder(6)仍拒。初次 schema5 52案1FAIL保原根與XML SHA `FA41BD70…`，不改判。這些同task同席review，不增加工具標準。
+- 真舊reader採 `2255027` SessionJournalStore 原blob `ac764b16b1093399607182e6e6fb57a16b421784`，controller核saved source exact；隔離classes CodeSource，實際 `read` 以具體「journal版本缺失或未知」IOException拒固定schema6（bytes SHA `B22FFD16…`），不是classloading/反射錯誤。最後wrapper將CP950 log當UTF8顯示致outer1，原FAIL保留；只讀正確解碼取證，不重跑Java。`T2_OLD_READER_CONSOLE_ENCODING`連續1；controller另一次UTF8 source誤用預設CP950的只讀操作事件獨立保留，不加/抵/重置原工具計數。
+- 既有 W10 producer 未重建／重套。初核02、候選前03均只讀 PASS（固定tag/head/blob/patch/runner/diff exact、detached唯一dirty、祖先非reparse、32鎖可獨占、runtimeOwners0、65001）；正式full前再核。自寫只讀helper首次DirectoryInfo provider屬性誤判FAIL保原件，修正後PASS；不併舊Native/Evidence。staged whitespace檢查抓真格式問題是正常品質RED，修後過關，不是工具故障。
+- 此筆只同步候選與已發生的focused，隨後獨立docs pin／乾淨HEAD進自然完整run-all；full、獨立spec＋quality review、正常push、同SHA全部required CI仍待。N0尚待首次獨立review，整改0輪；T2 OPEN，未啟T3。人工開始/main/tag/PR/LICENSE/退役仍未授。
 
 ## 使用者async裁示：只補I11後原席清零、push同SHA CI（2026-11-13）
 
