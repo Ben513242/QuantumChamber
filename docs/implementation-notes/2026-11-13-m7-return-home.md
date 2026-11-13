@@ -11,6 +11,7 @@
 - 說明：「T1 只留 JUnit（大小上限、硬連結發佈）＋GameTest（入口守門）＋M7 的 CI 接線；取消 T1 的 Windows 原生 PoC，當機重開證明交給 T4 正式矩陣。驗證工具以 M6 已在 CI 驗過的 probe 做法為標準，審查意見超出 M6 同等標準的列為殘留、不擋關；「保留金算錯」這類屬於正式設計的問題移到 T2 修。代價：改掉你一小時前「T2～T3 保留 PoC」的裁示。」
 
 ### 新範圍與本輪程序
+- 文件/分類已由原席採用：初審f22db82 C0/I1/M1，僅T4固定十三cut來源缺失；docs-only `12fcdca98252d4b4f36c41630dc6f2f610cfe1df`補回原固定矩陣，補正採用C0/I0/M1，報告`task-1-m6-standard-plan-review-addendum.md` SHA `655E1F14DFBE6103EF6B8C386FB8B20376C7B3A87DDC2577FBF154768D555AB5`。逐12項原席表`task-1-m6-standard-disposition.md` SHA `ABBED551AD24FE1599605617D41CA6499E694F0CB9DF9CE4694204C28C7E4A45`：I2移T2，I7超M6不擋，I4/I11/F1/F2保留、native部分移除但安全/FAIL原件/JAR/exact仍保。不是舊code已修；現在才允許原作者一次窄scope收斂，先不試跑，交候選/一次batch核。
 
 - 本次取代舊Windows PoC18、T2/T3 PoC守門與T4退休接線流程：T1原生PoC取消，T2/T3也不跑；T4 Windows正式39仍保留。Ubuntu仍只有JUnit＋GameTest，沒有Linux owner/native/main-only。不是skip／空矩陣／假PASS；exact清單、default full、CI、oracle同步新scope，Git歷史與全原件保留，既有M6 native/main-only守門和斷言／門檻不改。
 - 標準具體比對已在CI通過的當前 `m6-universe-probe.ps1`、`probe-common.ps1` 及M6 JUnit/GT/CI入口。分類須固定file/blob/SHA及b26b90c／CI43373504422等已PASS來源，原同席逐項核現OPEN的I2、I4–I12及F1/F2：保留M6內／超M6殘留不擋／移T2正式設計／nativePoC範圍移除。I1/I3已處理歷史也保留，不整批宣稱全關。

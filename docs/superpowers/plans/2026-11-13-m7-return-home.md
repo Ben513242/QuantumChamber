@@ -5,9 +5,9 @@
 **目標（Goal）**　合法 COMPLETE 投影 B 的參與者走固定回家門，先回 B，再經 B 的膜以原座標回 A。旅程終局可安全解除同艙占用。
 **架構（Architecture）**　將既有 checked journal 擴充為能同存舊列與 HOME 列的單一權威。沿用走廊、回收、票額、原生移動與 chunk checkpoint，分別核對 Entry=B 與 Root=A。每 SID 的終局收據保留歷史，活躍列負責完成 B 的最後門狀態。
 **技術基線（Tech Stack）**　Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Loom 1.7.4、Java 21、Gradle 8.8、PowerShell 7。
-**對應規格（Spec）**　[v1.2 T1 M6同等驗證勘誤候選](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `BF21A6D65E380747A0A31209E429E8295AE1D6B43FDC8F415BE8EF20ADCFE110`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
+**對應規格（Spec）**　[v1.2 T1 M6同等驗證勘誤已採用](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `F38E7670B46C82872B37B4C90786676348904ADFF4DA6C6A9A2EBC1EFF95C73D`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
 
-## 2026-11-13 T1收斂為M6同等（待原同席採用）
+## 2026-11-13 T1收斂為M6同等（原同席C0/I0/M1後採用）
 
 使用者原文見[M7 note「T1收斂、M6同等」](../../implementation-notes/2026-11-13-m7-return-home.md)及SDD/user-t1-m6-standard-ruling-20261113.md。取代上一輪PoC18/T2T3守門/退休流程；玩法不變、舊FAIL/根/計數不重置。
 

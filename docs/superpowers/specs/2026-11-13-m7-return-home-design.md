@@ -1,11 +1,11 @@
-# M7 正規回程：binding spec（v1.2，T1 M6同等驗證勘誤候選）
+# M7 正規回程：binding spec（v1.2，T1 M6同等驗證勘誤已採用）
 
 日期：2026-11-13。基準工作樹：`codex/m7-return-home`，從 main `2255027` 開出。
-狀態：v1.0玩法/資料契約已第三輪C0/I0/M0採用，v1.1驗證平台勘誤亦曾採用。v1.2僅為使用者新裁示的T1 M6同等驗證收斂候選，待原同席文件/分類審查；玩法不改，本文不是實作/測試/人工/整合結果。
+狀態：v1.0玩法/資料契約已第三輪C0/I0/M0採用，v1.1驗證平台勘誤亦曾採用。v1.2僅為使用者新裁示的T1 M6同等驗證收斂修訂，原同席C0/I0/M1後採用；玩法不改，本文不是實作/測試/人工/整合結果。
 範圍唯一來源：[M7 note](../../implementation-notes/2026-11-13-m7-return-home.md) 的使用者裁示。
 未明列改變的 M2／M4／M5／M6 契約維持；建議稿不是另一份 binding spec。
 
-## 2026-11-13 T1驗證收斂勘誤（待原同席採用）
+## 2026-11-13 T1驗證收斂勘誤（原同席C0/I0/M1後採用）
 
 使用者原文見[M7 note「T1收斂、M6同等」](../../implementation-notes/2026-11-13-m7-return-home.md)。本次取代v1.1的T1 PoC18/T2T3守門/退休流程：T1只JUnit大小上限/硬link＋GT真入口守門＋CI接線，取消全部nativePoC；T4 Windows正式39不變，沿已驗M6 PID+start/receipt hash/readonly summary+SelfTest，不另造更嚴框架。Ubuntu仍JUnit/GT，沒有native/main-only/Linuxowner。超M6驗證要求列殘留不擋、不默認轉T4；基本失敗原root/XML/log保全仍拘束。schema6/HomeJournalBudget等正式設計義務不改，I2固定lease預留反證移T2，不能以取消T1 test當作已解。玩法/資料/恢復矩陣及V/H要求不變，僅驗證階段/標準/平台依新裁示收斂。
 
