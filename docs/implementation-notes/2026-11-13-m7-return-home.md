@@ -2,6 +2,21 @@
 
 本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，SDD T1 核心候選審查 C0／I12／M2 後，使用者授權先 plan 一席清零、再一輪整改＋一次定向驗證回報；production 尚未修改。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
+## 使用者async裁示：只補I11後原席清零、push同SHA CI（2026-11-13）
+
+來源：本Codex對話使用者對root具體async問句的明確回覆，非Claude稿或技能。題目原文：
+
+「本機定向已 PASS，但原 reviewer 仍留一項 M6 標準內的 I11：live 終局重讀 HEAD，並核對／使用原件重算的摘要。你限定的一輪整改與一次定向已完成；是否允許最小補齊這項後，原席確認 C／I 清零，再正常 push 看同 SHA CI？」
+
+使用者選：「允許只補 I11、原席確認後 push CI；不再本機重跑（建議）」。
+
+- I11原同席靜態審查已採用C0/I0/M0，`task-1-i11-review.md` SHA `644A3F418D332832B8DCD0AC0C35A42BDA53F0AF4F1B22ABD60E3EFC7356AED6`，新source `67bf1a08f1cd85044bf1eba37aaa0322295ea67b` 已達普通push門檻。這是純靜態，不是新SHA本機PASS；既有本機七步仍04d42f43。依async授權將必要待CI狀態docs一併正常push，實際遠端SHA/同SHA CI尚待後續讀回；5required job與兩OS新11controls均待真跑，不能先closed。
+- 原作者最小靜態候選已本機commit `67bf1a08f1cd85044bf1eba37aaa0322295ea67b`（BASEa6df06e，只有m7-ci-gametest/run-all，39插10刪），已交原唯一reviewer `review-a6df06e..67bf1a0.diff` 核I11與新breakage。新增五個同scope CI-only負例及expected列`t1-i11-static-ci-controls.json`；本機任何compile/test/parser/SelfTest皆未跑，新code只能由原席靜態＋將來CI驗，舊local PASS仍04d42f43。
+- 這次只取代I11等待hold：原作者最小修live發布／終局重新讀實際HEAD，以及saved summary案例/pace/artifact對raw重算proof核對或讓run-all直接消費validated fresh proof。歷史VerifyOnly仍可明示ExpectedHead讀舊SHA，不強要求目前checkout同SHA。不改JUnit/GT/production/PoC/T2/其他殘留，不造新框架。
+- 可寫必要同scope CI SelfTest負例（如saved案例變空），但只將來CI跑；現在絕不本機compile/JUnit/GT/SelfTest/ParseExact/其他定向重跑。只讀source/git diff/check/hash、必要本機candidate/docs commit允許。
+- 既有本機七步PASS仍是`04d42f43b693ba012f1f00409c541fa290980511`與63.6456469秒，不冒稱新補SHA有本機測試。新補候選交原同席只讀C/I0後，正常push（已授不再問）/ls-remote核讀，追同SHA實際5個required jobs與新雙平台JUnit4/GT3及舊全部M6門檻。
+- CI FAIL保log/artifact metadata/原根，不自動rerun、不改碼重送，M6同等不沿用舊偶發重跑額度。CI真全綠且新T1 scoped C/I0才可關T1；即使通過也本輪不T2/main/tag/人工/PR/LICENSE/新worktree/退役/Native39/full/W10。舊FAIL/根/計數全保。
+- CI終局先在ledger/工作區記真狀態，最後必要狀態docs可只本機提交，不為追寫本次CI再push造成無限CI。本輪controller仍是note/AGENTS/plan/ledger唯一writer。
 ## 使用者新裁示：T1收斂、驗證標準改為M6同等（2026-11-13）
 
 來源：2026-11-13使用者在本Codex對話回覆T1 fix1結果，由root照錄於SDD `user-t1-m6-standard-ruling-20261113.md`；不是Claude派工稿／技能。以下為題目、所選選項及說明原文：

@@ -119,8 +119,11 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 M7 T1 OPEN：M6同等一次窄batch本機PASS，同席C0/I1/M0（I11）仍阻推送；未push/CI，待使用者最小補正裁示。** 現行spec v1.2（M6同等T1收斂）與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
+**2026-11-13 M7 T1 OPEN：I11原席靜態C0/I0/M0已採，依async授權普通push追同SHA五required CI；新SHA禁止本機重跑，不開T2。** 現行spec v1.2（M6同等T1收斂）與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
 - M6同等窄候選04d42f43b693ba012f1f00409c541fa290980511已本機凍結（18檔、native/frame取消、M6/production不改），一次窄batch清單6A665538…已核，只JUnit4/GT3/CI正負/readonly-SelfTest；無native/main-only/全consumer。relativeOutput實驗F1，首非預期FAIL立即停不修/重試/不push；PASS後同席新scope C/I0才正常push追真CI。
+- 原席task-1-i11-review.md SHA644A3F418D…採用67bf1a08，I11 live真HEAD與saved proof/fresh消費已靜態清零；五新controls只將來CI跑。本機舊PASS仍04d42f43。下一步必要docs/普通push/遠端讀回/同SHA5jobs真終局；CI未驗不closed，FAIL不rerun/改碼重送，CI終局不另push狀態doc造循環。
+- I11最小候選67bf1a08f1cd85044bf1eba37aaa0322295ea67b已原作者本機commit，只兩script/39插10刪；原唯一reviewer靜態核中。五CI-only負例尚未執行，本機零compile/test/parser/SelfTest，舊localPASS仍04d42f43。C/I0才正常push追真CI，尚未push。
+- 最新async原文已照錄note：選「允許只補 I11、原席確認後 push CI；不再本機重跑（建議）」。只最小live末端重讀HEAD＋保存摘要對raw proof核對/使用重算結果，保歷史VerifyOnly顯式舊SHA；不JUnit/GT/production/其他殘留。可寫同scope CI selftest但本機任何compile/runtime/SelfTest皆不跑。舊本機PASS仍04d42f43，新source另SHA原席靜態清零才正常push/核遠端/追實際5required CI；CI fail不自動重跑/修碼重送，全綠才closed，仍不T2。
 - 原同席新M6scope最終C0/I1/M0，僅I11需live末端重讀HEAD及讓final採原件重算/比對結果；有M6具體來源，不是全consumer框架。原件七步PASS/63.646秒保留，當時無實際漂移。t1-m6-convergence-final.md/json已凍結，source04d42f43未push、CI未跑。root在等僅I11最小補正的新裁示，答案前不動source/測試/push；本輪一輪一次已用、不自主fix/T2。
 - 新M6同等候選04d42f43唯一窄batch本機63.646秒/exit0，全7步PASS（JUnit4/GT3/relative root/readonly/真workflow正三負/原件hash）；raw701檔/owner0/鎖釋放。原同席正核新scope實作與原件，未push；C/I0才正常push追同SHA既有required＋新T1雙OS CI，全綠才closed，不T2，不再加本機測試。
 - M6同等plan/分類原席已C0/I0/M1採用（候選12fcdca），補正原T4十三cut/39/每列unique root-nonce-save/77→新JVM0不丟契約。report655E1F14…，12列歸屬ABBED551…：I2移T2、I7超M6殘留、I4/I11/F1/F2仍保留；其餘分割native範圍與M6安全/原件/JAR/exact。允許原作者一次scope convergence，先候選/batch核再執行一次，不原生PoC或更嚴框架；PASS且新scope C/I0才正常push。
