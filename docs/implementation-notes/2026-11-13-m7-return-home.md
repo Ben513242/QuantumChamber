@@ -22,8 +22,11 @@
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
-## T2 N1降至1項；I06共同總量守門進fix2（2026-11-13）
+## T2 fix2 候選f3a79ec已定向；待原席N2（2026-11-14）
 
+- 2026-11-14 fix2 production候選 `f3a79ec182653492fcbe5a41313cbf1e41c2a4e8`（3檔），原席fixBASE5e2b2c6。五類focused 13/6/52/13/41共125、Windows M7 23JUnit/4GT、11SelfTest按預期完成；controller `t2-fix2-focused-controller-readback.json`核實際XML/hash/九raw/平台與pin。report SHA `4740E1DDE9CC4538AAFC69463E02775D0DBC693079C49AB6DCBACE675DCB637F`。
+- I06兩案真RED均為預期REJECTED卻COMMITTED；原64slot與36+4060=4096coverage在未checked移除後分別超額。修正僅將candidate/current/flushed/pending按SID去重實體lease聯集交既有allocator，原每snapshot occupies/slot/bounds不改。飽和時同SID同租約的put確走requireRoom且成功（非no-op）、未確認新增拒絕且current/flushed/disk保持，先checked釋放後同新增成功。
+- 直接owner mutation退回candidate-only，兩個具名上限案恰2FAIL；controller `t2-fix2-mutation-controller-readback.json`核實際XML、保存before/mutant bytes與SHA、原bytes還原且現行owner=before。N2尚待原唯一席，不能先記I06已清；N0=5/N1=1歷史不改，fullDriver2/3與舊site1保留，修後full/CI仍未啟。
 - 原唯一席N1已終局：C0/I1/M0，N0=5保留；I01～I05與M01均ADDRESSED，新增T2-I06。fix1把共同room改逐對檢查後漏既有64 slot／4096 chunk coverage合計守門：一列舊租約remove未checked，仍在flushed占用，但新SID可拿不相交第65格。這是本輪資料層退化，不是超M6工具要求。新ID與原五項分列，原fixed32/48及五項修正證據不洗。
 - fix2由原作者依同SDD/task-2-fix2-brief.md核正式RED→最小共同聯集計數→GREEN/mutation/focused，仍保I02每snapshot原occupies/碰撞且同租約跨snapshot不重複算；沿既有allocator，不造新權威/公式。原席N2 C/I0後才full/CI；N0=5→N1=1已下降，N2未評，止損表完整保留。source現9d1、reviewBASE5e2b2c6，未啟修後full或CI。
 - fix1 production候選 `9d1e6bab4840ca658191a6c005fbd172d7bcef06`，14檔，原席fixBASE71c47ba、實作起點a34d4c0；作者report SHA `7308DA43449B063EF0BB23EEA685F7C2DA453788FEA11B738224E04AF3AA5F83`。六類focused 11/6/52/13/41/26共149、Windows M7 21JUnit/4GT、11個自測按預期完成；controller `t2-fix1-focused-controller-readback.json`核實際XML/hash/九raw及pin9d1/平台，M7零skip。

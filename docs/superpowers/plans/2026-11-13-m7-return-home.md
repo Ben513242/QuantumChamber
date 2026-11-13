@@ -117,6 +117,8 @@
 
 2026-11-13 fix1實際測試接線：`G/M7HomeSpikeGameTests.java`新增Windows真caller容量案，`G/M2CorridorGameTests.java`僅walkNative package可見供重用既有native walk，新增 `src/testmod/java/dev/quantumchamber/persistence/M7CapacityFixture.java`；M7 exact集合21JUnit、Windows4GT／Ubuntu沿平台集合。source候選9d1e6ba已focused149與六owner mutation；先原席N1 C/I0，再修後完整full/CI，最後閉合項未勾。
 
+2026-11-14 fix2僅State共同lease聯集合計＋既有JUnit兩上限/去重/checked後重試＋inventory，source f3a79ec。focused125/M7 23/4已核，先原唯一席N2，C/I0才full/CI；未預勾閉合。
+
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 
 **產出**　`sealed interface JournalSession` 共同提供 `UUID sessionUuid()/chamberUuid()`、`List<Participant> participants()`、`List<SpaceLease> spaceLeases()`、`SessionState state()`。舊 record 與新 `HomeSessionRecord` 實作；新列提供 `ChamberOriginAuthority rootAnchor()`、`HomeSessionRecord.EntryEndpoint entryEndpoint()`、`HomeSessionRecord.Home home()`。
