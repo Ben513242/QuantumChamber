@@ -7,6 +7,18 @@
 **技術基線（Tech Stack）**　Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Loom 1.7.4、Java 21、Gradle 8.8、PowerShell 7。
 **對應規格（Spec）**　[v1.2 T1 M6同等驗證勘誤已採用](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `F38E7670B46C82872B37B4C90786676348904ADFF4DA6C6A9A2EBC1EFF95C73D`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
 
+## 2026-11-13 現行續行授權與止損
+
+- 從 T2 依已審 plan 連續推進至 T8 已授自動化／整分支審查／docs；每 task C/I 清零且同 SHA required CI 真全綠才 closed，直接下一 task。T1 後「本輪不 T2」及 I11 單次處理限制均為歷史，已被本裁示取代；不重開 T1 或 spec／plan 審批。
+- I2 是正式資料正確性義務，在 T2 由 HomeJournalBudget／正式 schema6／共用 writer 修復，附 fixed32 保租 root latch／COLLAPSING 具名 RED 與直接 production-owner mutation；不得延期或當超 M6 殘留。
+- M6 同等限定驗證工具與證據做法；不豁免 binding 功能、strict schema／合法來源／預算／所有共用 writer、production RED/GREEN/mutation/focused/full/review/同 SHA CI。超標工具意見列殘留，不默認塞 T4。
+- 每 task 同範圍記 N0、每整改 N1/N2…（Important 總數含新項）；任一連續兩整改輪窗口未下降即停報，不做下一輪。不得藉重命名、nonce、docs 或無證據重新分類洗數；Critical 永不帶過。
+- 驗證工具依穩定 problem ID 記連續非預期失敗，同問題第三次即停，安全收回相關自有 owner 並保全原件；expected RED／negative／mutation 正確拒絕分列不算工具缺陷。production bug 與工具 bug 依證據分開；既有 Evidence3／NativeStartup3／main-only2 歷史原判保留，已移除框架不復活，不任意合併無關問題或拆簽章迴避。
+- 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
+- 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
+
+以下 T1 單輪／不 T2 流程是歷史；本節已解除舊 hold，不變更已審玩法／資料／task 契約。原文見 M7 note 最上方同名節。
+
 ## 2026-11-13 T1收斂為M6同等（原同席C0/I0/M1後採用）
 
 使用者原文見[M7 note「T1收斂、M6同等」](../../implementation-notes/2026-11-13-m7-return-home.md)及SDD/user-t1-m6-standard-ruling-20261113.md。取代上一輪PoC18/T2T3守門/退休流程；玩法不變、舊FAIL/根/計數不重置。
@@ -41,7 +53,7 @@
 - 每次 commit、push、gate 終局由 controller 同步 note 與 AGENTS 入口。記 task、base/code pin、實跑命令／root／hash、退出碼、review range、遠端 SHA／CI attempt 與未決項。未發生事件寫「待驗」。同 SHA CI 終局先寫 ledger／工作區，下次文件提交收錄，勿為寫回該次 CI 觸發無限 CI。
 - 每個 production task 都有具名 RED、GREEN、直接變異 production owner、還原原 bytes、focused、完整 run-all、獨立規格與品質審查、同 SHA CI。修正輪重新執行適用門檻。純測試／腳本／文件一席獨立 review、定向驗證與 CI，免 production mutation 與本機 full。T1依新M6同等只驗JUnit/GT/CI接線，不額外clean build或新main-only/native；既有兩平台封裝隔離與M6 main-only不變。
 - 逐檔 stage 該 task 表列的變更與兩份 controller 狀態文件，先核 staged diff／清單。禁止 `git add -A`、覆寫既有 dirty、force push、force-add ignored 證據。先凍結本機候選 commit 再用其乾淨 code pin 跑 production full；若審查改碼，重新凍結／驗證。純進度文件另列 docs pin，遠端採最終推送的同 SHA CI。
-- 一個 task 的 C/I 全清且 required CI 各 job 真 success 才 closed。本輪依M6同等收斂一席分類C/I0→一次整改/定向→PASS且本範圍C/I0後正常push追同SHA CI，再回報不T2；人工代操作（方式 Claude）、main、tag、工作樹退役、PR、LICENSE 各自另問，無需為執行計畫追加整份核可。
+- 一個 task 的 C/I 全清且 required CI 各 job 真 success 才 closed。依現行續行授權，T2 起閉合就直接進下一 task；人工代操作（方式 Claude）、main、tag、工作樹退役、PR、LICENSE 各自另問，無需為執行計畫追加整份核可。
 - Root 僅 canonical `minecraft:overworld` 原 ORIGIN；Entry 僅 exact live catalog OVERWORLD COMPLETE PROJECTION。HOME door = `new DoorKey(sid, 1L, DoorKey.DoorWallSide.POSITIVE_LATERAL)`。SOURCE 與 legacy return-only 維持原意；FamilyCapabilityVersion=0，Nether／End 共用原版，M8 不排入。
 - 啟動與選門各驗 A 的實際供電一次。選後 LOW 不取消，停用／拆除／結構失效停止旅行、保留選擇、checked 收尾才解除 A 保護及鎖。A 絕不重建、改門或清容器。新旅程須重新關 B 門，不必出艙，可沿用未到期藥效。7×7×7 與一格外殼不變。
 - 相依順序 T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8。T1–T6 的定向入口限既有 testmod，可呼叫 production owner，release 的 B activation guard 到 T7 才放行。不得用 production 開關、偽造 catalog 或跳過真 checkpoint 替代這個順序。

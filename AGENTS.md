@@ -119,6 +119,12 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-13 現行：T1 CLOSED，使用者已授權 T2 起連續推進；T2 OPEN，正式 schema6／I2 保留金正在派工。** controller `/root/m7_t2_onward` 為狀態文件唯一 writer。使用者原文及完整規則見 M7 note 最上方「T2 起連續推進與新止損」節、SDD `user-t2-continuation-ruling-20261113.md`。每 task 必須 production RED／GREEN／直接 owner mutation／focused／完整 full／獨立 C/I0／同 SHA required CI 真全綠才 closed，短報五欄後直接下一 task，不再受下方 T1「不 T2」舊 hold 限制。I2 必在 T2 正式解決，M6 同等是工具／證據標準，超標工具意見列殘留，不豁免正式資料正確性。
+- 新止損：同 task 同範圍 N0/N1/N2… Important 總數含新項，任一兩整改輪窗口未下降即停；同穩定 problem ID 驗證工具連續第三次非預期 FAIL 即停，不再疊修。expected RED／negative／mutation 正確拒絕分列；舊 FAIL／UNKNOWN／Evidence3／NativeStartup3／main-only2 保留。
+- T1 source67／CI57 的 CI43418385083 attempt1 五 job 真 success 原判不變，不重做 T1／PoC。既有 W10 producer 只核不重建／重套；production full 前照 README 核實並 UTF-8。人工代操作開始、main／tag／PR／LICENSE／退役仍未授。
+
+以下 T1 與更早狀態均為歷史快照；只在新節明確指向時採為證據。
+
 **2026-11-13 M7 T1 CLOSED（新M6同等範圍）：I11原席C0/I0/M0＋同SHA57ca71a CI43418385083 attempt1五job全success。本輪停在T2前。** 現行spec v1.2（M6同等T1收斂）與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
 - M6同等窄候選04d42f43b693ba012f1f00409c541fa290980511已本機凍結（18檔、native/frame取消、M6/production不改），一次窄batch清單6A665538…已核，只JUnit4/GT3/CI正負/readonly-SelfTest；無native/main-only/全consumer。relativeOutput實驗F1，首非預期FAIL立即停不修/重試/不push；PASS後同席新scope C/I0才正常push追真CI。
 - 最終完整T1-CLOSEOUT.md/json在本plan SDD（md SHA1474365A…）；terminal-ci-verification SHA12FC3BD1…、root抽核A3749D0B…、兩OS raw與11SelfTest定位m7-original-pointers.json。新M7兩OS4JUnit/3GT、舊default166/M560/M635/legacy1、Win normal13/main-only、M6native9/27/479全部真驗。source67/CI57、本機PASS04d不混；最後狀態/plan勾選只本機，不再push造CI。T2未啟、producer留存，I2正式預留移T2/I7超M6殘留/舊FAIL計數保留，不因T1閉合當M7完成。

@@ -1,6 +1,26 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，SDD T1 核心候選審查 C0／I12／M2 後，使用者授權先 plan 一席清零、再一輪整改＋一次定向驗證回報；production 尚未修改。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，production T2 尚待實作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 使用者新裁示：T2 起連續推進與新止損（2026-11-13）
+
+來源：本 Codex 使用者對話；root 原文檔 `user-t2-continuation-ruling-20261113.md`，非技能或 Claude 建議稿。使用者原文：
+
+> T1 結案已核實（CI 43418385083 五 job success、src/main 無改動、PoC 已移除、歸類合理）。請開始 T2，之後依「審查清零就直接往下做（建議）」連續推進。
+> 1. I2 保留金是正式設計的正確性問題，要在 T2 以 production 方式解決並附 RED／mutation 證據，不能再移到後面。
+> 2. 驗證標準維持「M6 同等」；審查意見超出時列殘留，不擋關。
+> 3.（Claude 建議的止損）同一個 task 整改兩輪後，Important 數量沒有下降，或同一個驗證工具連續第三次非預期失敗，就停下回報，不要繼續疊修。
+> 4. 每個 task closed（同 SHA CI 全綠）時簡短回報一次：task、code pin、CI run、殘留、下一個 task。
+
+現行流程：
+
+- 從 T2 依已審 plan 連續推進至 T8 已授自動化／整分支審查／docs；每 task C/I 清零且同 SHA required CI 真全綠才 closed，直接下一 task。T1 後「本輪不 T2」及 I11 單次處理限制均為歷史，已被本裁示取代；不重開 T1 或 spec／plan 審批。
+- I2 是正式資料正確性義務，在 T2 由 HomeJournalBudget／正式 schema6／共用 writer 修復，附 fixed32 保租 root latch／COLLAPSING 具名 RED 與直接 production-owner mutation；不得延期或當超 M6 殘留。
+- M6 同等限定驗證工具與證據做法；不豁免 binding 功能、strict schema／合法來源／預算／所有共用 writer、production RED/GREEN/mutation/focused/full/review/同 SHA CI。超標工具意見列殘留，不默認塞 T4。
+- 每 task 同範圍記 N0、每整改 N1/N2…（Important 總數含新項）；任一連續兩整改輪窗口未下降即停報，不做下一輪。不得藉重命名、nonce、docs 或無證據重新分類洗數；Critical 永不帶過。
+- 驗證工具依穩定 problem ID 記連續非預期失敗，同問題第三次即停，安全收回相關自有 owner 並保全原件；expected RED／negative／mutation 正確拒絕分列不算工具缺陷。production bug 與工具 bug 依證據分開；既有 Evidence3／NativeStartup3／main-only2 歷史原判保留，已移除框架不復活，不任意合併無關問題或拆簽章迴避。
+- 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
+- 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
 ## 使用者async裁示：只補I11後原席清零、push同SHA CI（2026-11-13）
 
@@ -352,6 +372,8 @@
 - 成功回到 A 時，也不寫入、不重建 A 的任何方塊，不清空原艙內容。來源是建議稿 §10.3 與 §17.3 C10；第 6 題選項說明只涵蓋原艙失效的情況。
 
 ### 流程指示（2026-11-13）
+
+現行追加授權與止損以本檔最上方「T2 起連續推進與新止損」節為準；下列舊 T1 hold 為歷史。
 
 來源是使用者 2026-11-13 貼給本對話的接手提示詞。那份提示詞由先前的 Claude 對話起草，再由使用者貼上。相關原文：
 
