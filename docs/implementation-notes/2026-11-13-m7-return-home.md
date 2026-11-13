@@ -22,8 +22,10 @@
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
-## T2 fix1 候選9d1e6ba已凍結；focused149，待原席N1（2026-11-13）
+## T2 N1降至1項；I06共同總量守門進fix2（2026-11-13）
 
+- 原唯一席N1已終局：C0/I1/M0，N0=5保留；I01～I05與M01均ADDRESSED，新增T2-I06。fix1把共同room改逐對檢查後漏既有64 slot／4096 chunk coverage合計守門：一列舊租約remove未checked，仍在flushed占用，但新SID可拿不相交第65格。這是本輪資料層退化，不是超M6工具要求。新ID與原五項分列，原fixed32/48及五項修正證據不洗。
+- fix2由原作者依同SDD/task-2-fix2-brief.md核正式RED→最小共同聯集計數→GREEN/mutation/focused，仍保I02每snapshot原occupies/碰撞且同租約跨snapshot不重複算；沿既有allocator，不造新權威/公式。原席N2 C/I0後才full/CI；N0=5→N1=1已下降，N2未評，止損表完整保留。source現9d1、reviewBASE5e2b2c6，未啟修後full或CI。
 - fix1 production候選 `9d1e6bab4840ca658191a6c005fbd172d7bcef06`，14檔，原席fixBASE71c47ba、實作起點a34d4c0；作者report SHA `7308DA43449B063EF0BB23EEA685F7C2DA453788FEA11B738224E04AF3AA5F83`。六類focused 11/6/52/13/41/26共149、Windows M7 21JUnit/4GT、11個自測按預期完成；controller `t2-fix1-focused-controller-readback.json`核實際XML/hash/九raw及pin9d1/平台，M7零skip。
 - fix1 I01～I05及reposition六個直接owner mutation，controller `t2-fix1-mutations-controller-readback.json`核各實體XML/hash/目標assert、保存before/mutant bytes、還原SHA，六個owner現行bytes也等於變異前bytes。I01與reposition均為正式caller目標assert，非cleanup timeout；I03/I04原history RED具名2FAIL、原件SHA `E009BEA0…`。原首I01仍保正式remap漏撤reserve導致權威不符＋fixture最後僅cleanup逾時兩層因果，不冒充目標RED、不回填新marker。
 - mutation site多行CRLF/LF不匹配在source/runtime前拒絕的原事件1保留；單行唯一命中修正後新nonce才KILLED，不重設fullDriver2/3。controller讀fix1 proof曾誤用初版JSON欄位xml產生KeyError，是已保留的只讀操作事件；改按實際xmlSha/mutated/hits核原件，未重跑mutation、不改source、不當遊戲或fullDriver失敗。
