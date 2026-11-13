@@ -16,7 +16,8 @@
       "dev.quantumchamber.persistence.M7HomeHistoryTest.bothReadersRejectRawDuplicateAtEveryHomeDepth",
       "dev.quantumchamber.persistence.M7HomeHistoryTest.closeMatrixRejectsMismatchedOriginOrEvidence",
       "dev.quantumchamber.persistence.M7HomeJournalTest.terminalRemovalRequiresHistoryAndKeepsEmptySix",
-      "dev.quantumchamber.persistence.M7HomeJournalTest.quarantineRollsUnselectedIntoReturningAndRejectsCrossRowLeaseCollision"
+      "dev.quantumchamber.persistence.M7HomeJournalTest.quarantineRollsUnselectedIntoReturningAndRejectsCrossRowLeaseCollision",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.unknownFirstHomeRetainsParticipantChamberAndSlotUntilReconciliation"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",

@@ -311,6 +311,10 @@ public final class SessionRecoveryState extends PersistentState {
     }
     public Map<UUID,JournalSession> allSessions() { requireHealthy(); return Map.copyOf(records); }
     public Map<UUID,JournalSession> allFlushedSessions() { requireHealthy(); return flushed; }
+    /** 本次已送出但尚未確認的候選值；維持與原始 attempt 共用的不可變快照。 */
+    public Map<UUID,JournalSession> pendingSessions() {
+        requireHealthy(); return pending==null ? Map.of() : pending.expectedRecords();
+    }
     private static Map<UUID,SessionRecoveryRecord> legacyRows(Map<UUID,JournalSession> rows) {
         var result = new LinkedHashMap<UUID,SessionRecoveryRecord>();
         rows.forEach((id,row) -> { if(row instanceof SessionRecoveryRecord old) result.put(id,old); });
@@ -833,7 +837,7 @@ public final class SessionRecoveryState extends PersistentState {
     }
     public boolean participantsAvailable(java.util.Collection<UUID> players) {
         requireHealthy();
-        return Stream.concat(records.values().stream(),flushed.values().stream())
+        return Stream.of(records,flushed,pendingSessions()).flatMap(rows -> rows.values().stream())
                 .noneMatch(record -> players.stream().anyMatch(player -> occupies(record,player)));
     }
     /**
@@ -888,6 +892,8 @@ public final class SessionRecoveryState extends PersistentState {
         requireMutationThread();
         requireHealthy();
         requireNotQuarantined(id);
+        if(pending!=null && pending.prepared().schema()==6)
+            throw new IllegalStateException("HOME journal 待收斂，不能移除現行占用");
         if(Stream.of(records.get(id),flushed.get(id),authorityHistory.get(id))
                 .anyMatch(record -> record!=null && (record instanceof HomeSessionRecord || receiptRetained(record.state()))))
             throw new IllegalStateException("MEASURED 與塌縮狀態的 receipt 必須保留，不能經一般 remove 消耗（只有 checked 終局 API 可以移除）");
@@ -1078,6 +1084,8 @@ public final class SessionRecoveryState extends PersistentState {
         });
     }
     private void requireRoom(Map<UUID,JournalSession> candidate) {
+        if(pending!=null && pending.prepared().schema()==6 && !candidate.equals(records))
+            throw new IllegalStateException("HOME journal 有尚未確認的寫入，保留候選身分與租約");
         if(!schemaSixEvidence && candidate.values().stream().noneMatch(HomeSessionRecord.class::isInstance)) return;
         var visible=new LinkedHashMap<>(candidate);
         // 尚未讀回的移除仍持有原 Chamber、玩家與租約。

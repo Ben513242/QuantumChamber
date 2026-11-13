@@ -206,4 +206,25 @@ class M7HomeJournalTest {
         assertThrows(RuntimeException.class,() -> state.put(SessionRecoveryRecord.fromNbt(other,5)));
         assertEquals(Map.of(row.sessionUuid(),returning),state.allFlushedSessions());
     }
+    @Test void unknownFirstHomeRetainsParticipantChamberAndSlotUntilReconciliation() throws Exception {
+        var file=directory.resolve("data/session.dat");
+        var state=new SessionRecoveryState(path -> { throw new java.io.IOException("注入：讀回未確認"); });
+        state.markCollapseAuthoritiesInitialized();
+        var raw=M7BudgetSpikeTest.home(1); raw.putString("State","ARMING");
+        var home=HomeJournalCodec.decode(raw);
+        var outcome=state.admitHome(new HomeReceiptStore(directory),() -> state.save(file.toFile(),null),home);
+        assertEquals(SessionRecoveryState.CommitResult.Status.RESTORED,outcome.status());
+        assertTrue(state.allSessions().isEmpty() && state.allFlushedSessions().isEmpty());
+        assertFalse(state.participantsAvailable(List.of(home.participants().getFirst().playerUuid())));
+        var fileBytes=Files.readAllBytes(file);
+        var other=other();
+        other.getList("SpaceLeases",10).set(0,raw.getList("SpaceLeases",10).getCompound(0).copy());
+        assertThrows(RuntimeException.class,() -> state.put(SessionRecoveryRecord.fromNbt(other,5)));
+        var otherChamber=other();
+        otherChamber.putUuid("ChamberUuid",home.chamberUuid());
+        otherChamber.getCompound("Origin").putUuid("ChamberUuid",home.chamberUuid());
+        assertThrows(RuntimeException.class,() -> state.put(SessionRecoveryRecord.fromNbt(otherChamber,5)));
+        assertArrayEquals(fileBytes,Files.readAllBytes(file));
+        assertEquals(home,SessionRecoveryState.load(file).allFlushedSessions().get(home.sessionUuid()));
+    }
 }
