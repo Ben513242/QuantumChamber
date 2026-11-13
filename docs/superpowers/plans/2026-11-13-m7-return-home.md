@@ -25,7 +25,7 @@
 ### 一輪整改／一次定向batch硬邊界
 
 - plan/spec一席review C/I清零前，不改inventory/CI/oracle/harness/test source。之後只原implementer修一輪T1測試/腳本/build/CI，production完全不改；原12I保留部分照修、移除部分不另寫Linux程式。M1/M2可同輪移除重複未用匯出分支/EOF，不另開fix round。
-- 實作完成先本機候選commit並凍結`t1-fix1-batch-plan.json/md`：完整SHA、dirty/raw source/compiled/actual argfiles的完整成員/hash、唯一nonce/root、按序精確命令、預定退出/事前具名negative及錯因。controller核清單後只執行一次，沒有自動重試、不邊跑邊改消費檔；compile僅由該batch一次Gradle建置依賴完成，不能先試編譯偷跑第二批。
+- 實作完成先本機候選commit並凍結`t1-fix1-batch-plan.json/md`：完整SHA、dirty/raw source成員/hash、唯一nonce/root、按序精確命令、預定退出/事前具名negative及錯因，並預定compiled/actual argfiles/DLI的取得點。source先凍結；compiled由唯一batch內預定的一次建置產生後、任何依賴它的測試JVM啟動前，保存完整成員/raw bytes/hash；每phase實際argfile/DLI在啟動前固定並指向凍結複本，phase/batch末重讀。controller核清單後只執行一次，無自動重試/中途改消費檔；不能batch前試編譯偷跑第二批。
 - batch上限：兩spike JUnit一次、Windows M7 GameTest一次、Windows ordinary/after-checkpoint單pair最多一組（crash77/reopen0），以及同批離線strict/raw/owner/artifact/manifest/consumer/summary/workflow各控制一次。不是18/39全集。expected negatives須執行前具名固定錯因，不得事後把失敗改expected。
 - 任一非預期工具FAIL/不符預定終局，立即停止後續命令；保原root/exit/partial，安全結束已在途exact owned JVM（身份未知不廣殺），本輪不得fix/重試/續跑。原EVIDENCE-INTEGRITY3、Native2/main-only2等計數/FAIL/UNKNOWN不重置；expected negative精確正拒不算工具FAIL。
 - batch自然PASS後也停止，不再fix/compile/runtime/CI/push；原唯一reviewer只讀核分類/差異/既有原件，新缺口open待下次裁示，不求所有實證清零而擴權。本輪禁止正式18/39/full/T2/新CI/push/project clean/W10 preflight或重建/退役；可必要本機待驗candidate/docs commit。Ubuntu本機無真環境且須push才有CI時標未驗，不偽造Linux。

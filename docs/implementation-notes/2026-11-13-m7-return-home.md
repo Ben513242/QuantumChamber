@@ -21,6 +21,8 @@
 
 ### 本輪執行界線（controller 依上述裁示落地）
 
+- docs-only amendment 候選 d6caf208116120b9862b0651f91f018017763f68 已在本機提交、未push；plan/spec驗證勘誤待原唯一reviewer，一切工具/清單/CI/source尚未整改，沒有新增runtime。
+
 - 先僅修改 plan／必要 spec 驗證平台勘誤，不改玩法；由原唯一 reviewer 獨立審查 plan amendment 及 I1–I12 歸屬，C/I 清零後才可動 exact 清單／CI／oracle／工具。原 review 的 C0/I12/M2 與 finding 不覆寫；「範圍移除」須原 reviewer 確認，Windows 與其他真正缺陷不能整項豁免。
 - T1 為 **Windows 18 列**、六 cut × 三門態；T4 正式 **Windows 39 列**通過後，PoC 從 default full／CI 退役，歷史原件保留；T2–T3 保留 PoC 守門。Ubuntu 僅 JUnit＋GameTest，沒有 native／main-only／Linux owner 程式。exact inventories 與 CI／oracle 同步新集合，禁止 skip 冒充 PASS。
 - 本次只授權原 implementer **一輪核心整改＋一個事前凍結的定向 batch 執行一次**。不開正式18／39、T2、完整回歸、新 CI 或 push；可必要本機未完成候選／docs commit。production 不改。batch 不邊跑邊改；任何非預期工具失敗立即停止，不重試／補修／續跑，安全收回已在途 owned JVM 並留原根。expected negatives 必事前具名。
