@@ -262,13 +262,10 @@ public final class SessionRecoveryState extends PersistentState {
         }
     }
 
-    private static void verifyReceipts(Path file, Map<UUID,JournalSession> rows) throws IOException {
-        if(rows.values().stream().noneMatch(HomeSessionRecord.class::isInstance)) return;
+    static void verifyReceipts(Path file, Map<UUID,JournalSession> rows) throws IOException {
+        if(rows.isEmpty()) return;
         var store=new HomeReceiptStore(file.toAbsolutePath().normalize().getParent().getParent());
-        for(var row:rows.values()) if(row instanceof HomeSessionRecord h) {
-            var historic=store.lookup(h.sessionUuid());
-            if(historic.isPresent() && !historic.get().equals(h)) throw new IOException("熱 journal 與歷史收據不符");
-        }
+        for(var row:rows.values()) store.verifyActive(row);
     }
 
     public static SessionRecoveryState fromNbt(NbtCompound nbt) {
@@ -442,7 +439,7 @@ public final class SessionRecoveryState extends PersistentState {
         var candidate=new LinkedHashMap<>(records);
         if(target==null) candidate.remove(sessionUuid); else candidate.put(sessionUuid,target);
         validateOwnership(candidate);
-        requireRoom(candidate);
+        requireRoom(candidate,sessionUuid);
         restoreCheckedAuthority(sessionUuid);
         if(target!=null && !target.equals(durable)) { records.put(sessionUuid,target); authorityHistory.put(sessionUuid,target); }
         quarantined.remove(sessionUuid);
@@ -796,7 +793,7 @@ public final class SessionRecoveryState extends PersistentState {
             return TerminalResult.of(TerminalResult.Status.REJECTED,new IllegalStateException("HOME 移除 CAS 不符"));
         try {
             if(expected.home().closeIntent() instanceof HomeSessionRecord.Close) {
-                if(!store.lookup(sid).equals(Optional.of(expected))) throw new IOException("HOME 終局缺少相符收據");
+                store.requireExact(expected);
             } else if(expected.state()!=SessionState.RETURNING || expected.participants().stream().anyMatch(p -> !p.returned()))
                 throw new IOException("HOME 尚未完成返還或結案");
         } catch(IOException failure) { return TerminalResult.of(TerminalResult.Status.REJECTED,new UncheckedIOException(failure)); }
@@ -814,7 +811,7 @@ public final class SessionRecoveryState extends PersistentState {
     }
     private void stageHome(HomeSessionRecord next,boolean forward) {
         var candidate=new LinkedHashMap<>(records); candidate.put(next.sessionUuid(),next);
-        validateOwnership(candidate); requireRoom(candidate);
+        validateOwnership(candidate); requireRoom(candidate,next.sessionUuid());
         records.put(next.sessionUuid(),next); authorityHistory.put(next.sessionUuid(),next);
         if(forward) rollForwardPending.add(next.sessionUuid());
         markDirty();
@@ -867,7 +864,7 @@ public final class SessionRecoveryState extends PersistentState {
         }
         var candidate = new LinkedHashMap<>(records); candidate.put(record.sessionUuid(), record);
         validateOwnership(candidate);
-        requireRoom(candidate);
+        requireRoom(candidate,record.sessionUuid());
         records.put(record.sessionUuid(), record); authorityHistory.put(record.sessionUuid(), record);
         candidateInitialized |= record.candidateContext().isPresent();
         if (record.state().collapseState() && !restoreCommit) {
@@ -986,7 +983,7 @@ public final class SessionRecoveryState extends PersistentState {
                 var candidate = new SessionRecoveryState[1];
                 var prepared = SessionJournalStore.prepareSchemaFive(wrapped, data -> {
                     var decoded = fromNbt(data, intentValidator); decoded.requireHealthy();
-                    if (!expected.equals(decoded.allSessions())) throw new IllegalStateException("schema5 preflight records 不符");
+                    if (!expected.equals(decoded.allSessions())) throw new IllegalStateException("schema"+wrapped.getCompound("data").getInt("SchemaVersion")+" preflight records 不符");
                     candidate[0] = decoded;
                 });
                 var target = file.toPath().toAbsolutePath().normalize();
@@ -1083,14 +1080,23 @@ public final class SessionRecoveryState extends PersistentState {
             case COLLAPSING,PASSAGE_READY,SEALED -> !p.returned();
         });
     }
-    private void requireRoom(Map<UUID,JournalSession> candidate) {
+    private void requireRoom(Map<UUID,JournalSession> candidate,UUID changedSid) {
         if(pending!=null && pending.prepared().schema()==6 && !candidate.equals(records))
             throw new IllegalStateException("HOME journal 有尚未確認的寫入，保留候選身分與租約");
         if(!schemaSixEvidence && candidate.values().stream().noneMatch(HomeSessionRecord.class::isInstance)) return;
-        var visible=new LinkedHashMap<>(candidate);
-        // 尚未讀回的移除仍持有原 Chamber、玩家與租約。
-        flushed.forEach(visible::putIfAbsent);
-        validateOwnership(visible);
+        var proposed=candidate.get(changedSid);
+        if(proposed!=null) {
+            // 已確認與未確認各版本獨立驗證，同 SID 的兩份權威不互斥。
+            for(var snapshot:List.of(records,flushed,pendingSessions())) for(var other:snapshot.values()) {
+                if(other.sessionUuid().equals(changedSid)) continue;
+                if(proposed.chamberUuid().equals(other.chamberUuid())
+                        || proposed.participants().stream().anyMatch(p -> occupies(proposed,p.playerUuid()) && occupies(other,p.playerUuid())))
+                    throw new IllegalStateException("其他旅程仍占用原艙或玩家");
+                for(var a:proposed.spaceLeases()) for(var b:other.spaceLeases())
+                    if(a.slotId()==b.slotId() || a.bounds().intersects(b.bounds()))
+                        throw new IllegalStateException("其他旅程仍持有本次要求的租約");
+            }
+        }
         var wrapped=new NbtCompound(); NbtHelper.putDataVersion(wrapped);
         wrapped.put("data",encode(new NbtCompound(),candidate,6));
         HomeJournalBudget.requireReserved(wrapped);

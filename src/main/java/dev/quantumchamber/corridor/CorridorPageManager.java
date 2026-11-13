@@ -1,5 +1,6 @@
 package dev.quantumchamber.corridor;
 
+import dev.quantumchamber.persistence.HomeJournalBudget.CapacityExceeded;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.candidate.CandidateLedgerService;
 import dev.quantumchamber.candidate.CandidateSelection;
@@ -532,15 +533,31 @@ public final class CorridorPageManager {
         var record=durable(space);
         if (record.state()!=SessionState.SUPERPOSITION || measured(space)) throw new IllegalStateException("只有已發布 SUPERPOSITION 可 remap");
         requireActiveBuff(space);
-        space.selectable=Map.of();
         var oldSlots=Set.copyOf(space.leases.keySet());
+        var oldPending=space.pending;
+        var oldPages=space.pendingPages;
+        long oldInstanceEpoch=space.instanceEpoch;
         boolean reserved=false;
         space.operations++;
         try {
             requirePageCapacity(space,occupiedPages); requirePinCapacity();
             var prepared=reserve(space,expectedCurrentEpoch,occupiedPages); reserved=true;
-            journal.put(record.withProgress(record.participants(),List.copyOf(space.leases.values()),record.state(),record.restoreEntryEffectOnReturn()));
+            try {
+                journal.put(record.withProgress(record.participants(),List.copyOf(space.leases.values()),record.state(),record.restoreEntryEffectOnReturn()));
+            } catch(CapacityExceeded retry) {
+                // 本次額外租約尚未寫入 journal、建構幾何或取得票；完整撤回，不取消舊映射。
+                for(int slot:List.copyOf(space.leases.keySet())) if(!oldSlots.contains(slot)) {
+                    space.leases.remove(slot); allocator.release(slot); protectedLeases.remove(slot);
+                }
+                space.pending=oldPending; space.pendingPages=oldPages; space.instanceEpoch=oldInstanceEpoch;
+                throw retry;
+            }
+            space.selectable=Map.of();
             journal.flush(server); durable(space); acquireTickets(space); enqueue(space); return prepared;
+        } catch(CapacityExceeded retry) {
+            // 只有寫前容量拒絕已還原；其他失敗包含可能落盤的進度，仍需原本的 fail。
+            if(space.pending==oldPending && space.leases.keySet().equals(oldSlots)) throw retry;
+            fail(space,retry); throw retry;
         } catch (RuntimeException failure) {
             if (!reserved) for (int slot : List.copyOf(space.leases.keySet())) if (!oldSlots.contains(slot)) {
                 space.leases.remove(slot); allocator.release(slot); protectedLeases.remove(slot);

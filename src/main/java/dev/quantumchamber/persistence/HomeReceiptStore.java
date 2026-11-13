@@ -38,6 +38,10 @@ public final class HomeReceiptStore {
         return (flags & 0x400) != 0;
     }
     public Optional<HomeSessionRecord> lookup(UUID sid) throws IOException {
+        return read(sid).map(Receipt::row);
+    }
+    private record Receipt(NbtCompound wrapped,HomeSessionRecord row) {}
+    private Optional<Receipt> read(UUID sid) throws IOException {
         Path dir;
         try { dir=directory(false); } catch(NoSuchFileException absent) { return Optional.empty(); }
         Path target=dir.resolve(sid+".dat");
@@ -53,7 +57,7 @@ public final class HomeReceiptStore {
             if(!sid.equals(uuid(d,"SessionUuid")) || !sid.equals(normalized.sessionUuid())
                     || !(normalized.home().closeIntent() instanceof HomeSessionRecord.None)
                     || !(intent instanceof HomeSessionRecord.Close)) throw new IOException("收據凍結身分不符");
-            return Optional.of(normalized.withClose(intent));
+            return Optional.of(new Receipt(wrapped,normalized.withClose(intent)));
         } catch(RuntimeException invalid) { throw new IOException("收據權威不合法",invalid); }
     }
     public void requireAdmissible(UUID sid) throws IOException {
@@ -76,8 +80,8 @@ public final class HomeReceiptStore {
     public void publishOrVerify(HomeSessionRecord frozen) throws IOException {
         var expected=wrapper(frozen);
         var dir=directory(true);
-        var existing=lookup(frozen.sessionUuid());
-        if(existing.isPresent()) { verify(existing,frozen); return; }
+        var existing=read(frozen.sessionUuid());
+        if(existing.isPresent()) { verify(existing,expected); return; }
         var temporary=Files.createTempFile(dir,"publish-",".tmp");
         NbtIo.writeCompressed(expected,temporary);
         try(var channel=FileChannel.open(temporary,StandardOpenOption.WRITE)) { channel.force(true); }
@@ -85,10 +89,20 @@ public final class HomeReceiptStore {
         var target=dir.resolve(frozen.sessionUuid()+".dat");
         try { Files.createLink(target,temporary); }
         catch(FileAlreadyExistsException raced) { /* 同 SID 競爭只驗實際贏家。 */ }
-        verify(lookup(frozen.sessionUuid()),frozen);
+        verify(read(frozen.sessionUuid()),expected);
         Files.delete(temporary);
     }
-    private static void verify(Optional<HomeSessionRecord> actual,HomeSessionRecord expected) throws IOException {
-        if(!actual.equals(Optional.of(expected))) throw new IOException("既有 SID 收據與結案快照不符");
+    void requireExact(HomeSessionRecord frozen) throws IOException {
+        verify(read(frozen.sessionUuid()),wrapper(frozen));
+    }
+    void verifyActive(JournalSession active) throws IOException {
+        var stored=read(active.sessionUuid());
+        if(stored.isEmpty()) return;
+        if(!(active instanceof HomeSessionRecord h) || !(h.home().closeIntent() instanceof HomeSessionRecord.Close))
+            throw new IOException("既有回程歷史不能與未結案熱列共存");
+        verify(stored,wrapper(h));
+    }
+    private static void verify(Optional<Receipt> actual,NbtCompound expected) throws IOException {
+        if(actual.isEmpty() || !actual.get().wrapped().equals(expected)) throw new IOException("既有 SID 收據與結案快照不符");
     }
 }

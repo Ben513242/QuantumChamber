@@ -95,6 +95,8 @@ public record HomeSessionRecord(UUID sessionUuid, UUID chamberUuid, ChamberOrigi
         boolean recovery = home.sealedReason().orElse(null) == Seal.TRANSFER_RECOVERY_REQUIRED;
         check(recovery ? opened && home.recoveryRequired().size() == 1 && people.contains(home.recoveryRequired().getFirst())
                 && !home.crossed().contains(home.recoveryRequired().getFirst()) : home.recoveryRequired().isEmpty(), "移動恢復");
+        check(home.stopReason().isEmpty() || state!=SEALED || home.sealedReason().orElseThrow()==Seal.AUTHORITY_UNREADABLE,
+                "永久封存與原艙停止互斥");
         check(home.stopReason().isPresent() ? selected >= 0 && home.stoppedAtGameTime() >= selected
                 : home.stoppedAtGameTime() == -1, "停止時間");
         if (home.closeIntent() instanceof Close close) validateClose(state, home, people, allReturned && spaceLeases.isEmpty(), close);

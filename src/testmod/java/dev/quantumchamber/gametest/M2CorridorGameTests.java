@@ -866,7 +866,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
                     phase,snapshot(tick),failure==null ? "NONE" : failure.getClass().getName()+":"+failure.getMessage());
         }
     }
-    private static void walkNative(NativeEntry fixture,ServerPlayerEntity player,double z) {
+    static void walkNative(NativeEntry fixture,ServerPlayerEntity player,double z) {
         var owners=fixture.pages.currentEntityOwners(fixture.record().sessionUuid()).orElseThrow();
         var target=fixture.pages.toPhysical(owners.get(player.getUuid()),new CorridorPageManager.LogicalPose(3.5,1,z,Vec3d.ZERO,0,0));
         var box=player.getBoundingBox().offset(target.position().subtract(player.getPos()));

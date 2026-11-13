@@ -12,10 +12,19 @@ import static dev.quantumchamber.superposition.SessionState.*;
 /** 量測整檔與每個 SID 的可達峰值；一律使用原生有界 NBT 計量。 */
 public final class HomeJournalBudget {
     private HomeJournalBudget() {}
+    /** 僅由已知大小上限觸發；嚴格內容、深度與 IO 問題一律交原本錯誤路徑。 */
+    public static final class CapacityExceeded extends IllegalArgumentException {
+        private CapacityExceeded(String message) { super(message); }
+    }
     private static long measure(NbtCompound encoded) {
         try {
             var bytes=new ByteArrayOutputStream(); NbtIo.writeCompressed(encoded,bytes);
-            var tracker=NbtSizeTracker.of(SessionJournalStore.SCHEMA_FIVE_BUDGET);
+            var tracker=new NbtSizeTracker(SessionJournalStore.SCHEMA_FIVE_BUDGET,512) {
+                @Override public void add(long bytes) {
+                    try { super.add(bytes); }
+                    catch(NbtSizeValidationException size) { throw new CapacityExceeded("HOME NBT 配置量超過 16 MiB"); }
+                }
+            };
             NbtIo.readCompressed(new ByteArrayInputStream(bytes.toByteArray()),tracker);
             return tracker.getAllocatedBytes();
         } catch(IOException failure) { throw new UncheckedIOException(failure); }
@@ -31,10 +40,10 @@ public final class HomeJournalBudget {
             var peaks=peaks(compact);
             long growth=peaks.hot-base;
             total=Math.addExact(total,growth);
-            if(total>SessionJournalStore.SCHEMA_FIVE_BUDGET) throw new IllegalArgumentException("HOME 熱 journal 完成預留不足");
+            if(total>SessionJournalStore.SCHEMA_FIVE_BUDGET) throw new CapacityExceeded("HOME 熱 journal 完成預留不足");
             // 固定來源快照的差額只計一次；wrapper 與 NBT list 祖先各自實測。
             if(peaks.receipt>0 && measure(n)-base+peaks.receipt>SessionJournalStore.SCHEMA_FIVE_BUDGET)
-                throw new IllegalArgumentException("HOME 單 SID 最壞收據超限");
+                throw new CapacityExceeded("HOME 單 SID 最壞收據超限");
         }
     }
     static long remaining(HomeSessionRecord row) {
@@ -96,7 +105,8 @@ public final class HomeJournalBudget {
             boolean trr=seal==Seal.TRANSFER_RECOVERY_REQUIRED;
             var crossed=trr?cohort.subList(0,cohort.size()-1):cohort;
             var recovery=trr?List.of(cohort.getLast()):List.<UUID>of();
-            result.add(row(r,returned,List.of(),SEALED,new Home(selection,0,0,1200,crossed,recovery,Optional.of(root),0,new None(),Optional.of(seal))));
+            var stop=seal==Seal.AUTHORITY_UNREADABLE ? Optional.of(root) : Optional.<RootReason>empty();
+            result.add(row(r,returned,List.of(),SEALED,new Home(selection,0,0,1200,crossed,recovery,stop,stop.isPresent()?0:-1,new None(),Optional.of(seal))));
         }
         return result;
     }

@@ -17,7 +17,12 @@
       "dev.quantumchamber.persistence.M7HomeHistoryTest.closeMatrixRejectsMismatchedOriginOrEvidence",
       "dev.quantumchamber.persistence.M7HomeJournalTest.terminalRemovalRequiresHistoryAndKeepsEmptySix",
       "dev.quantumchamber.persistence.M7HomeJournalTest.quarantineRollsUnselectedIntoReturningAndRejectsCrossRowLeaseCollision",
-      "dev.quantumchamber.persistence.M7HomeJournalTest.unknownFirstHomeRetainsParticipantChamberAndSlotUntilReconciliation"
+      "dev.quantumchamber.persistence.M7HomeJournalTest.unknownFirstHomeRetainsParticipantChamberAndSlotUntilReconciliation",
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.everySchemaSixActiveSidMustAgreeWithItsHistory",
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.matchingTypedReceiptStillRequiresExactWrapperBeforeRemovingActive",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.uncheckedLeaseReleaseCannotDonateAnotherSidsSlotBoundsOrPlayer",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.permanentSealsRejectRootLatchWhileRestartOnlySealCanLatch",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.trackerDepthOrMalformedAuthorityDoesNotBecomeCapacityRetry"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",
@@ -27,7 +32,8 @@
   "windows": {
     "junit": [],
     "gametest": [
-      "quantumchamber:m1_empty|m7homespikegametests.checkpoint_capability_is_confirmed_on_windows"
+      "quantumchamber:m1_empty|m7homespikegametests.checkpoint_capability_is_confirmed_on_windows",
+      "quantumchamber:m1_empty|m7homespikegametests.candidate_and_remap_capacity_retry_keeps_published_team"
     ]
   },
   "ubuntu": {

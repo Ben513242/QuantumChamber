@@ -26,7 +26,12 @@ public final class SessionJournalStore {
         if (!data.contains("SchemaVersion", 3) || data.getInt("SchemaVersion") < 1 || data.getInt("SchemaVersion") > 6)
             throw new IOException("journal 寫入版本缺失或未知");
         if (data.getInt("SchemaVersion") >= 5) {
-            writePrepared(target, prepareSchemaFive(wrapped, value -> SessionRecoveryState.fromNbt(value).requireHealthy()));
+            var prepared=prepareSchemaFive(wrapped,value -> {
+                var decoded=SessionRecoveryState.fromNbt(value);
+                decoded.requireHealthy();
+                if(value.getInt("SchemaVersion")==6) SessionRecoveryState.verifyReceipts(target,decoded.allSessions());
+            });
+            writePrepared(target,prepared);
             return;
         }
         Path absolute = target.toAbsolutePath().normalize();
@@ -44,16 +49,19 @@ public final class SessionJournalStore {
     public static NbtCompound read(Path target) throws IOException { return readSnapshot(target).decode(); }
 
     /** 對候選同一份 bytes 做完整有界讀回；回呼只收 data，回傳前再核整份 wrapper exact。 */
-    static PreparedWrite prepareSchemaFive(NbtCompound wrapped, java.util.function.Consumer<NbtCompound> strict) throws IOException {
+    @FunctionalInterface
+    interface StrictReader { void accept(NbtCompound data) throws IOException; }
+
+    static PreparedWrite prepareSchemaFive(NbtCompound wrapped, StrictReader strict) throws IOException {
         validateWrapper(wrapped);
         if (!wrapped.getCompound("data").contains("SchemaVersion", 3)
                 || (wrapped.getCompound("data").getInt("SchemaVersion") != 5 && wrapped.getCompound("data").getInt("SchemaVersion") != 6))
-            throw new IOException("schema5 preflight 不接受其他版本");
+            throw new IOException("有界 journal 預檢不接受 schema "+wrapped.getCompound("data").getInt("SchemaVersion"));
         var bytes = new ByteArrayOutputStream(); NbtIo.writeCompressed(wrapped, bytes);
         var snapshot = new Snapshot(bytes.toByteArray()); var decoded = snapshot.decode();
         strict.accept(decoded.getCompound("data"));
         if (decoded.getCompound("data").getInt("SchemaVersion") == 6) HomeJournalBudget.requireReserved(decoded);
-        if (!wrapped.equals(decoded)) throw new IOException("schema5 preflight exact readback 不符");
+        if (!wrapped.equals(decoded)) throw new IOException("schema"+wrapped.getCompound("data").getInt("SchemaVersion")+" preflight exact readback 不符");
         return new PreparedWrite(snapshot, decoded);
     }
     static final class PreparedWrite {

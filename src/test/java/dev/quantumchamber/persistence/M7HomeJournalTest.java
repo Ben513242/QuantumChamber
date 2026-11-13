@@ -227,4 +227,63 @@ class M7HomeJournalTest {
         assertArrayEquals(fileBytes,Files.readAllBytes(file));
         assertEquals(home,SessionRecoveryState.load(file).allFlushedSessions().get(home.sessionUuid()));
     }
+    @Test void uncheckedLeaseReleaseCannotDonateAnotherSidsSlotBoundsOrPlayer() throws Exception {
+        var original=measured(1);
+        for(var p:original.getList("Participants",10)) ((NbtCompound)p).putBoolean("Returned",true);
+        var old=HomeJournalCodec.decode(original);
+        var file=directory.resolve("data/session.dat");
+        SessionJournalStore.write(file,M7BudgetSpikeTest.wrap(List.of(original)));
+        var state=SessionRecoveryState.load(file);
+        var cleared=original.copy(); cleared.put("SpaceLeases",new NbtList());
+        var next=HomeJournalCodec.decode(cleared);
+        assertEquals(SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING,state.commitHome(
+                () -> {throw new IllegalStateException("注入：move 前失敗");},old,next,false).status());
+        assertTrue(state.pendingSessions().isEmpty());
+        assertEquals(next,state.allSessions().get(next.sessionUuid()));
+        assertEquals(old,state.allFlushedSessions().get(old.sessionUuid()));
+        for(String conflict:List.of("slot","bounds","player")) {
+            var candidate=other(); var lease=candidate.getList("SpaceLeases",10).getCompound(0);
+            switch(conflict) {
+                case "slot" -> lease.putInt("SlotId",0);
+                case "bounds" -> lease.putIntArray("Bounds",original.getList("SpaceLeases",10).getCompound(0).getIntArray("Bounds"));
+                case "player" -> candidate.getList("Participants",10).getCompound(0).putUuid("PlayerUuid",old.participants().getFirst().playerUuid());
+            }
+            assertThrows(RuntimeException.class,() -> state.put(SessionRecoveryRecord.fromNbt(candidate,5)),conflict);
+        }
+        state.save(file.toFile(),null);
+        var reuse=other(); reuse.getList("SpaceLeases",10).set(0,original.getList("SpaceLeases",10).getCompound(0).copy());
+        reuse.getList("Participants",10).getCompound(0).putUuid("PlayerUuid",old.participants().getFirst().playerUuid());
+        assertDoesNotThrow(() -> state.put(SessionRecoveryRecord.fromNbt(reuse,5)));
+    }
+
+    @Test void permanentSealsRejectRootLatchWhileRestartOnlySealCanLatch() {
+        var base=HomeJournalCodec.encode(M7HomeHistoryTest.closed(32));
+        base.putString("State","SEALED");
+        var h=base.getCompound("Home"); h.put("CloseIntent",M7BudgetSpikeTest.kind("NONE"));
+        h.putLong("CommittedAtGameTime",21); h.putLong("PassageOpenedAtGameTime",25); h.putLong("PassageExpiresAtGameTime",1225);
+        for(var seal:HomeSessionRecord.Seal.values()) {
+            var row=base.copy(); var fields=row.getCompound("Home"); fields.putString("SealedReason",seal.name());
+            if(seal==HomeSessionRecord.Seal.TRANSFER_RECOVERY_REQUIRED) {
+                var one=new NbtList(); one.add(row.getList("Participants",10).getCompound(0).get("PlayerUuid").copy());
+                fields.put("RecoveryRequired",one);
+            }
+            if(seal==HomeSessionRecord.Seal.AUTHORITY_UNREADABLE) assertDoesNotThrow(() -> HomeJournalCodec.decode(row));
+            else assertThrows(IllegalArgumentException.class,() -> HomeJournalCodec.decode(row),seal.name());
+            fields.putString("StopReason",""); fields.putLong("StoppedAtGameTime",-1);
+            assertDoesNotThrow(() -> HomeJournalCodec.decode(row));
+        }
+    }
+    @Test void trackerDepthOrMalformedAuthorityDoesNotBecomeCapacityRetry() throws Exception {
+        var row=M7BudgetSpikeTest.home(1);
+        var snapshot=row.getList("Participants",10).getCompound(0).getCompound("QuantumState");
+        var cursor=snapshot;
+        for(int i=0;i<512;i++) {
+            var child=new NbtCompound();cursor.put("Nested",child);cursor=child;
+        }
+        var deep=assertThrows(RuntimeException.class,() -> HomeJournalBudget.requireReserved(M7BudgetSpikeTest.wrap(List.of(row))));
+        assertFalse(deep instanceof HomeJournalBudget.CapacityExceeded);
+        var malformed=M7BudgetSpikeTest.home(1);malformed.putInt("State",10);
+        var invalid=assertThrows(RuntimeException.class,() -> HomeJournalBudget.requireReserved(M7BudgetSpikeTest.wrap(List.of(malformed))));
+        assertFalse(invalid instanceof HomeJournalBudget.CapacityExceeded);
+    }
 }

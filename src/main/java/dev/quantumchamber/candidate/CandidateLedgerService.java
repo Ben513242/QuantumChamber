@@ -1,5 +1,6 @@
 package dev.quantumchamber.candidate;
 
+import dev.quantumchamber.persistence.HomeJournalBudget.CapacityExceeded;
 import dev.quantumchamber.corridor.DoorKey;
 import dev.quantumchamber.persistence.FailureText;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
@@ -120,7 +121,11 @@ public final class CandidateLedgerService {
             for (var key : missing) ledger.add(new CandidateLedgerEntry(key, loaded.resolver().resolve(key, context, pool,
                     () -> loaded.source().apply(context.sourceFamilyRef()))));
             var next = copy(previous, ledger, previous.candidateSelection().orElseThrow(), previous.state());
-            return committedKeys(commitChecked(journal, previous, next), requested);
+            try { return committedKeys(commitChecked(journal, previous, next), requested); }
+            catch(CapacityExceeded pending) {
+                // 舊門保留已確認的發佈權；漏掉的新 key 由既有每 tick 的批次重新提出。
+                return committedKeys(previous,requested);
+            }
         } catch (CommitFailure alreadyLogged) {
             return failedBatch();
         } catch (IOException | RuntimeException exception) {
@@ -205,19 +210,29 @@ public final class CandidateLedgerService {
         requireExpectedCurrent(journal, previous);
         try {
             journal.put(next);
+        } catch(CapacityExceeded pending) {
+            // 僅 put 的無副作用預檢可退避。flush 或其他例外仍要 containment。
+            throw pending;
+        } catch(RuntimeException failure) {
+            throw failedCommit(journal,next,failure);
+        }
+        try {
             journal.flush();
             var actual = journal.flushedRecords().get(next.sessionUuid());
             if (!next.equals(actual)) throw new IllegalStateException("候選 journal exact readback 不符");
             return actual;
         } catch (RuntimeException failure) {
-            var containment = contain(journal, next, failure);
-            if (containment == Containment.UNCONTAINED) {
-                LOGGER.error("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, FailureText.describe(failure));
-            } else {
-                LOGGER.warn("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, FailureText.describe(failure));
-            }
-            throw new CommitFailure(failure);
+            throw failedCommit(journal,next,failure);
         }
+    }
+    private static CommitFailure failedCommit(JournalPort journal,SessionRecoveryRecord next,RuntimeException failure) {
+        var containment = contain(journal, next, failure);
+        if (containment == Containment.UNCONTAINED) {
+            LOGGER.error("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, FailureText.describe(failure));
+        } else {
+            LOGGER.warn("候選 checked 提交失敗，session={}，{}：{}", next.sessionUuid(), containment.description, FailureText.describe(failure));
+        }
+        return new CommitFailure(failure);
     }
 
     /** 提交失敗後未 checked authority 的實際處置。 */

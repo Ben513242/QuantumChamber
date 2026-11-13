@@ -116,4 +116,46 @@ class M7HomeHistoryTest {
             assertThrows(RuntimeException.class,() -> HomeJournalCodec.decode(bad),key);
         }
     }
+    @Test void everySchemaSixActiveSidMustAgreeWithItsHistory() throws Exception {
+        var frozen=closed(31);
+        var store=new HomeReceiptStore(save); store.publishOrVerify(frozen);
+        var original=save.resolve("data/quantumchamber_home_receipts").resolve(frozen.sessionUuid()+".dat");
+        var old=M7HomeJournalTest.other();
+        var sid=old.getUuid("SessionUuid");
+        var receipt=original.resolveSibling(sid+".dat");
+        var normalized=HomeReceiptStore.wrapper(frozen);
+        var data=normalized.getCompound("data"); data.putUuid("SessionUuid",sid);
+        var session=data.getCompound("Session"); session.putUuid("SessionUuid",sid);
+        session.getCompound("Home").getCompound("Selection").getCompound("DoorKey").putUuid("SessionUuid",sid);
+        var target=save.resolve("data/session.dat");
+        for(boolean corrupt:List.of(false,true)) {
+            if(corrupt) Files.write(receipt,new byte[]{1,2,3}); else NbtIo.writeCompressed(normalized,receipt);
+            var immutable=Files.readAllBytes(receipt);
+            for(boolean mixed:List.of(false,true)) {
+                var rows=mixed?List.of(old,HomeJournalCodec.encode(frozen)):List.of(old);
+                var wrapped=M7BudgetSpikeTest.wrap(rows);
+                NbtIo.writeCompressed(wrapped,target);
+                var input=Files.readAllBytes(target);
+                assertThrows(RuntimeException.class,() -> SessionRecoveryState.load(target).requireHealthy());
+                assertThrows(Exception.class,() -> SessionJournalStore.write(target,wrapped));
+                assertArrayEquals(input,Files.readAllBytes(target));
+                assertArrayEquals(immutable,Files.readAllBytes(receipt));
+            }
+        }
+    }
+
+    @Test void matchingTypedReceiptStillRequiresExactWrapperBeforeRemovingActive() throws Exception {
+        var frozen=closed(31); var store=new HomeReceiptStore(save);
+        var target=save.resolve("data/session.dat");
+        SessionJournalStore.write(target,M7BudgetSpikeTest.wrap(List.of(HomeJournalCodec.encode(frozen))));
+        var state=SessionRecoveryState.load(target); store.publishOrVerify(frozen);
+        var receipt=save.resolve("data/quantumchamber_home_receipts").resolve(frozen.sessionUuid()+".dat");
+        var tampered=HomeReceiptStore.wrapper(frozen);
+        tampered.putInt("DataVersion",tampered.getInt("DataVersion")+1); NbtIo.writeCompressed(tampered,receipt);
+        var before=Files.readAllBytes(receipt); var hot=Files.readAllBytes(target);
+        assertThrows(Exception.class,() -> store.publishOrVerify(frozen));
+        assertFalse(state.terminateHome(store,() -> state.save(target.toFile(),null),frozen).removed());
+        assertThrows(RuntimeException.class,() -> SessionRecoveryState.load(target).requireHealthy());
+        assertArrayEquals(before,Files.readAllBytes(receipt)); assertArrayEquals(hot,Files.readAllBytes(target));
+    }
 }

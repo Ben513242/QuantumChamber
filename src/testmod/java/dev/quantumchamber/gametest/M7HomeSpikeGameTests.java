@@ -49,4 +49,60 @@ public final class M7HomeSpikeGameTests implements FabricGameTest {
     private static void awaitWindows(TestContext context,M2CorridorGameTests.NativeEntry fixture,int tick){
         context.runAtTick(tick,()->{if(fixture.activeReady()){fixture.trustedTeardown(tick+1,context::complete);return;}context.assertTrue(tick<5000,"正式A入場有限等待");awaitWindows(context,fixture,tick+1);});
     }
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_capacity_windows",tickLimit=100000)
+    public void candidate_and_remap_capacity_retry_keeps_published_team(TestContext context) {
+        var fixture=new M2CorridorGameTests.NativeEntry(context,1);
+        context.waitAndRun(2,fixture::power);
+        awaitPublished(context,fixture,3);
+    }
+    private static void awaitPublished(TestContext context,M2CorridorGameTests.NativeEntry f,int tick) {
+        context.runAtTick(tick,()-> {
+            if(!f.activeReady() || f.pages.selectableDoors(f.record().sessionUuid()).isEmpty()) {
+                context.assertTrue(tick<5000,"正式 A 隊伍尚未發布既有側門");
+                awaitPublished(context,f,tick+1); return;
+            }
+            var journal=dev.quantumchamber.persistence.SessionRecoveryState.get(f.server);
+            var old=f.record(); var key=new dev.quantumchamber.corridor.DoorKey(old.sessionUuid(),10_000L,
+                    dev.quantumchamber.corridor.DoorKey.DoorWallSide.POSITIVE_LATERAL);
+            var doors=f.pages.selectableDoors(old.sessionUuid()); var mapping=f.pages.currentMappings(old.sessionUuid());
+            var player=f.players.getFirst().player();
+            var priorRuntime=M4CandidateDoorGameTests.runtimeOwnership(f);
+            M2CorridorGameTests.walkNative(f,player,97.5);
+            var pose=player.getPos();
+            var pressure=dev.quantumchamber.persistence.M7CapacityFixture.admit(f.server,old);
+            var service=new dev.quantumchamber.candidate.CandidateLedgerService();
+            String failure=null;
+            try {
+                var append=service.commitCandidates(f.server,old.sessionUuid(),java.util.List.of(key));
+                RuntimeException refusal=null;
+                try { f.pages.prepareRemap(old.sessionUuid(),mapping.epoch(),java.util.Set.of(1L)); }
+                catch(RuntimeException denied) { refusal=denied; }
+                // 同一正式 reposition 入口必須把容量拒絕留為重試；一般故障仍由其外層要求返還。
+                new dev.quantumchamber.corridor.CorridorRepositionService(f.server,record->record.sessionUuid().equals(old.sessionUuid())).tick(f.server);
+                if(append.sessionFailed() || append.committedKeys().contains(key) || refusal==null
+                        || !old.equals(journal.allSessions().get(old.sessionUuid()))
+                        || !old.equals(journal.allFlushedSessions().get(old.sessionUuid()))
+                        || !mapping.equals(f.pages.currentMappings(old.sessionUuid()))
+                        || !priorRuntime.equals(M4CandidateDoorGameTests.runtimeOwnership(f))
+                        || !doors.equals(f.pages.selectableDoors(old.sessionUuid())) || !pose.equals(f.players.getFirst().player().getPos()))
+                    failure="預算不足須保隊伍、租約、原映射與已發布門";
+            } catch(RuntimeException unexpected) { failure=unexpected.toString(); }
+            finally { dev.quantumchamber.persistence.M7CapacityFixture.release(f.server,pressure); }
+            if(failure==null) try {
+                var retry=service.commitCandidates(f.server,old.sessionUuid(),java.util.List.of(key));
+                if(retry.sessionFailed() || !retry.committedKeys().contains(key)) failure="容量釋出後候選未能重試";
+                else {
+                    var prepared=f.pages.prepareRemap(old.sessionUuid(),mapping.epoch(),java.util.Set.of(1L));
+                    if(prepared.baseEpoch()!=mapping.epoch()) failure="容量釋出後未從原映射重試";
+                    f.pages.retire(f.pages.cancelPrepared(prepared));
+                }
+            } catch(RuntimeException unexpected) { failure=unexpected.toString(); }
+            final String observed=failure;
+            if(observed!=null) org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").warn("M7_CAPACITY_CONTRACT_FAILED {}",observed);
+            f.trustedTeardown(tick+1,()->{
+                context.assertTrue(observed==null,observed==null?"原旅程權威保持完整":observed);
+                context.complete();
+            });
+        });
+    }
 }

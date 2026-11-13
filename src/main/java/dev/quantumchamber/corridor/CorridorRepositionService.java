@@ -95,7 +95,11 @@ public final class CorridorRepositionService {
         }
         if(occupied.isEmpty() || occupied.equals(state.occupied)) return;
         state.targetPages=Set.copyOf(occupied);
-        state.pending=pages.prepareRemap(record.sessionUuid(),pages.currentMappings(record.sessionUuid()).epoch(),state.targetPages);
+        try {
+            state.pending=pages.prepareRemap(record.sessionUuid(),pages.currentMappings(record.sessionUuid()).epoch(),state.targetPages);
+        } catch(dev.quantumchamber.persistence.HomeJournalBudget.CapacityExceeded retry) {
+            state.targetPages=Set.of();
+        }
     }
 
     private static void requireActiveBuff(SessionRecoveryRecord record,CorridorPageManager pages) {
