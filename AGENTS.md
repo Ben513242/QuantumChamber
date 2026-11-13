@@ -119,8 +119,11 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 M7 T1 OPEN：I11原席靜態C0/I0/M0已採，依async授權普通push追同SHA五required CI；新SHA禁止本機重跑，不開T2。** 現行spec v1.2（M6同等T1收斂）與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
+**2026-11-13 M7 T1 CLOSED（新M6同等範圍）：I11原席C0/I0/M0＋同SHA57ca71a CI43418385083 attempt1五job全success。本輪停在T2前。** 現行spec v1.2（M6同等T1收斂）與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
 - M6同等窄候選04d42f43b693ba012f1f00409c541fa290980511已本機凍結（18檔、native/frame取消、M6/production不改），一次窄batch清單6A665538…已核，只JUnit4/GT3/CI正負/readonly-SelfTest；無native/main-only/全consumer。relativeOutput實驗F1，首非預期FAIL立即停不修/重試/不push；PASS後同席新scope C/I0才正常push追真CI。
+- 最終完整T1-CLOSEOUT.md/json在本plan SDD（md SHA1474365A…）；terminal-ci-verification SHA12FC3BD1…、root抽核A3749D0B…、兩OS raw與11SelfTest定位m7-original-pointers.json。新M7兩OS4JUnit/3GT、舊default166/M560/M635/legacy1、Win normal13/main-only、M6native9/27/479全部真驗。source67/CI57、本機PASS04d不混；最後狀態/plan勾選只本機，不再push造CI。T2未啟、producer留存，I2正式預留移T2/I7超M6殘留/舊FAIL計數保留，不因T1閉合當M7完成。
+- 正在追CI43418385083/head57ca71a實際5jobs；新M7 Win/Ubuntu已真success（各4JUnit/3GT、7raw hash、11SelfTest皆按預期，原件已下載只讀核），舊build/windows-native/m6-native仍跑。T1仍OPEN不T2，不把2/5抵全部CI；後續只讀，不重跑/改碼重送。
+- 已正常push並ls-remote核同SHA57ca71ae35173e784a9f53013b2f5dfeba5548ba（source67bf1a0＋狀態docs，無本機重跑）。CI正在等同SHA事件/五jobs，仍OPEN不T2；不重送push/自動rerun。後續CI終局先工作區/ledger，不為寫回造額外CI。
 - 原席task-1-i11-review.md SHA644A3F418D…採用67bf1a08，I11 live真HEAD與saved proof/fresh消費已靜態清零；五新controls只將來CI跑。本機舊PASS仍04d42f43。下一步必要docs/普通push/遠端讀回/同SHA5jobs真終局；CI未驗不closed，FAIL不rerun/改碼重送，CI終局不另push狀態doc造循環。
 - I11最小候選67bf1a08f1cd85044bf1eba37aaa0322295ea67b已原作者本機commit，只兩script/39插10刪；原唯一reviewer靜態核中。五CI-only負例尚未執行，本機零compile/test/parser/SelfTest，舊localPASS仍04d42f43。C/I0才正常push追真CI，尚未push。
 - 最新async原文已照錄note：選「允許只補 I11、原席確認後 push CI；不再本機重跑（建議）」。只最小live末端重讀HEAD＋保存摘要對raw proof核對/使用重算結果，保歷史VerifyOnly顯式舊SHA；不JUnit/GT/production/其他殘留。可寫同scope CI selftest但本機任何compile/runtime/SelfTest皆不跑。舊本機PASS仍04d42f43，新source另SHA原席靜態清零才正常push/核遠端/追實際5required CI；CI fail不自動重跑/修碼重送，全綠才closed，仍不T2。

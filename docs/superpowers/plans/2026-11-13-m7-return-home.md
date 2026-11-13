@@ -84,13 +84,13 @@
 **修改** `build.gradle`、testmod fabric.mod.json/filter/observer/preset、`S/{gates,run-all,ci-rule-check}.ps1`、`.github/workflows/build.yml`、`S/README.md`。移除T1 native/main-only/export/consumer框架的入口與相依；可刪未用tracked source，保所有Git歷史/ignored證據。production不動。
 **消費／產出** 沿M6既有JUnit入口/GT Gradle run與gates exact oracle、m6-ci-gametest的fresh/raw/pace/JAR/readonly做法；產出M7兩平台各自非空JUnit/GT exact集合、原XML/log/hash/summary、真正workflow fixture正負證據。T1沒有native集合/成功收據，不執行native/readback/date/selftest腳本作影子門檻。
 
-- [ ] 只保合法NBT大小上限、same-bytes bounded讀取與硬連結no-clobber JUnit；I1/I3已處理回歸保留。移走形式上的所有後繼/CLOSE/固定lease預留公式證明，I2固定32反證列T2。startup/native publication日期工具不再是T1測項；兩平台真volume硬link/大小仍須真跑，不以假平台或skip代替。
-- [ ] GT用同一附著BE的ORIGIN成功/PROJECTION拒對照與既有正式A平台入口；Ubuntu拒絕/零新增副作用依M6既有做法，保源/實際XML exact、正常pacing/testmod隔離。不要用CLOSE欄位讀取冒充guard，也不為額外witness新改production。
-- [ ] T1 CI只JUnit/GT與M6同等封裝/summary，不新M7 native/main-only/measurement-shard-aggregate。M6原required build/windows-native/m6-native及原main-only/全部斷言不改。raw輸出放本輪安全新root，canonical/非reparse/已有root拒覆寫，原XML/log先保留/hash；不clean刪證據。
-- [ ] Java方法宣告/portable+windows或ubuntu清單/實際XML三方exact，所有required非空無failure/error/skip；移除native18與舊26/shard成功標籤，不用空列表PASS。JUnit/GT原件須本次呼叫、帶codeSHA與平台；verify-only/readback不可冒稱新runtime。
-- [ ] 照M6模式接真正workflow step fixture正例與drop/skip/wrong-scope等具名負例；每步即核預期exit/結果，首非預期立即停。F1路徑及F2正例/negative/停點依原席分類實際修掉或隨取消框架移除，不能只忽略error。
-- [ ] 本輪一輪整改後凍結一次窄batch，執行JUnit/GT/CI正負與M6等價readonly/SelfTest。不原生pair/18/39/完整consumer/main-only/clean/W10/full。FAIL即停不補修/重跑/不push；PASS後同席核新scope C/I0，正常push追同SHA雙平台新T1及全部既有required CI，CI FAIL無自動rerun。全success才T1 closed，仍不開T2。
-- [ ] controller按實際逐檔stage本task與狀態文件；超M6殘留列清楚不擋依據、不得影子阻擋或默認塞T4。保歷史原判/根/計數，回報來源分類/改檔/精確集合/實際一次命令rootSHAexit/CI/未知與新成本模型。
+- [x] 只保合法NBT大小上限、same-bytes bounded讀取與硬連結no-clobber JUnit；I1/I3已處理回歸保留。移走形式上的所有後繼/CLOSE/固定lease預留公式證明，I2固定32反證列T2。startup/native publication日期工具不再是T1測項；兩平台真volume硬link/大小仍須真跑，不以假平台或skip代替。
+- [x] GT用同一附著BE的ORIGIN成功/PROJECTION拒對照與既有正式A平台入口；Ubuntu拒絕/零新增副作用依M6既有做法，保源/實際XML exact、正常pacing/testmod隔離。不要用CLOSE欄位讀取冒充guard，也不為額外witness新改production。
+- [x] T1 CI只JUnit/GT與M6同等封裝/summary，不新M7 native/main-only/measurement-shard-aggregate。M6原required build/windows-native/m6-native及原main-only/全部斷言不改。raw輸出放本輪安全新root，canonical/非reparse/已有root拒覆寫，原XML/log先保留/hash；不clean刪證據。
+- [x] Java方法宣告/portable+windows或ubuntu清單/實際XML三方exact，所有required非空無failure/error/skip；移除native18與舊26/shard成功標籤，不用空列表PASS。JUnit/GT原件須本次呼叫、帶codeSHA與平台；verify-only/readback不可冒稱新runtime。
+- [x] 照M6模式接真正workflow step fixture正例與drop/skip/wrong-scope等具名負例；每步即核預期exit/結果，首非預期立即停。F1路徑及F2正例/negative/停點依原席分類實際修掉或隨取消框架移除，不能只忽略error。
+- [x] 本輪一輪整改後凍結一次窄batch，執行JUnit/GT/CI正負與M6等價readonly/SelfTest。不原生pair/18/39/完整consumer/main-only/clean/W10/full。FAIL即停不補修/重跑/不push；PASS後同席核新scope C/I0，正常push追同SHA雙平台新T1及全部既有required CI，CI FAIL無自動rerun。全success才T1 closed，仍不開T2。
+- [x] controller按實際逐檔stage本task與狀態文件；超M6殘留列清楚不擋依據、不得影子阻擋或默認塞T4。保歷史原判/根/計數，回報來源分類/改檔/精確集合/實際一次命令rootSHAexit/CI/未知與新成本模型。
 
 ### Task 2: schema6 共同 journal 與不可變單 SID 歷史
 
