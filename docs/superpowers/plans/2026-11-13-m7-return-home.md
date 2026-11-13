@@ -5,9 +5,9 @@
 **目標（Goal）**　合法 COMPLETE 投影 B 的參與者走固定回家門，先回 B，再經 B 的膜以原座標回 A。旅程終局可安全解除同艙占用。
 **架構（Architecture）**　將既有 checked journal 擴充為能同存舊列與 HOME 列的單一權威。沿用走廊、回收、票額、原生移動與 chunk checkpoint，分別核對 Entry=B 與 Root=A。每 SID 的終局收據保留歷史，活躍列負責完成 B 的最後門狀態。
 **技術基線（Tech Stack）**　Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Loom 1.7.4、Java 21、Gradle 8.8、PowerShell 7。
-**對應規格（Spec）**　[v1.1 驗證平台勘誤候選](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `8F6AA80876FAF27363FFB4AB576DDBC8BD74BF1CA7F8EA4E96A40404D54ECDA6`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
+**對應規格（Spec）**　[v1.1 驗證平台勘誤已採用](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `0A93B044009ADCD8096D00C74F99EA596F86A76DA181CA1BCC8BB9E2F12EC4E7`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
 
-## 2026-11-13 有界驗證修訂（待一席獨立審查）
+## 2026-11-13 有界驗證修訂（一席C0/I0/M1後採用）
 
 來源：[M7 note「使用者回覆 T1 checkpoint」](../../implementation-notes/2026-11-13-m7-return-home.md)逐字四裁示，原文在SDD/user-t1-scope-ruling-20261113.md。只改驗證範圍，不改玩法、production契約或歷史原判。
 

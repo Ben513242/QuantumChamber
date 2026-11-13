@@ -20,7 +20,10 @@
    - 說明：「依上面裁示修改 plan 並一席獨立審查；再做一輪核心整改加一次定向驗證就停下來回報，不開正式全集。」
 
 ### 本輪執行界線（controller 依上述裁示落地）
+- 原唯一reviewer已採用文件候選`4132fe5`：plan/spec C0/I0/M1，report `task-1-plan-amendment-review.md` SHA-256 `C457062A04AD863F468CDCC05B09CB533A4566D77A98B824488AC9133FD7A584`。逐I歸屬`task-1-scope-disposition.md` SHA-256 `A29404AA66A460A683792AF9B389946587B124D1FEEF99A014A57E4FBFA7AA0E`：9項全保留；I6/I8/I10僅Linux/Ubuntu/雙OS26shard部分標範圍移除，12項皆仍有待修/待驗義務。原core C0/I12/M2及8D3C報告不改。
+- 採用後只更新plan/spec標頭及引用SHA，不改已審契約；AGENTS將本輪現況與舊快照分隔以處理M1。現在可回原作者fix1，但先不compile/測試，先交程式候選及事前batch清單，controller核後才一次定向；未開正式矩陣、CI或push。
 
+- docs-only amendment當前HEAD `4132fe53b92078faf7c16f0bd2460511baa767a1`（`d6caf20`加單批build/快照取得順序自審補正），未push；已交原唯一reviewer靜態審plan/spec及12I scope disposition，未動工具/清單/CI/source，沒有新增runtime。
 - docs-only amendment 候選 d6caf208116120b9862b0651f91f018017763f68 已在本機提交、未push；plan/spec驗證勘誤待原唯一reviewer，一切工具/清單/CI/source尚未整改，沒有新增runtime。
 
 - 先僅修改 plan／必要 spec 驗證平台勘誤，不改玩法；由原唯一 reviewer 獨立審查 plan amendment 及 I1–I12 歸屬，C/I 清零後才可動 exact 清單／CI／oracle／工具。原 review 的 C0/I12/M2 與 finding 不覆寫；「範圍移除」須原 reviewer 確認，Windows 與其他真正缺陷不能整項豁免。

@@ -1,11 +1,11 @@
-# M7 正規回程：binding spec（v1.1，驗證平台勘誤候選）
+# M7 正規回程：binding spec（v1.1，驗證平台勘誤已採用）
 
 日期：2026-11-13。基準工作樹：`codex/m7-return-home`，從 main `2255027` 開出。
-狀態：v1.0於2026-11-13第三輪獨立複審C0/I0/M0後採用，玩法及資料契約等同凍結v0.3（SHA-256 `463FAA723F6E15915B34378774E298D52C84BB3AFC09EF44EC980807B988D1F2`）。v1.1只依使用者新裁示更新驗證平台/PoC邊界，待同一席plan amendment審查；本文不是實作、測試、人工驗收或整合結果。
+狀態：v1.0於2026-11-13第三輪獨立複審C0/I0/M0後採用，玩法及資料契約等同凍結v0.3（SHA-256 `463FAA723F6E15915B34378774E298D52C84BB3AFC09EF44EC980807B988D1F2`）。v1.1只依使用者新裁示更新驗證平台/PoC邊界，同一席plan amendment審查C0/I0/M1後採用；本文不是實作、測試、人工驗收或整合結果。
 範圍唯一來源：[M7 note](../../implementation-notes/2026-11-13-m7-return-home.md) 的使用者裁示。
 未明列改變的 M2／M4／M5／M6 契約維持；建議稿不是另一份 binding spec。
 
-## 2026-11-13 驗證邊界勘誤（待同席plan amendment審查）
+## 2026-11-13 驗證邊界勘誤（同席審查後採用）
 
 來源為[M7 note「使用者回覆T1 checkpoint」](../../implementation-notes/2026-11-13-m7-return-home.md)之本Codex使用者四裁示，非Claude稿/技能。v1.0玩法/資料契約不變；只改驗證：Windows T1 PoC18代表列，T4正式owner39列通過後default full/CI退休PoC、保原件，T2/T3仍留守門。native crash/reopen及獨立main-only僅Windows；Ubuntu跑真volume硬連結/大小上限等JUnit及GameTest正式拒絕，無Linuxowner/native/main-only，Linux crash/reopen只由Windows推論。V矩陣涉及跨JVM/native依此平台界線；兩平台可攜測試/零skip與正式Windows必要切點不放寬。本輪僅plan一席清零→一輪整改＋一次定向→停回報，不恢復正式全集或下一task。
 
