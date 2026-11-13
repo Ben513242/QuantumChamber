@@ -1,6 +1,6 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，production T2 尚待實作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，production T2 正在實作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
 ## 使用者新裁示：T2 起連續推進與新止損（2026-11-13）
 
@@ -21,6 +21,14 @@
 - 驗證工具依穩定 problem ID 記連續非預期失敗，同問題第三次即停，安全收回相關自有 owner 並保全原件；expected RED／negative／mutation 正確拒絕分列不算工具缺陷。production bug 與工具 bug 依證據分開；既有 Evidence3／NativeStartup3／main-only2 歷史原判保留，已移除框架不復活，不任意合併無關問題或拆簽章迴避。
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
+
+## T2 正式資料層進行中（2026-11-13）
+
+- controller `/root/m7_t2_onward`；續行授權 docs `6032027`（未 push）為 T2 BASE。fresh implementer `t2_implementer`（gpt-6-astra/high/fork none）已核實當次使用者原文授權並開始變更；T1 不重做。
+- 已落兩新 JUnit 與五個新資料模型／codec／budget／receipt owner，舊三個共用 journal 檔正接線；目前僅 dirty 實作，不宣稱 GREEN 或完成。作者已報正式 schema6 writer 行為 RED 原件、API 缺失 compile RED 分列；I2 另以可編譯正式 owner 行為 RED 核固定 lease root latch／COLLAPSING，不以缺類別編譯失敗充證。
+- routine ruling：T2 兩新 suite 必須真正由兩平台 runner 執行；`gates.ps1` M7Runtime 與 `m7-ci-gametest.ps1` 原 T1 硬編類別需同 task 最小接線，保 T1 既有4案並與 inventory/source/XML exact；新增改檔已註記 plan，獨立 task reviewer 同審。沒有增加工具標準或另開 spec 審批。
+- 既有 W10 producer 只讀身份核實 `t2-w10-identity-02.json`：固定 tag/head/blob/patch/runner/diff exact、detached 唯一 dirty、祖先非 reparse、32鎖可獨占、runtimeOwners0、UTF8 65001。未重建／重套／執行 W10；full 前重核。controller 自寫只讀 helper 首次 DirectoryInfo provider 屬性誤判 FAIL 已保 `t2-w10-identity-01-failure.json` 轉錄與 ledger，修正後 PASS；是獨立 problem ID，不併舊 Native/Evidence。
+- I2/GREEN/mutation/focused/乾淨 candidate full、獨立 review 與同 SHA 全 CI 尚待；T2 OPEN。沒有人工／main／tag／PR／退役。
 
 ## 使用者async裁示：只補I11後原席清零、push同SHA CI（2026-11-13）
 

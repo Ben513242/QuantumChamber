@@ -109,7 +109,7 @@
 
 **新增**　`P/persistence/{JournalSession,HomeSessionRecord,HomeJournalCodec,HomeJournalBudget,HomeReceiptStore}.java`、`J/persistence/{M7HomeJournalTest,M7HomeHistoryTest}.java`。
 
-**修改**　`P/persistence/{SessionRecoveryRecord,SessionRecoveryState,SessionJournalStore,JournalNbt}.java`、`S/m7-inventory.json`、`README.md`。依賴T1已驗大小上限/同volume發布與exact清單；正式預留設計/上界由本task負責，不沿用錯誤T1公式。
+**修改**　`P/persistence/{SessionRecoveryRecord,SessionRecoveryState,SessionJournalStore,JournalNbt}.java`、`S/{m7-inventory.json,gates.ps1,m7-ci-gametest.ps1}`、`README.md`。runner兩處原T1 JUnit硬編清單需最小同步／依受控inventory驅動，真執行T2新增兩suite並保T1既有4案，與source／XML exact同審（2026-11-13 routine ruling，功能scope不變）。依賴T1已驗大小上限/同volume發布與exact清單；正式預留設計/上界由本task負責，不沿用錯誤T1公式。
 
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 
