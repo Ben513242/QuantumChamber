@@ -119,7 +119,10 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 M7 T1 OPEN：使用者改採M6同等，先plan/原同席分類採用，再一次窄T1整改與定向；PASS且C/I0後正常push追CI，不開T2。** 現行spec v1.2（M6同等T1收斂）與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
+**2026-11-13 M7 T1 OPEN：M6同等一次窄batch本機PASS，同席C0/I1/M0（I11）仍阻推送；未push/CI，待使用者最小補正裁示。** 現行spec v1.2（M6同等T1收斂）與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
+- M6同等窄候選04d42f43b693ba012f1f00409c541fa290980511已本機凍結（18檔、native/frame取消、M6/production不改），一次窄batch清單6A665538…已核，只JUnit4/GT3/CI正負/readonly-SelfTest；無native/main-only/全consumer。relativeOutput實驗F1，首非預期FAIL立即停不修/重試/不push；PASS後同席新scope C/I0才正常push追真CI。
+- 原同席新M6scope最終C0/I1/M0，僅I11需live末端重讀HEAD及讓final採原件重算/比對結果；有M6具體來源，不是全consumer框架。原件七步PASS/63.646秒保留，當時無實際漂移。t1-m6-convergence-final.md/json已凍結，source04d42f43未push、CI未跑。root在等僅I11最小補正的新裁示，答案前不動source/測試/push；本輪一輪一次已用、不自主fix/T2。
+- 新M6同等候選04d42f43唯一窄batch本機63.646秒/exit0，全7步PASS（JUnit4/GT3/relative root/readonly/真workflow正三負/原件hash）；raw701檔/owner0/鎖釋放。原同席正核新scope實作與原件，未push；C/I0才正常push追同SHA既有required＋新T1雙OS CI，全綠才closed，不T2，不再加本機測試。
 - M6同等plan/分類原席已C0/I0/M1採用（候選12fcdca），補正原T4十三cut/39/每列unique root-nonce-save/77→新JVM0不丟契約。report655E1F14…，12列歸屬ABBED551…：I2移T2、I7超M6殘留、I4/I11/F1/F2仍保留；其餘分割native範圍與M6安全/原件/JAR/exact。允許原作者一次scope convergence，先候選/batch核再執行一次，不原生PoC或更嚴框架；PASS且新scope C/I0才正常push。
 - 最新原文已照錄M7 note「T1收斂、M6同等」與SDD/user-t1-m6-standard-ruling-20261113.md：T1只JUnit上限/硬link＋GT入口＋CI接線；取消全部T1 native PoC18、T2/T3守門/退休額外CI，T4 Windows正式39保留。Ubuntu只JUnit/GT，不native/main-only/Linuxowner。原同席按b26b90c已PASS M6 source逐項分類現OPEN10舊＋F1/F2，超M6殘留不擋、I2移T2設計、native範圍移除不能假PASS。先docs分類C/I0才工具一次整改/定向，非預期FAIL即停不修/重試/不push；PASS且新scope C/I0後正常push追同SHA全部required CI，CI fail不自動rerun。本輪不T2/full/clean/W10，舊計數/FAIL/保全義務全保。
 - 同席fix1只讀審查已終局：I1/I3處理、I2/I4–I12仍PARTIAL/OPEN，新增F1/F2合計C0/I12open/新增M0。完整凍結t1-fix1-final-report.md/json及原task-1-fix1-review.md在本plan SDD；一次batch第6步停、根因UNKNOWN、7–10未跑。code pin b69397b未push，必要本機docs僅記結果。原作者/controller現在idle等使用者，不用原「清零直接續」展開fix2/18/39/full/T2/CI。
