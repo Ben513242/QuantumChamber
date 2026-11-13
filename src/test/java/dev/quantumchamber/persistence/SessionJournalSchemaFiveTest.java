@@ -880,7 +880,7 @@ class SessionJournalSchemaFiveTest {
         public boolean sourceGenerateStructures() { throw new AssertionError("不得覆寫 frozen bool"); }
     }
     @Test void versionProbeReadbackMismatchRejectsWithoutUnlimitedFallback() throws Exception {
-        for (int schema : new int[] {-1, 0, 6}) {
+        for (int schema : new int[] {-1, 0, 7}) {
             var file = raw("unknown-" + schema, out -> { header(out); integer(out, "SchemaVersion", schema); records(out); end(out); });
             assertThrows(IOException.class, () -> SessionJournalStore.read(file), "schema=" + schema);
         }
