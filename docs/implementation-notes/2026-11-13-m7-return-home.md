@@ -22,8 +22,14 @@
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
-## T2 N2已C/I清零；f3a79ec待修後完整回歸／CI（2026-11-14）
+## T2 full遇AccessDenied已停；單次新nonce重跑待使用者裁示（2026-11-14）
 
+- 修後完整full已自然FAIL：source `f3a79ec182653492fcbe5a41313cbf1e41c2a4e8`、HEAD `cd91b9407d101bc98f7f1f29b8947d0d7a07ad8a`，run-all `b893e94501cd4233800161b4f6965a9a`。預檢/W10/full-default/normal/legacy通過，M5 GT60案恰1FAIL，具名 `prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection`，只允已確認projection結果卻得到WRITE_FAILED。後續M6/M7/full summary/CI未執行，沒有ENDALL。
+- 00:27:30原log同case BEGIN後，CheckedNbtFile:70→CollapseAuthorities.writeAtomic/checkedWrite/writeProjection發生 `quantumchamber_projections.dat.<nonce>.tmp -> quantumchamber_projections.dat` Windows AccessDenied；checked保未確認／200tick退避，非F4a注入。XML SHA `E0FBB212A401F47CEF35F23A34432F5DC42494782B1F5D71C28DD0D30ED18C4E`、latest.log `08625635AAB611F00A6443F87951BBEC03D324694D0B2747838EE8F0014A6B1C`。四個直接writer／ledger／測試owner對main2255027的Git blob未變；誰持檔／OS拒絕原因未定，不稱已證偶發。
+- M6最小driver持原handle正確觀察actual process ExitCode=1、outer自然1，不是EOF卡住/driver工具第三次。driver工具失敗歷史仍2/3，本次獨立記runtime AccessDenied FAIL；N2 C/I0不因此改成full已過。原N0/N1/N2及所有FAIL/UNKNOWN保留。
+- 原gate world-restore exactRestored=true/originalExisted=false/deleted=false，完整failed world保在該gate/world-fresh；其中projection.dat末態1796bytes/SHA `AB9AACBE3641F11E4AFEB6081BE96AD36EC3CF39E45296F70AAEF25EBE2F25BF`，不是失敗瞬間快照，不重建temp。controller postcheck09：run內/producer102鎖獨占、runtimeOwners0、固定pins/hash exact；另保存failed world session.lock亦獨占。無樹殺、無世界刪覆。
+- **現在runtime/source/push HOLD，只讀與必要本機truth docs。** 依本note流程節「M6其他條款不預設沿用，要用時另問使用者」，本次T2連續推進沒有包含AccessDenied一次重跑waiver。root將詢問明確一次處置；未重跑、未修M5production/OS/oracle，尚未push/CI或啟T3。
+- 具體待同意提案：source/harness維持f3內容，保原FAIL，用新nonce只重跑一次完整run-all（短預設root/M6 handle/child65001/freshW10）。同簽章再現即停，不再重跑；其他FAIL先停保原件分類。成功才必要docs/正常push追同SHA5 required CI；未授CI rerun。提案與短索引在SDD `t2-access-denied-retry-proposal.md`／`t2-access-denied-stop-index.json`，重跑使用0/1、授權尚未取得。
 - 唯一原席N2終局：規格✅／品質Approved，C0/I0/M1、N2=0，I06 ADDRESSED；N0=5→N1=1→N2=0，兩輪止損未觸發。唯一新M02是本節舊時態「source現9d1」，本次同步改為「啟動fix2時的production基準是9d1」，不改production。原I01～I05/M01處理判定維持，N2原報告保留。
 - 下一步按已授權，不另等核可：在乾淨新docs HEAD（production仍f3）與freshW10/owner/locks核實後，執行修後完整run-all，再原席沿同席核終局/必要docs，正常push讀回並追同SHA全部required CI。M6 outer最小呼叫只沿probe-common:221/224/235、m6-universe:654的同process handle/HasExited/ExitCode、stdout/stderr分檔與實際child UTF8/65001；不以native pipe EOF當退出，不改run-all/threshold，不新framework。fullDriver2/3仍固定，第三非預期工具FAIL即停。
 - 修後full/CI尚未啟動或通過，T2尚未closed、T3未啟。f3 source/各原件及原report4740SHA已另存pre-full-fix2 archive，避免後續append報告使舊SHA無副本。
