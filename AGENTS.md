@@ -119,7 +119,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 M7 T1 OPEN：有界fix1已FAIL_STOP，同席C0/I12 OPEN（10原+2新），報告凍結待使用者。禁止再fix/compile/runtime/CI/push。** 現行spec v1.1與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
+**2026-11-13 M7 T1 OPEN：使用者改採M6同等，先plan/原同席分類採用，再一次窄T1整改與定向；PASS且C/I0後正常push追CI，不開T2。** 現行spec v1.1與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
+- 最新原文已照錄M7 note「T1收斂、M6同等」與SDD/user-t1-m6-standard-ruling-20261113.md：T1只JUnit上限/硬link＋GT入口＋CI接線；取消全部T1 native PoC18、T2/T3守門/退休額外CI，T4 Windows正式39保留。Ubuntu只JUnit/GT，不native/main-only/Linuxowner。原同席按b26b90c已PASS M6 source逐項分類現OPEN10舊＋F1/F2，超M6殘留不擋、I2移T2設計、native範圍移除不能假PASS。先docs分類C/I0才工具一次整改/定向，非預期FAIL即停不修/重試/不push；PASS且新scope C/I0後正常push追同SHA全部required CI，CI fail不自動rerun。本輪不T2/full/clean/W10，舊計數/FAIL/保全義務全保。
 - 同席fix1只讀審查已終局：I1/I3處理、I2/I4–I12仍PARTIAL/OPEN，新增F1/F2合計C0/I12open/新增M0。完整凍結t1-fix1-final-report.md/json及原task-1-fix1-review.md在本plan SDD；一次batch第6步停、根因UNKNOWN、7–10未跑。code pin b69397b未push，必要本機docs僅記結果。原作者/controller現在idle等使用者，不用原「清零直接續」展開fix2/18/39/full/T2/CI。
 - fix1已只跑一次65.197秒/outer1：source/compile/compiled-freeze/JUnit6/WindowsGT3過，第6offline M7_STARTUP_TIME非預期即停；7–10 native/artifact/workflow/end-freeze未跑，native根未建。raw2995檔與GT world保全、Java0/鎖釋放。保守Native/Startup原2→3，其他舊計數/FAIL不清；原唯一reviewer只讀增量，原作者idle，不重試/補修。root待完整結果後交使用者，詳note/t1-fix1-outcome.json。
 - fix1候選b69397b4c02085f549f445d763787f5b8e8408b9（17檔、production無diff、未push）與唯一batch清單已由controller核513source/copy hash、driver/固定nonce/fresh根。只啟一次10步定向，任何非預期FAIL立即停，PASS亦停；I7/I8已知未覆蓋維持open，不再補碼求clear。詳note/SDD t1-fix1-batch-plan.json與controller-approval。

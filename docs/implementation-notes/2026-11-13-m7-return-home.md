@@ -2,6 +2,26 @@
 
 本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，SDD T1 核心候選審查 C0／I12／M2 後，使用者授權先 plan 一席清零、再一輪整改＋一次定向驗證回報；production 尚未修改。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
+## 使用者新裁示：T1收斂、驗證標準改為M6同等（2026-11-13）
+
+來源：2026-11-13使用者在本Codex對話回覆T1 fix1結果，由root照錄於SDD `user-t1-m6-standard-ruling-20261113.md`；不是Claude派工稿／技能。以下為題目、所選選項及說明原文：
+
+- 題目：「T1 接下來怎麼走？」
+- 選：「收斂 T1，驗證標準定為「M6 同等」（建議）」
+- 說明：「T1 只留 JUnit（大小上限、硬連結發佈）＋GameTest（入口守門）＋M7 的 CI 接線；取消 T1 的 Windows 原生 PoC，當機重開證明交給 T4 正式矩陣。驗證工具以 M6 已在 CI 驗過的 probe 做法為標準，審查意見超出 M6 同等標準的列為殘留、不擋關；「保留金算錯」這類屬於正式設計的問題移到 T2 修。代價：改掉你一小時前「T2～T3 保留 PoC」的裁示。」
+
+### 新範圍與本輪程序
+
+- 本次取代舊Windows PoC18、T2/T3 PoC守門與T4退休接線流程：T1原生PoC取消，T2/T3也不跑；T4 Windows正式39仍保留。Ubuntu仍只有JUnit＋GameTest，沒有Linux owner/native/main-only。不是skip／空矩陣／假PASS；exact清單、default full、CI、oracle同步新scope，Git歷史與全原件保留，既有M6 native/main-only守門和斷言／門檻不改。
+- 標準具體比對已在CI通過的當前 `m6-universe-probe.ps1`、`probe-common.ps1` 及M6 JUnit/GT/CI入口。分類須固定file/blob/SHA及b26b90c／CI43373504422等已PASS來源，原同席逐項核現OPEN的I2、I4–I12及F1/F2：保留M6內／超M6殘留不擋／移T2正式設計／nativePoC範圍移除。I1/I3已處理歷史也保留，不整批宣稱全關。
+- 先本note原文→docs-only plan／必要spec邊界勘誤＋原同席分類採用C/I0→原作者一次scope convergence整改＋事前凍結的一次窄T1定向（JUnit/GT/CI正負）。不原生單pair/18/39、新全class/argfile框架、額外main-only、clean/W10/full。任何非預期工具FAIL立即停，不修後再跑／不push；舊FAIL/根/計數不重置。
+- 若本次定向PASS且新scope沒有C/I阻擋，已授權正常push、追同SHA新T1雙平台JUnit/GT及既有全部required M6 jobs；CI真終局全綠才可關T1。CI FAIL原判保留，不自動rerun；「M6同等」不是沿用M6舊重跑waiver。無論T1是否過關，本輪不開T2，回root。
+- 超M6意見標殘留並給具體不擋依據，不默認塞回T4必做；若要提高標準另問。使用者的原FAIL/root/XML/log保全規則仍在，clean證據遺失不能豁免。producer保留、不新建／退役worktree，production不改。
+
+### M7_STARTUP_TIME根因的新外部證據
+
+- 使用者提供Claude巡檢：pwsh7.7.0已確定重現，原`ParseExact($s,@(3格式),...)`將`object[]`綁成單format字串；明確`[string[]]@(...)`或單format可行，例值`2026-11-13T09:26:48.506Z`。來源是使用者提供的Claude實測，**不是本controller或root本輪復現**。根因據此補記已知；舊batch FAIL/當時未保底層exception、原UNKNOWN診斷侷限不改寫。
+- 此native工具不再是T1入口；T4 plan記明確string[]修法及合法3/6/9位秒接受／錯格式拒絕TODO。不能把cast改碼當作3/6/9已驗。現在只靜態列其他M7同類array-overload，不新增ParseExact重演或日期框架。
 ## 使用者回覆 T1 checkpoint：驗證縮範圍與一次有界恢復（2026-11-13）
 
 來源：**2026-11-13 使用者在本 Codex 對話回覆 T1 正式全集前 checkpoint**。以下四題、所選選項及說明為使用者看過並選定的原文，由 root 轉交照錄；不是 Claude 稿，也不是技能。root 另存原文於本計畫 SDD 的 `user-t1-scope-ruling-20261113.md`。
