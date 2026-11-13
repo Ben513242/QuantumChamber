@@ -1097,6 +1097,12 @@ public final class SessionRecoveryState extends PersistentState {
                         throw new IllegalStateException("其他旅程仍持有本次要求的租約");
             }
         }
+        // 同 SID 的相同實體租約跨快照只計一次；尚未確認釋放的舊租約仍計入總量。
+        var held=new LinkedHashMap<UUID,java.util.Set<SessionRecoveryRecord.SpaceLease>>();
+        for(var snapshot:List.of(candidate,records,flushed,pendingSessions())) {
+            snapshot.forEach((sid,row) -> held.computeIfAbsent(sid,id -> new HashSet<>()).addAll(row.spaceLeases()));
+        }
+        dev.quantumchamber.corridor.SlotAllocator.validateSavedLeases(held.values().stream().flatMap(java.util.Set::stream).toList());
         var wrapped=new NbtCompound(); NbtHelper.putDataVersion(wrapped);
         wrapped.put("data",encode(new NbtCompound(),candidate,6));
         HomeJournalBudget.requireReserved(wrapped);

@@ -22,7 +22,9 @@
       "dev.quantumchamber.persistence.M7HomeHistoryTest.matchingTypedReceiptStillRequiresExactWrapperBeforeRemovingActive",
       "dev.quantumchamber.persistence.M7HomeJournalTest.uncheckedLeaseReleaseCannotDonateAnotherSidsSlotBoundsOrPlayer",
       "dev.quantumchamber.persistence.M7HomeJournalTest.permanentSealsRejectRootLatchWhileRestartOnlySealCanLatch",
-      "dev.quantumchamber.persistence.M7HomeJournalTest.trackerDepthOrMalformedAuthorityDoesNotBecomeCapacityRetry"
+      "dev.quantumchamber.persistence.M7HomeJournalTest.trackerDepthOrMalformedAuthorityDoesNotBecomeCapacityRetry",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.uncheckedReleaseCannotLendSixtyFifthSlot",
+      "dev.quantumchamber.persistence.M7HomeJournalTest.uncheckedReleaseCannotLendCoverageBeyond4096Chunks"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",

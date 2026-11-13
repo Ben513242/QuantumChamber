@@ -286,4 +286,40 @@ class M7HomeJournalTest {
         var invalid=assertThrows(RuntimeException.class,() -> HomeJournalBudget.requireReserved(M7BudgetSpikeTest.wrap(List.of(malformed))));
         assertFalse(invalid instanceof HomeJournalBudget.CapacityExceeded);
     }
+    @Test void uncheckedReleaseCannotLendSixtyFifthSlot() throws Exception {
+        var slots=new NbtList();
+        for(int i=0;i<63;i++) slots.add(lease(i,i*192,0,6));
+        verifyUncheckedUnion(slots,lease(63,20000,0,6),lease(64,24000,0,6));
+    }
+
+    @Test void uncheckedReleaseCannotLendCoverageBeyond4096Chunks() throws Exception {
+        // 兩端跨 chunk 邊界，6×6=36；分離的長走廊原生覆蓋 5×812=4060。
+        var slots=new NbtList();slots.add(lease(0,15,15,6));
+        verifyUncheckedUnion(slots,lease(1,1600,1600,807*16+6),lease(2,3200,3200,6));
+    }
+
+    private static NbtCompound lease(int id,int x,int z,int span) {
+        var n=new NbtCompound();n.putInt("SlotId",id);n.putIntArray("Bounds",new int[]{x,64,z,x+6,70,z+span});
+        return n;
+    }
+
+    private void verifyUncheckedUnion(NbtList held,NbtCompound original,NbtCompound added) throws Exception {
+        var base=M7BudgetSpikeTest.home(1);base.put("SpaceLeases",held);
+        var candidate=other();candidate.getList("SpaceLeases",10).set(0,original);
+        Path file=directory.resolve("data/session.dat");
+        SessionJournalStore.write(file,M7BudgetSpikeTest.wrap(List.of(base,candidate)));
+        var state=SessionRecoveryState.load(file);state.requireHealthy();
+        var old=SessionRecoveryRecord.fromNbt(candidate,5);
+        var next=base.copy();next.getList("SpaceLeases",10).add(added);
+        var before=HomeJournalCodec.decode(base);var after=HomeJournalCodec.decode(next);
+        assertDoesNotThrow(()->state.put(old),"相同 SID 的同租約不能重算");
+        assertTrue(state.remove(old.sessionUuid()));
+        var current=state.allSessions(); var durable=state.allFlushedSessions(); byte[] disk=Files.readAllBytes(file);
+        Runnable flush=()->state.save(file.toFile(),null);
+        assertEquals(SessionRecoveryState.CommitResult.Status.REJECTED,state.commitHome(flush,before,after,false).status());
+        assertEquals(current,state.allSessions());assertEquals(durable,state.allFlushedSessions());assertArrayEquals(disk,Files.readAllBytes(file));
+        flush.run();
+        assertTrue(state.commitHome(flush,before,after,false).committed(),"原釋放已確認後同一追加應成功");
+        assertEquals(after,state.allFlushedSessions().get(after.sessionUuid()));
+    }
 }
