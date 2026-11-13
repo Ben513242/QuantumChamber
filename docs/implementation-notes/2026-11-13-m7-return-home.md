@@ -2,13 +2,16 @@
 
 本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 已經第三輪獨立審查清零採用，plan 開始撰寫；尚未實作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
-## Codex 接手（2026-11-13，規格已採用，計畫撰寫中）
+## Codex 接手（2026-11-13，規格與計畫已採用，準備 T1）
 
 - 工作樹與分支已核對：`.worktrees/m7-return-home`／`codex/m7-return-home`，接手時 HEAD `30c0c627d7fb3f205d3a329152d62e6d04cdc773`，工作樹乾淨。
 - Step0 同 SHA CI run `43359327038` 已由 `gh run view -R Ben513242/QuantumChamber` 讀回：`build`、`windows-native`、`m6-native` 全部 success。
-- 目前採用 binding spec v1.0，SHA-256 `9054C4D75480D18178FD6A6420EBEF7A4ABABE4A55A95E5B4090581CC6F77932`，與清零 v0.3 契約相同、只更新採用標頭。第一個規格文件 commit 包含 spec、本 note 與 AGENTS；本 commit CI 尚未執行，不能採計 Step0 CI 代替。plan 正撰寫，尚未實作。
+- 目前採用 binding spec v1.0，SHA-256 `9054C4D75480D18178FD6A6420EBEF7A4ABABE4A55A95E5B4090581CC6F77932`，與清零 v0.3 契約相同、只更新採用標頭。第一個規格文件 commit `03b8c9472f7b1fa67427dbb1d7741b8f3a2bbf42` 包含 spec、本 note 與 AGENTS，已正常 push 並由 `ls-remote` 讀回相同 SHA；同 SHA CI run `43370074593` 執行中，尚無終局，不能採計 Step0 CI 代替。plan 正撰寫，尚未實作。
 - binding spec v0.1 初稿 `docs/superpowers/specs/2026-11-13-m7-return-home-design.md` 共316行，SHA-256 `F1087A4A7551D5E0491BB77AF21ADC75811CCED84AA2D04C9D1FF306285ECA15`；第一輪獨立審查 Critical 1／Important 6／Minor 1，尚未採用，已交原作者修訂。plan 與 production 實作尚未開始。本輪沒有執行 Gradle、run-all 或人工驗收，也尚未重建 W10 producer。
 - 短期派工與審查證據使用 `.superpowers/sdd/2026-11-13-m7-return-home/`；正式可重跑工具仍須放 tracked `scripts/verification/`，不 force-add SDD 空間。
+- plan 初稿 `docs/superpowers/plans/2026-11-13-m7-return-home.md`：334行、8個 task，SHA-256 `00346816839FF702A660040E97C6756D124A0446D1C3AC16B707E13E874F9F8E`；獨立審查中，尚未採用／實作。T1 的 NBT 計量、no-clobber 發布及 B 門 checkpoint 均待實跑，不是已驗結果。
+- plan 第一輪獨立審查 `plan-review-1.md`：Critical 0／Important 7／Minor 2，未採用、禁止派 T1。阻擋包含 Windows／Ubuntu 正式入場預期分流、Linux launcher／唯一切點 manifest、既有入場交易順序、正式 remap／來源 checkpoint 接線、全 BlockState JUnit、舊 M5 W4／W6 oracle 與 typed CLOSE 事件入口。交同作者窄修，未擴張 Linux 玩家 checkpoint 能力、未改 binding spec、未執行 runtime gate。
+- plan 修稿339行、8 task，SHA-256 `7BE47AD2DB5AB11C034E9B7A502E622A50CE1924D4A367227C1A407632C3135A`；第二輪獨立複審 `plan-review-2.md` 為 Critical 0／Important 0／Minor 0，報告 SHA-256 `596D799B40D37AE7B04B37F1637D0B69612A6BBCBAAE7268A6150851CE8D983B`。前輪九項關閉，採用計畫，依授權直接派 SDD T1。此計畫文件 commit 尚待自身同 SHA CI；T1 的跨平台先導與任何 production 功能尚未執行。
 
 ### binding spec 第一輪獨立審查（2026-11-13）
 

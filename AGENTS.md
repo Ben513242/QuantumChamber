@@ -119,8 +119,11 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 M7 binding spec 第三輪獨立複審 C0／I0／M0，v1.0 已採用，開始撰寫 plan，尚未 production。** 規格 `docs/superpowers/specs/2026-11-13-m7-return-home-design.md` 契約等同已審 v0.3；歷輪 finding 與 SHA 見 note。依「審查清零就直接往下做」接續 plan，計畫也須獨立審查清零才實作。Step0 `30c0c62` 同 SHA CI `43359327038` 三 job success 已讀回；本輪未跑 runtime gate。停止回程即終局解鎖、A 保護到收尾、可沿用未到期藥效，以及各條款的原文與出處，見 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)。
-- 本次規格文件 commit 的同 SHA CI 待執行；Step0 CI 只證明接手基線，不能代替本 commit。plan 撰寫與規格文件 CI 可獨立進行，production 尚未開始。
+**2026-11-13 M7 spec 與 plan 均獨立審查 C0／I0／M0，已採用，下一步 SDD T1。** 規格 v1.0、計畫339行8task，路徑分別為 `docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；歷輪 finding／SHA 見 note。依「審查清零就直接往下做」開始 T1，不另等核可；每新 task 新 implementer，fix 回原作者，每輪獨立 reviewer。production 尚未修改，本輪未跑本機 runtime gate。玩法、原文與出處見 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)。
+- 規格文件 `03b8c94` 已 push，遠端讀回同 SHA；CI `43370074593` 執行中、未判通過。Step0 CI 只證明接手基線，不能代替本 commit。plan 撰寫與規格文件 CI 獨立進行，production 尚未開始。
+- plan 初稿334行、8 task 已交獨立審查，尚未採用／實作；SHA 與作者報告見 M7 note／SDD。T1 三項可行性實證待跑。
+- plan 第一輪 C0／I7／M2，原作者修訂中；尚不派 T1。重點為平台精確集合、Linux launcher、ARMING 入場順序、正式 remap／checkpoint／視覺及舊 M5 oracle 接線、typed CLOSE 事件。規格採用狀態不變，CI43370074593仍獨立追蹤。
+- 上述 plan 第一輪為歷史；第二輪 C0／I0／M0 已關閉九項，可派 T1。計畫文件本 commit CI 待執行；不把任何先導／runtime 或人工驗收預記通過。
 - 工作樹 `.worktrees/m7-return-home`，分支 `codex/m7-return-home`，基線 main `2255027`（CI 43223550800 三 job 綠）。
 - 範圍摘要（以 M7 note 原文為準）：
   - 到 B 時同座標出現的投影艙可以啟動，和 A 原艙算同一座艙，A 是它的家。不做「在 B 新蓋的艙」。
