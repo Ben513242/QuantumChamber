@@ -37,6 +37,7 @@
 - 但外wrapper PID2320未自然返回，無run-all子程序僅conhost，exit.txt缺失；不能冒稱outer0。確認同一process handle／start／command+唯一root、無world owner、94把本樹鎖可獨占後，僅受控停止本次wrapper，實際exit -1，自然outer為UNKNOWN；Gradle/Java未動。`outer-before-stop.json`／`outer-stop.json`及外log SHA `E53BF9EF…`保留。停止前可選open-log hash遇file in use一案保留，未當停止必要條件或補假退出碼。controller `t2-initial-full-controller-readback.json`如實記innerPASS／outerUNKNOWN，不採為完整full門檻已過。
 - 唯一獨立原席 `task-2-review.md` 首審規格❌／品質Needs fixes，C0/I5/M1、**N0=5**。T2-I01純容量拒絕導致舊candidate/remap取消團隊；I02同SID current遮蔽未確認flushed資源；I03 schema6舊列漏同SID歷史；I04 receipt漏完整wrapper DataVersion exact；I05永久SEALED/root latch不可達組合仍被strict/峰值接受。全部屬binding正式資料/現有caller正確性，不列超M6工具殘留。M01診斷schema名稱可順手最小修，非阻塞。
 - 舊full消費source期間全程未改HEAD/source；作者只在SDD準備fix1。controller postcheck07核95鎖（含producer）獨占、runtimeOwners0、固定pins/hash exact，已到安全邊界。整改1由原作者依 `task-2-fix1-brief.md`／`task-2-fix1-design.md` 核具體反例後修正；I02每row沿原 `sameAuthority`／`occupies`，不改已Returned舊M5規則。I01允必要舊caller最小接線；純容量retry不得吞一般IO/型別/深度/重鍵故障。修後需新pin RED/GREEN/mutation/focused/full（含真自然外部0）及同席N1、同SHA全CI。當前N1/N2尚待，N0=5保留，連續兩整改輪未下降就停。
+- root固定同一實際full driver計數：長CWD267與第二次outer未返回各保原因/原判，但合計已2/3；不能因換簽章或wrapper名稱重置，修後同driver第三次非預期工具失敗立即停。可選hash／人工source解碼錯另列操作事件，不冒稱遊戲失敗。fix1前已保存原frozen diff與設計原bytes/hash於SDD archive。
 - T2 OPEN，未push／CI、未啟T3，沒有人工/main/tag/PR/LICENSE/退役。初候選內層PASS與原fixed32反證修復不抵I5，也不抵整改後完整門檻。
 
 ## 使用者async裁示：只補I11後原席清零、push同SHA CI（2026-11-13）
