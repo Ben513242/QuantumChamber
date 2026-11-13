@@ -119,11 +119,19 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 M7 spec 與 plan 均獨立審查 C0／I0／M0，已採用，下一步 SDD T1。** 規格 v1.0、計畫339行8task，路徑分別為 `docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；歷輪 finding／SHA 見 note。依「審查清零就直接往下做」開始 T1，不另等核可；每新 task 新 implementer，fix 回原作者，每輪獨立 reviewer。production 尚未修改，本輪未跑本機 runtime gate。玩法、原文與出處見 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)。
+**2026-11-13 M7 T1 OPEN：使用者只授權 plan 一席清零→一輪核心整改＋一次定向驗證→停回報。** spec與plan設計審查先前C0／I0／M0已採用；T1核心實作審查尚未通過。 規格 v1.0、計畫339行8task，路徑分別為 `docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；歷輪 finding／SHA 見 note。依「審查清零就直接往下做」開始 T1，不另等核可；每新 task 新 implementer，fix 回原作者，每輪獨立 reviewer。已完成 8＋28 列 preflight，fresh implementer 執行純驗證接線／先導；production 尚未修改，T1 最終完整 gate 未完成；已知局部 FAIL／保全事故與診斷批見下列，不預記通過。玩法、原文與出處見 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)。
+- 最新使用者四裁示原文／出處已照錄M7 note「使用者回覆T1 checkpoint」節（2026-11-13本Codex對話回覆，非Claude稿/技能）：T1 Windows18＝三門態各六cut；T2–T3留PoC；T4 Windows正式39通過後PoC退出default full/CI、原證據留存；Ubuntu僅JUnit+GameTest，不寫Linux owner、不跑native/main-only。先只改plan及必要spec平台勘誤、原唯一reviewer審C/I0及逐I歸屬後才動tools/CI/inventory。只原作者一輪核心整改＋一個事前凍結batch執行一次，任一非預期工具FAIL立即停、不修/重試/續跑；無論結果都回報停下。舊計數/FAIL/UNKNOWN不重置，正式18/39/full/T2/新CI/push仍未授權，production不可改。
+- 使用者新增巡檢裁示（2026-11-13；原文由root照錄於本plan SDD/user-checkpoint-instruction-20261113.md，controller已讀，非Claude派工稿/技能）：T1唯一核心review後、正式39列雙OS前，先交時程/失敗與未實跑能力/PoC縮樣選項/止損四項checkpoint，由root回報後再續；不得先跑正式全集或push觸發它。核心/定向/唯一review可續。任何縮樣只提案，plan/清單/門檻未改。同一驗證工具問題連續第3次非預期FAIL立即停該問題回報，不跨nonce/docs改名重置、不拆簽章；expected正拒另列，GREEN需原件。詳M7 note最新裁示節。
+- root依上述第4項保守將clean刪證據/active log hash null/來源指紋漂移合併T1-EVIDENCE-INTEGRITY第3事件止損（非同code根因判定）：停止T1新增工具修正與任何新compile/runtime/重跑/CI/push，只可只讀盤點/README狀態/現候選凍結/唯一核心靜態review，open Important照報不修到C/I0。已在途單列後自然Windows77/0、1660copies hash吻合，也不解除hold；core review後交四項checkpoint由使用者裁示。T1 OPEN，詳note最新root裁定節。
+- T1核心本機候選55c48682279392e23805e08b93c00deb6637db88已凍結（20檔、src/main無diff、未完成/未push；舊runtime為BASE+dirty非新SHA gate），唯一core reviewer astra/high靜態＋既有證據審查中，報告task-1-core-review.md。收到即交四項checkpoint，可保open Important，不修工具/不跑新gate；只有controller note/AGENTS dirty，T1 OPEN。
+- T1唯一核心review已完成：spec❌/quality Needs fixes，C0/I12/M2全部open，report task-1-core-review.md（SHA8D3C8F3A…）。四項t1-pre-full-checkpoint.md/json已凍結交root，含真44.606秒/UNKNOWN時程、6工具FAIL+3事故、A39/B18/C25只提案與8n/16n反覆PoC成本、第三事件止損。候選55c4868未push、遠端仍b26b90c；不修碼/不重跑求clear，等root向使用者回報後裁示，詳note最新終局節。
 - 規格文件 `03b8c94` 已 push，遠端讀回同 SHA；CI `43370074593` 執行中、未判通過。Step0 CI 只證明接手基線，不能代替本 commit。plan 撰寫與規格文件 CI 獨立進行，production 尚未開始。
 - plan 初稿334行、8 task 已交獨立審查，尚未採用／實作；SHA 與作者報告見 M7 note／SDD。T1 三項可行性實證待跑。
 - plan 第一輪 C0／I7／M2，原作者修訂中；尚不派 T1。重點為平台精確集合、Linux launcher、ARMING 入場順序、正式 remap／checkpoint／視覺及舊 M5 oracle 接線、typed CLOSE 事件。規格採用狀態不變，CI43370074593仍獨立追蹤。
 - 上述 plan 第一輪為歷史；第二輪 C0／I0／M0 已關閉九項，可派 T1。計畫文件本 commit CI 待執行；不把任何先導／runtime 或人工驗收預記通過。
+- 規格 docs `03b8c94` 的 CI43370074593 attempt1 已終局三 job 全 success（原件／hash見 note），上方 pending 為歷史。plan `b26b90c` 已 push且遠端相符，其 CI43373504422 attempt1已終局三job全success（原scope與digest見note）；T1 OPEN新增定向實證及事故後重驗尚待，不在main實作。
+- T1首輪spike JUnit：5案1FAIL，原件保留；根因是Windows JDK `fileKey()` 可null的測試前提，作者技術修正後新log建置成功，第二輪XML已核5/5零錯誤／略過；完整T1實證待核。native首組reopen於1200ticks觸發M7_CHECKPOINT_READY_TIMEOUT→halt78／outer1，整組FAIL原件保留；test-only修正後新nonce單組Windows PoC已77/0、locks釋放，票/flat因果隔離待補；全39列與Ubuntu仍待，不放寬deadline、不放行T2，詳note／ledger。
+- T1發生證據保全事故：作者在搬出前Gradle clean刪3個build/m7-* runner輸出，原run startup/receipt/failure/world與SDD logs尚存。29.612／69.33等舊量測不採gate；immutable事故清冊已固定，controller驗17個phase primary及補充273檔bytes/hash吻合，六原owner不活躍／三lock釋放；clean停止。新39列批在執行中改消費檔，整批降diagnostic-only，22完整列後startup讀取競態runnerFAIL；原raw為UNKNOWN。startup最小正負控1/1已核，main-only兩首試FAIL另保；正式須補接線及完整immutable消費/compiled/argfiles指紋與新nonce；runner/CI改clean外唯一root並以新nonce、實際clean存續正負控重驗，詳note事故節。T1仍OPEN，不放行T2。
 - 工作樹 `.worktrees/m7-return-home`，分支 `codex/m7-return-home`，基線 main `2255027`（CI 43223550800 三 job 綠）。
 - 範圍摘要（以 M7 note 原文為準）：
   - 到 B 時同座標出現的投影艙可以啟動，和 A 原艙算同一座艙，A 是它的家。不做「在 B 新蓋的艙」。
@@ -137,7 +145,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
   - 連續穿越 A→B→C 是 M8，方向是「一律以 B 為準」；M7 合併、打 tag 後才開，開工前再確認。
 - 流程：binding spec → 獨立審查 → plan → 獨立審查 → Subagent-Driven Development 實作。spec、plan、實作由 Codex 新對話執行。production 改動走完整門檻。只改測試、腳本或文件時，做一席審查、定向驗證與 CI，免 mutation 與本機完整回歸。這條是 M6 B+C 規則中唯一沿用到 M7 的部分，其餘不自動沿用。出處見 note「流程指示」節。
 - 授權：正常 push 持續授權；main 合併、tag、人工代操作、worktree 退役各自另問。
-- 跑任何會執行 W10 preflight 的入口前，先照 `scripts/verification/README.md` 重建 W10 producer，並在 UTF-8 console（code page 65001）執行。
+- W10 producer 已由 controller 依 README 重建 fresh detached checkout，六項固定身分吻合，詳 note／SDD proof；尚未跑 W10 gate。任何 W10 preflight／full 前仍核當次 owner／鎖與 UTF-8 console（code page 65001），不可重套 patch 或覆寫 producer。
 - 主 checkout 的 `docs/` 還留著 6 個使用者檔的未追蹤原檔（已由 Step0 納入本分支）；M7 合併 main 時可能擋住 ff，處理方式見 M7 note。
 
 下段是 M6 結案時的紀錄。

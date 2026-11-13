@@ -1,9 +1,13 @@
-# M7 正規回程：binding spec（v1.0）
+# M7 正規回程：binding spec（v1.1，驗證平台勘誤候選）
 
 日期：2026-11-13。基準工作樹：`codex/m7-return-home`，從 main `2255027` 開出。
-狀態：2026-11-13 第三輪獨立複審 Critical 0／Important 0／Minor 0 後採用。契約等同凍結 v0.3（SHA-256 `463FAA723F6E15915B34378774E298D52C84BB3AFC09EF44EC980807B988D1F2`），本版只更新標頭採用註記；本文不是實作、測試、人工驗收或整合結果。
+狀態：v1.0於2026-11-13第三輪獨立複審C0/I0/M0後採用，玩法及資料契約等同凍結v0.3（SHA-256 `463FAA723F6E15915B34378774E298D52C84BB3AFC09EF44EC980807B988D1F2`）。v1.1只依使用者新裁示更新驗證平台/PoC邊界，待同一席plan amendment審查；本文不是實作、測試、人工驗收或整合結果。
 範圍唯一來源：[M7 note](../../implementation-notes/2026-11-13-m7-return-home.md) 的使用者裁示。
 未明列改變的 M2／M4／M5／M6 契約維持；建議稿不是另一份 binding spec。
+
+## 2026-11-13 驗證邊界勘誤（待同席plan amendment審查）
+
+來源為[M7 note「使用者回覆T1 checkpoint」](../../implementation-notes/2026-11-13-m7-return-home.md)之本Codex使用者四裁示，非Claude稿/技能。v1.0玩法/資料契約不變；只改驗證：Windows T1 PoC18代表列，T4正式owner39列通過後default full/CI退休PoC、保原件，T2/T3仍留守門。native crash/reopen及獨立main-only僅Windows；Ubuntu跑真volume硬連結/大小上限等JUnit及GameTest正式拒絕，無Linuxowner/native/main-only，Linux crash/reopen只由Windows推論。V矩陣涉及跨JVM/native依此平台界線；兩平台可攜測試/零skip與正式Windows必要切點不放寬。本輪僅plan一席清零→一輪整改＋一次定向→停回報，不恢復正式全集或下一task。
 
 ## 1. 先回答建議稿 §15.3 七題
 
@@ -164,7 +168,7 @@ Root、Entry、SID、Chamber、semantics、travel capability與 participant sour
 - receipt.Session是凍結active整列**僅把Home.CloseIntent正規化為NONE**的canonical快照；外層CloseIntent保留CLOSE，避免遞迴／自hash。SID／Root／Entry／Selection／Crossed／原timing全保留；全Returned且空lease。
 - 交接固定：checked latch必要StopReason→返B／清lease→checked CLOSE凍結列→exact B依DoorGoal改門並完成原生chunk checkpoint→checked發佈／exact驗既有單SID receipt→再次確定B門目標與checkpoint有效→checked移除active→釋runtime／票／鎖與M7額外A保護。
 - CLOSE先於任何終局門改動；checkpoint必涵蓋B門的相關chunk，普通關門也必真正改OPEN而非因membrane=none直接DONE。PARTICIPANT_CLOSED維持CLOSE_IF_CLEAR_ELSE_OPEN防夾；其他矩陣原因為OPEN。缺載入／exact B不符／checkpoint未知皆pending，不修A、不假確認。
-- receipt寫入採同目錄完整temp＋force後以**原子不覆寫**方式發佈（例如同volume硬連結createLink，target已存在只能讀驗exact）；不可用ATOMIC_MOVE會覆寫existing的語義冒充no-clobber。admission先驗存檔volume支援；無支援受控拒新HOME，計畫spike需驗Windows／Ubuntu及每個crash窗口。
+- receipt寫入採同目錄完整temp＋force後以**原子不覆寫**方式發佈（例如同volume硬連結createLink，target已存在只能讀驗exact）；不可用ATOMIC_MOVE會覆寫existing的語義冒充no-clobber。admission先驗存檔volume支援；無支援受控拒新HOME，計畫spike真volume發佈/大小JUnit驗Windows與Ubuntu；native crash窗口只Windows（T1六cut×三門態18列，T4正式十三cut×三門態39列），Ubuntu集合外項不記skip/PASS。
 - 暫存與失敗原件保留；已存在receipt只驗exact，錯配／損壞保鎖交管理員，不覆寫、不刪除。寫入結果不明時只查同SID單檔；receipt成功但active移除失敗仍只從CLOSE續做，絕不再傳送。
 - CLOSE與receipt可並存但必exact匹配；每次恢復移除active前均重新確保B門與checkpoint，不依process內舊ack。移除確認後不再從歷史重開門，之後玩家新操作不被舊工作覆蓋。
 
@@ -339,7 +343,7 @@ V10必須另以獨立JVM具名覆蓋§10三個移動存檔窗口：`native move�
 | H04 | B牛奶／藥效到期回B；B／A位置不同世界實證；B與正常A各做一次`/reload`後新session，A一般探索仍正常。 |
 | H05 | release JAR main-only實跑HOME；真client觀察門的最小區別、單一HOME／牆、膜與回家title，不靠testmod冒充release。 |
 
-M7使用獨立JUnit／GameTest exact案例集合、跨JVM receipt驗證及負例；接入run-all、雙平台CI與既有release／sources／main-only三層隔離oracle，具體接線留plan。
+M7使用兩平台各自JUnit／GameTest exact集合、Windows跨JVM receipt/負例與Windows獨立main-only三層隔離；接入run-all/CI及雙平台release/sources（含nested JAR）oracle。Ubuntu不含native/main-only/Linuxowner，未驗原生能力列限制、不skip假PASS；切點/PoC退休見修訂plan。
 production task依AGENTS保RED／GREEN、production-owner mutation、focused、完整回歸與commit range；
 只改測試／腳本／文件沿M7唯一B+C條款：一席獨立review、定向驗證與CI。
 新增跨JVM oracle須tracked、驗失敗反例、納入run-all及CI；舊FAIL與root保留，未獲授權不套M6單次重跑額度。

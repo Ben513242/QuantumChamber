@@ -5,7 +5,31 @@
 **目標（Goal）**　合法 COMPLETE 投影 B 的參與者走固定回家門，先回 B，再經 B 的膜以原座標回 A。旅程終局可安全解除同艙占用。
 **架構（Architecture）**　將既有 checked journal 擴充為能同存舊列與 HOME 列的單一權威。沿用走廊、回收、票額、原生移動與 chunk checkpoint，分別核對 Entry=B 與 Root=A。每 SID 的終局收據保留歷史，活躍列負責完成 B 的最後門狀態。
 **技術基線（Tech Stack）**　Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Loom 1.7.4、Java 21、Gradle 8.8、PowerShell 7。
-**對應規格（Spec）**　[已採用的 v1.0](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `9054C4D75480D18178FD6A6420EBEF7A4ABABE4A55A95E5B4090581CC6F77932`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
+**對應規格（Spec）**　[v1.1 驗證平台勘誤候選](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `8F6AA80876FAF27363FFB4AB576DDBC8BD74BF1CA7F8EA4E96A40404D54ECDA6`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
+
+## 2026-11-13 有界驗證修訂（待一席獨立審查）
+
+來源：[M7 note「使用者回覆 T1 checkpoint」](../../implementation-notes/2026-11-13-m7-return-home.md)逐字四裁示，原文在SDD/user-t1-scope-ruling-20261113.md。只改驗證範圍，不改玩法、production契約或歷史原判。
+
+| 範圍 | 現行決定 |
+| --- | --- |
+| Windows native | T1 PoC三門態×六cut=18列/36phase；T4正式owner三門態×十三cut=39列/78phase。T1六cut為before-close、after-door、after-checkpoint、after-temp-force、after-publish、after-remove。 |
+| Ubuntu | 真volume硬連結/大小上限等JUnit＋正式拒絕GameTest，exact零skip；不寫Linuxowner、不跑native/main-only，Linux crash/reopen只由Windows推論。 |
+| PoC生命週期 | T1原件留存，T2/T3 default full/CI仍守門。T4正式Windows39本機及同SHA CI逐列通過後，保存原件/SHA/digest退休證據，以純驗證接線提交從default full/CI移除PoC；退休接線CI成功才進T5。T5–T8不重跑PoC，歷史原件/FAIL不刪，保具名歷史唯讀入口。 |
+| 本輪授權 | docs-only plan/必要spec平台勘誤→原唯一reviewer一席plan C/I0＋逐I歸屬→原implementer一輪核心整改→一個事前凍結batch執行一次→無論結果停回報。不是T1 closed/正式18或39/下一task授權。 |
+
+### I1–I12原判與範圍歸屬（須原reviewer確認）
+
+原task-1-core-review.md C0/I12/M2保持不變。I1–I5、I7、I9、I11、I12保留；I6只移除Linuxowner部分，Windows exact owner/timeout保留；I8只移除Ubuntu native/雙OS26-shard部分，Windows artifact/收據/disk/selftest/digest嚴驗保留；I10只移除Ubuntu main-only，Windows三層/上傳/兩JAR角色保留。此為proposed disposition，不自行整項關閉。原reviewer另出逐I確認表；plan review清零只採新契約，不代表12I實作已修完。
+
+### 一輪整改／一次定向batch硬邊界
+
+- plan/spec一席review C/I清零前，不改inventory/CI/oracle/harness/test source。之後只原implementer修一輪T1測試/腳本/build/CI，production完全不改；原12I保留部分照修、移除部分不另寫Linux程式。M1/M2可同輪移除重複未用匯出分支/EOF，不另開fix round。
+- 實作完成先本機候選commit並凍結`t1-fix1-batch-plan.json/md`：完整SHA、dirty/raw source/compiled/actual argfiles的完整成員/hash、唯一nonce/root、按序精確命令、預定退出/事前具名negative及錯因。controller核清單後只執行一次，沒有自動重試、不邊跑邊改消費檔；compile僅由該batch一次Gradle建置依賴完成，不能先試編譯偷跑第二批。
+- batch上限：兩spike JUnit一次、Windows M7 GameTest一次、Windows ordinary/after-checkpoint單pair最多一組（crash77/reopen0），以及同批離線strict/raw/owner/artifact/manifest/consumer/summary/workflow各控制一次。不是18/39全集。expected negatives須執行前具名固定錯因，不得事後把失敗改expected。
+- 任一非預期工具FAIL/不符預定終局，立即停止後續命令；保原root/exit/partial，安全結束已在途exact owned JVM（身份未知不廣殺），本輪不得fix/重試/續跑。原EVIDENCE-INTEGRITY3、Native2/main-only2等計數/FAIL/UNKNOWN不重置；expected negative精確正拒不算工具FAIL。
+- batch自然PASS後也停止，不再fix/compile/runtime/CI/push；原唯一reviewer只讀核分類/差異/既有原件，新缺口open待下次裁示，不求所有實證清零而擴權。本輪禁止正式18/39/full/T2/新CI/push/project clean/W10 preflight或重建/退役；可必要本機待驗candidate/docs commit。Ubuntu本機無真環境且須push才有CI時標未驗，不偽造Linux。
+- 停止交付：plan/spec與採用review、逐I原判/範圍移除/保留/修正/未驗表、改檔/exact集合、唯一batch實際命令/root/SHA/exit、新Windows-only＋PoC退休時程模型及UNKNOWN/未驗能力。後續main/tag/人工/PR/退役仍另問。
 
 ## 共通限制與證據
 
@@ -14,7 +38,7 @@
 - 每次 commit、push、gate 終局由 controller 同步 note 與 AGENTS 入口。記 task、base/code pin、實跑命令／root／hash、退出碼、review range、遠端 SHA／CI attempt 與未決項。未發生事件寫「待驗」。同 SHA CI 終局先寫 ledger／工作區，下次文件提交收錄，勿為寫回該次 CI 觸發無限 CI。
 - 每個 production task 都有具名 RED、GREEN、直接變異 production owner、還原原 bytes、focused、完整 run-all、獨立規格與品質審查、同 SHA CI。修正輪重新執行適用門檻。純測試／腳本／文件一席獨立 review、定向驗證與 CI，免 production mutation 與本機 full。改 build 的 T1 只接驗證入口，仍另實際驗 clean build、測試隔離及必要 JVM。
 - 逐檔 stage 該 task 表列的變更與兩份 controller 狀態文件，先核 staged diff／清單。禁止 `git add -A`、覆寫既有 dirty、force push、force-add ignored 證據。先凍結本機候選 commit 再用其乾淨 code pin 跑 production full；若審查改碼，重新凍結／驗證。純進度文件另列 docs pin，遠端採最終推送的同 SHA CI。
-- 一個 task 的 C/I 全清且 required CI 各 job 真 success 才 closed。計畫獨立審查 C/I 清零後直接進 T1。正常 push 已授權；人工代操作（方式 Claude）、main、tag、工作樹退役、PR、LICENSE 各自另問，無需為執行計畫追加整份核可。
+- 一個 task 的 C/I 全清且 required CI 各 job 真 success 才 closed。本輪只在下列有界修訂一席 C/I 清零後進一次核心整改／定向，不恢復正式矩陣或下一 task。正常 push 舊授權本輪暫不使用；人工代操作（方式 Claude）、main、tag、工作樹退役、PR、LICENSE 各自另問，無需為執行計畫追加整份核可。
 - Root 僅 canonical `minecraft:overworld` 原 ORIGIN；Entry 僅 exact live catalog OVERWORLD COMPLETE PROJECTION。HOME door = `new DoorKey(sid, 1L, DoorKey.DoorWallSide.POSITIVE_LATERAL)`。SOURCE 與 legacy return-only 維持原意；FamilyCapabilityVersion=0，Nether／End 共用原版，M8 不排入。
 - 啟動與選門各驗 A 的實際供電一次。選後 LOW 不取消，停用／拆除／結構失效停止旅行、保留選擇、checked 收尾才解除 A 保護及鎖。A 絕不重建、改門或清容器。新旅程須重新關 B 門，不必出艙，可沿用未到期藥效。7×7×7 與一格外殼不變。
 - 相依順序 T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8。T1–T6 的定向入口限既有 testmod，可呼叫 production owner，release 的 B activation guard 到 T7 才放行。不得用 production 開關、偽造 catalog 或跳過真 checkpoint 替代這個順序。
@@ -25,8 +49,8 @@
 - 現有完整入口：`pwsh -NoProfile -File scripts/verification/run-all.ps1`。自然印出 `END ALL exit=0 HEAD=<本機候選>`、outer exit=0，逐一讀本輪 summary 原件。子 gate 的成功或 `-PreflightOnly` 不抵 full。
 - **首次碰 W10 前**依 [驗證 README 的 W10 段](../../../scripts/verification/README.md) 重建指定 fresh detached producer `.worktrees/m6-w10-m5-producer`。核 tag object、peeled `a2d2b404329d2574469fca064a663e21fe89f333`、原 blob、patch、runner 與 diff 雜湊、唯一允許 dirty；已有資料先驗原件，不覆寫或重套。Windows console `chcp 65001`，讀回 65001。
 - W10 入口含完整／preflight 的 run-all、m5-collapse-probe 未限 `-Only`、含 `w10` 或 `-PreflightOnly`，以及 m6-harness-safety-check 的 `ci-cwd-preflight`。先驗 canonical 絕對路徑、所有祖先非 reparse、沒有 live Java owner、session.lock 可獨占。世界只可唯一可恢復 move、逐檔 hash 還原。不能祕密清除舊 FAIL 世界來取得 fresh。
-- T1 將建立下列入口，此前不存在。M7 GameTest 用 `gates.ps1 -Mode M7GameTest -Label <唯一標籤>`；`m7-ci-gametest.ps1 -Platform Windows|Ubuntu` 驗該平台 JUnit、GameTest XML、log、scope 與兩 JAR。M7 native 用 `m7-home-probe.ps1 -AllEnabled`，唯讀重驗 `m7-home-probe.ps1 -VerifySummary <summary.json> -ExpectedHead <完整SHA> -SelfTest`；具名鏈用 `-Only <chain>`。均以 `pwsh -NoProfile -File scripts/verification/<腳本>` 呼叫。
-- T1 在 `S/m7-inventory.json` 定義 Windows 與 Ubuntu 各自的 exact inventory，由 `portable` 加該 OS 專屬集合組成，runner、CI、summary 與負控驗實際 OS／集合。Windows 承擔需要 PlayerCheckpointStore 的正式成功入場、恢復、跨越與 playerdata 三窗口；Ubuntu 執行正式入口的非 Windows 原生玩家 checkpoint 拒絕，要求拒絕時幾何、玩家移動、active journal、鎖／票增量全為零。Ubuntu 不啟用 Windows 成功案例、兩平台皆不允許 skip 或用 testmod 繞過拒絕。tracker、原子硬連結、原生 B chunk checkpoint、獨立關門與可攜負例兩平台都必須實跑。T1 先驗既有 A 平台界線，T5 與 T7 在各自正式 B owner／普通玩家入口重驗。下文「全集合／全部鏈」一律指該平台 manifest 的精確全集。
+- T1 將建立下列入口，此前不存在。M7 GameTest 用 `gates.ps1 -Mode M7GameTest -Label <唯一標籤>`；`m7-ci-gametest.ps1 -Platform Windows|Ubuntu` 驗該平台 JUnit、GameTest XML、log、scope 與兩 JAR。M7 native 僅 Windows，用 `m7-home-probe.ps1 -AllEnabled`，唯讀重驗 `m7-home-probe.ps1 -VerifySummary <summary.json> -ExpectedHead <完整SHA> -SelfTest`；具名鏈用 `-Only <chain>`。均以 `pwsh -NoProfile -File scripts/verification/<腳本>` 呼叫。
+- T1 在 `S/m7-inventory.json` 定義 Windows 與 Ubuntu 各自的 exact inventory，由 `portable` 加該 OS 專屬集合組成，runner、CI、summary 與負控驗實際 OS／集合。Windows 承擔需要 PlayerCheckpointStore 的正式成功入場、恢復、跨越與 playerdata 三窗口；Ubuntu 執行正式入口的非 Windows 原生玩家 checkpoint 拒絕，要求拒絕時幾何、玩家移動、active journal、鎖／票增量全為零。Ubuntu 不啟用 Windows 成功案例、兩平台皆不允許 skip 或用 testmod 繞過拒絕。tracker、真volume硬連結與可攜JUnit／GameTest兩平台實跑；B native checkpoint／獨立關門跨JVM及main-only只Windows。Ubuntu不寫Linuxowner、不跑native/main-only，Linux crash/reopen只由Windows推論，列已知限制。T1 先驗既有 A 平台界線，T5 與 T7 在各自正式 B owner／普通玩家入口重驗。下文「全集合／全部鏈」一律指該平台 manifest 的精確全集。
 - 每個 task 只加入當次真的實作、非空的 JUnit／GameTest／native 集合。tracked 必要清單、source 宣告與實際 XML／manifest 三方相等；新案例註冊、fixture 變造反例、run-all 與雙平台 CI 同 commit 生效。舊 scope 各自精確匹配。禁止空集、skip、假 PASS 或把未實作鏈列為已啟用。
 - 正常 push 指定 feature branch。用 `gh run list -R Ben513242/QuantumChamber --branch codex/m7-return-home --commit <sha>`、`gh run view <id> -R Ben513242/QuantumChamber --json headSha,status,conclusion,jobs` 核本 SHA 及各必要 step／job；保留 attempt／artifact digest。workflow 對應本機負例必須跑其實際 step 原文。
 
@@ -55,11 +79,11 @@
 
 **交付與依賴**　只需已審計畫與 M6 基線。本 task 用實際 1.21 NBT、兩平台檔案系統、真 B 門／原生 checkpoint 建立可重現實證。所有 build／CI 修改只為驗證接線，屬使用者指示的純測試／腳本豁免，仍須真兩平台定向實證與同 SHA CI。
 
-**新增**　`J/persistence/{M7BudgetSpikeTest,M7PublishSpikeTest}.java`、`G/{M7HomeSpikeGameTests,M7HomeProbe,M7CloseSpikePhases}.java`、`S/{m7-ci-gametest,m7-home-probe}.ps1`、`S/m7-inventory.json`。
+**新增**　`J/persistence/{M7BudgetSpikeTest,M7PublishSpikeTest}.java`、`G/{M7HomeSpikeGameTests,M7HomeProbe,M7CloseSpikePhases}.java`、`S/{m7-ci-gametest,m7-ci-main-only,m7-home-probe}.ps1`、`S/m7-launch-export.init.gradle`、`S/m7-inventory.json`。薄helper只保Windows必要路徑，移除重複匯出分支與新Linuxowner/main-only程式。
 
 **修改**　`build.gradle`、`src/testmod/resources/fabric.mod.json`、`G/mixin/{M4LegacyGameTestFilterMixin,StaticDimensionsTestServerMixin}.java`、`G/M4GameTestBoundaryProbe.java`、`S/{gates,run-all,ci-rule-check}.ps1`、`.github/workflows/build.yml`、`S/README.md`。
 
-**消費**　`ChunkSaveCheckpoint.ready(ServerWorld,Set<ChunkPos>)`／`save(MinecraftServer,Map<ServerWorld,Set<ChunkPos>>)`、既有 probe-common.ps1 中經雙平台驗證的可攜 helper、NBT hooks 與 M6 scanner／artifact 檢查。沿用已安裝版本，查實 Minecraft JAR 的 tracker API。
+**消費**　`ChunkSaveCheckpoint.ready(ServerWorld,Set<ChunkPos>)`／`save(MinecraftServer,Map<ServerWorld,Set<ChunkPos>>)`、既有 probe-common.ps1 的 Windows exact owner helper、NBT hooks 與 M6 scanner／artifact 檢查。沿用已安裝版本，查實 Minecraft JAR 的 tracker API。
 
 **產出**　上方三個 M7 命令、`runGameTestM7`、`runM7HomeProbe`、scope `m7_home`、flag `quantumchamber.test.m7Home`、`build/gametest-m7-results.xml`，及固定 chain/phase、JUnit class.method、GameTest template＋class.method 清單。probe 每 phase 指定本 task 定義的 `-Pm7ProbeNonce`、`-Pm7Chain`、`-Pm7Phase`，共用該鏈 fresh save，獨立 JVM。
 
@@ -74,15 +98,15 @@
 
 - [ ] `publishesCompleteBytesWithoutClobber` 在真 Windows 與 Ubuntu volume 以同目錄 force 完整 temp＋`Files.createLink(target,temp)`；兩競爭者、預存 exact／異值／破損、未知後讀回、缺硬連結能力，分別驗 target 永遠單一完整 bytes、舊 hash／檔案身分不變，不退到 replace。相同能力需在實際 save volume 的新 SID admission 可驗。
 
-- [ ] 新 `S/m7-home-probe.ps1` 內實作 Windows、Ubuntu 啟動／timeout cleanup。Windows 只調用能核 PID、啟動時間、nonce、命令列與 root 的既有 owner；Ubuntu 用原生 `pwsh`／Gradle、實際 java executable、`/proc/<pid>/stat` 的 starttime、boot_id、NUL 分隔 argv 的 exact nonce、cwd／runDir。以啟動時原程序 handle 或 Linux pidfd 綁實體、核相符後才定向停止；PID 回收、身分無法取得或不符即保留證據、報錯，不殺其他程序。Ubuntu 不執行 Win32 CIM、powershell.exe、java.exe 或 Windows GUI 選項。各驗 timeout、stale PID、外來同名程序不遭終止。
-- [ ] 於 testmod 用真 B 三種門態。T1 與 T4 共用固定 manifest 展開式 `{spike-close|close}-{ordinary|sealed|passable}-{cut}`，每個實際 OS 各有獨立 (stage,門態,cut) 列。cut 精確列為 `before-close,after-close,before-door,after-door,before-checkpoint,after-checkpoint,after-temp-force,before-publish,after-publish,after-readback,after-recheck,before-remove,after-remove`。每列唯一 nonce／root／save，兩 phase 依序 crash（預定 halt 77）、reopen（新 JVM 正常 stop 0），實讀 journal、單檔與 B 磁碟門格。每 stage/OS 恰 39 列，不以一門態一個 root 跑多 cut。
-- [ ] T1 先在各 OS 量一組完整 crash/reopen（含 JVM、readback、鎖釋放與負例）時長。根據測得數字將互不共用 root 的 chain 列切成獨立 CI matrix shard；每 shard 硬界不超既有 90 分鐘 job，保留原 M6 70/15 分鐘 step 與原 job 完整執行。在同 SHA 匯總所有 shard 的平台、stage、列、phase、exit、artifact hash；少任何一個 cut、重複同列或跨平台混用皆 FAIL。實測若不能在界內完成即記阻點再調 shard，不能自行加舊 timeout。
+- [ ] native及main-only runner僅Windows。以啟動時原process handle綁實體，核PID/start、exact nonce/root/java executable/命令列後才定向收回；PID回收或身分未知保原件報錯、不殺其他程序。各驗owned timeout/stale PID/foreign同名程序與鎖釋放。移除新Linux `/proc`/pidfd/Python owner；Ubuntu要求native/main-only於啟動前受控拒絕，不記skip/PASS。
+- [ ] native manifest只Windows，stage/door/cut/implemented/phases與Java宣告/原件exact。T1 `spike-close`每門態六cut：`before-close,after-door,after-checkpoint,after-temp-force,after-publish,after-remove`，三門態共18列；T4 `close`每門態十三cut：`before-close,after-close,before-door,after-door,before-checkpoint,after-checkpoint,after-temp-force,before-publish,after-publish,after-readback,after-recheck,before-remove,after-remove`，共39列。每列唯一nonce/root/save、crash77→新JVM reopen0；不一root跑多cut。T1集合外cut不是skip，T4正式39不縮減。
+- [ ] 後續另獲正式執行授權才量Windows一組完整crash/reopen（含JVM/readback/取證/鎖釋放/負例），按本機及CI實測選Windows shards，不沿用13/OS或26-shard常數。每shard不超舊90分鐘job，原M6 70/15分鐘step/job完整保留。同SHA匯總Windows exact stage/列/phase/exit、artifact本體digest及跨shard unique root/nonce/JVM identity；缺列/重複/錯OS/錯綁具名拒絕。Ubuntu只JUnit/GT，不建空native job或假PASS；不足只報阻點、不加舊timeout。
 
-- [ ] T1 交易用 test-only fixture 明標 proof-of-concept；兩平台直接準備合法 B 區塊與 close 前置資料，T4 則由合法已選、全 Returned 的磁碟 fixture 交正式 close owner。兩者不需先走 Windows 玩家 checkpoint，不將 fixture 當正式入場證據。門與 chunk checkpoint 用正式 API 並驗重開 region 的實際門格、門口 entity 防夾、B 門全 chunk；注入一次 checkpoint 拒絕，須無終局成功。保留磁碟與 trace。T4 另外以 production close owner 重跑同切點。
+- [ ] T1 交易用 test-only fixture 明標 proof-of-concept；Windows直接準備合法 B 區塊與 close 前置資料，T4 則由合法已選、全 Returned 的磁碟 fixture 交正式 close owner。兩者不需先走 Windows 玩家 checkpoint，不將 fixture 當正式入場證據。門與 chunk checkpoint 用正式 API 並驗重開 region 的實際門格、門口 entity 防夾、B 門全 chunk；注入一次 checkpoint 拒絕，須無終局成功。保留磁碟與 trace。T4 另外以 production close owner 重跑同切點。
 
-- [ ] 將 Gradle run／testmod registrations／filter／舊 observer 及 preset 隔離接好，M7 正常 pacing 及 actual mod list 具證。兩平台 CI 各依 `portable+windows`／`portable+ubuntu` 的 exact JUnit、GameTest、native 清單與唯讀反驗；Gradle run/filter、source 掃描、XML oracle、chain manifest 都以相同平台分派，將 Windows 成功案例放入 Ubuntu 清單／移除 Ubuntu 正式拒絕案例須遭對應負例拒絕。所有該平台必要案例零略過；T1 另實際 clean build 檢查 release/sources（含內嵌 JAR）與 main-only。
+- [ ] 將 Gradle run／testmod registrations／filter／舊 observer 及 preset 隔離接好，M7 正常 pacing 及 actual mod list 具證。兩平台 CI 各依 `portable+windows`／`portable+ubuntu` 的 exact JUnit／GameTest清單（native/main-only僅Windows）與唯讀反驗；Gradle run/filter、source 掃描、XML oracle、chain manifest 都以相同平台分派，將 Windows 成功案例放入 Ubuntu 清單／移除 Ubuntu 正式拒絕案例須遭對應負例拒絕。所有該平台必要案例零略過；T1正式完成前另驗不丟證據的clean build、兩平台release/sources（含nested JAR）與Windows main-only。本輪禁止project clean，真正clean後存續可列未驗。
 
-- [ ] 每個 probe receipt 核 code SHA、nonce、chain、phase、schema、canonical root、PID＋start、獨立 JVM、預期 halt 或正常結束、磁碟原件 hash、鎖釋放。summary 反例至少有刪 phase、重 PID／根錯配、調 hash、調 HEAD、假 PASS／略過；全部必須以對應錯因拒絕。run-all 包含執行、readonly、negative 與 summary，兩平台 workflow 上傳原證。
+- [ ] 每個 probe receipt 核 code SHA、nonce、chain、phase、schema、canonical root、PID＋start、獨立 JVM、預期 halt 或正常結束、磁碟原件 hash、鎖釋放。summary 反例至少有刪 phase、重 PID／根錯配、調 hash、調 HEAD、假 PASS／略過；全部必須以對應錯因拒絕。run-all包含執行/readonly/negative及最終原件重驗；Windows上傳native/main-only全部原證，Ubuntu只上傳JUnit/GT/JAR原證。
 
 - [ ] 定向跑兩個 spike JUnit、M7 GameTest、全部已啟用 spike 鏈與 SelfTest。push 前先取得本機 runtime 與 workflow fixture 正負例，push 後才讀回遠端同 SHA 正例及每平台反例；三項有任何未證即阻擋 T2 及 guard，記具體阻點。此 task 豁免 production mutation／本機 full。
 
@@ -180,7 +204,9 @@
 
 - [ ] 對 exact B，普通／sealed／passable 均實際套 DoorGoal，逐格驗門、所有 B 相關 chunks 原生 checkpoint，`publishOrVerify`、再驗 B 門＋checkpoint、checked remove（restore CAS）後放鎖。PARTICIPANT_CLOSED 防夾 CLOSE_IF_CLEAR_ELSE_OPEN，其餘 OPEN，不能以 ownerless membrane queue 代替。遇未知或錯配保原件與 busy；移除後不得修舊門。
 
-- [ ] GREEN：正式 owner 的 `close-{ordinary|sealed|passable}-{cut}` 逐一以 T1 固定 39 列和兩個 phase 驗 §5.3；另跑 `receipt-existing`，另測 checkpoint unknown／跨檔不符／已存 target 異值／成功後玩家主動關門。逐 phase 核兩側門格、region、識別、active與歷史 hash、資源、零移動。經正式發布與刪活列完成 >4096 個互異 SID，仍可新 admission，舊單檔 exact 可讀，禁止全目錄掃描或虛增獨立歷史計數。
+- [ ] GREEN：正式 owner 的 `close-{ordinary|sealed|passable}-{cut}` 在Windows逐一以正式39列／兩phase（T1只有18代表列，不抵正式集合） 驗 §5.3；另跑 `receipt-existing`，另測 checkpoint unknown／跨檔不符／已存 target 異值／成功後玩家主動關門。逐 phase 核兩側門格、region、識別、active與歷史 hash、資源、零移動。經正式發布與刪活列完成 >4096 個互異 SID，仍可新 admission，舊單檔 exact 可讀，禁止全目錄掃描或虛增獨立歷史計數。
+
+- [ ] 正式Windows39本機及同SHA CI全部列/phase/負例/artifact原件核齊後，記退休證據/code pin，以純測試/腳本提交把PoC18從default run-all/CI/required集合移除；不刪歷史原件或改FAIL。具名`poc_retired_only_after_formal_close_39_verified`驗缺列/失敗/錯SHA不可退休，default exact改close39＋當期正式新增鏈；退休接線CI成功才進T5。退役前T4 PoC輪次據實計成本，T5–T8 PoC=0。
 
 - [ ] `restart-enable-before-entry` 真跨 JVM 留 registry disabled 已存、stop 尚未落盤，startup 先 direct enable 再操作 B；另驗 DORMANT、同 tick 復啟、部分 Crossed、stop 已落後 A 修復均不復活，普通 LOW 無 latch。對已有 READY 無已確認 root 的 startup 僅 RESTART_CLOSED，不等待 A FULL。
 
@@ -284,9 +310,9 @@
 
 - [ ] `formal_a_and_b_reload_independently` 驗兩端 reload 後可開新 session；重疊 A check 取消與釋票、已 checked HOME 保留。重跑既有 M4 SOURCE、M5 catalog 路徑、M6 各 profile、同 U respawn、Nether／End shared、legacy return-only。供電、藥效與 cohort 限制沿 M2/M5；home capability 1、family 0。
 
-- [ ] 變異 projection guard 接受 PENDING、A 使用 B local presence、跳過 A 保護、舊 receipt 促自啟動、錯端比較器、向已抵達者發關膜通知，各由具名正常入口／訊息產生器測試 killed／還原。focused 新 JUnit、該平台 M7 全 GameTest 與 native／SelfTest；Windows `formal-home-trip` 與 `m5-collapse-probe.ps1 -Only w4,w6`，原 `gates.ps1 -Mode M5GameTest -Label m7-recognition` 的完整 M5 scope 中必有 m5_universe_projection_recognition 具名案例。Ubuntu 以 `formal_projection_checkpoint_unavailable_has_no_side_effects` 核同一普通入口的拒絕、零副作用。
+- [ ] 變異 projection guard 接受 PENDING、A 使用 B local presence、跳過 A 保護、舊 receipt 促自啟動、錯端比較器、向已抵達者發關膜通知，各由具名正常入口／訊息產生器測試 killed／還原。focused 新 JUnit、兩平台各自M7全GameTest與Windows native／SelfTest；Windows `formal-home-trip` 與 `m5-collapse-probe.ps1 -Only w4,w6`，原 `gates.ps1 -Mode M5GameTest -Label m7-recognition` 的完整 M5 scope 中必有 m5_universe_projection_recognition 具名案例。Ubuntu 以 `formal_projection_checkpoint_unavailable_has_no_side_effects` 核同一普通入口的拒絕、零副作用。
 
-- [ ] Controller 同步、逐檔 stage T7 清單、候選 `feat: 開放已確認投影的正規回程操作`。核 W10、完整 run-all、獨立規格／品質 C/I 清零，push 讀回同 SHA CI、兩平台及封裝／main-only／native 必要步驟成功才 closed。
+- [ ] Controller 同步、逐檔 stage T7 清單、候選 `feat: 開放已確認投影的正規回程操作`。核 W10、完整 run-all、獨立規格／品質 C/I 清零，push 讀回同SHA CI、兩平台JUnit/GT與封裝、Windows main-only/native必要步驟成功才 closed。
 
 ### Task 8: 整分支驗收、人工 smoke 與整合交回
 
@@ -297,7 +323,7 @@
 
 - [ ] 先驗具名負控：把複本中的 M7 一例改 skipped、移除 chain／篡改 HEAD、將 GameTest receipt 充當 main-only，各應拒絕；確認 PENDING、失敗或漏 H 列的交付檢查不能記里程碑已完成。只動 fixture，保留原件。
 
-- [ ] 核 final code pin、重新執行 milestone 完整 run-all／全 M7 native 與 negative oracle、兩平台精確集合／release+sources／獨立 main-only（mod list、runtime classpath/argfiles/DLI、exact PID class-load，唯一合法 production ModPresenceProbe）。產出各種集合、hash、全 SHA 與零略過 M7。純 docs 本身豁免 production mutation／另跑 local full，此處明定的是 milestone 最終 full。
+- [ ] 核 final code pin、重新執行 milestone 完整 run-all／Windows當期全M7 native/negative oracle、兩平台JUnit/GT精確集合／release+sources／Windows獨立main-only（mod list、runtime classpath/argfiles/DLI、exact PID class-load，唯一合法 production ModPresenceProbe）。產出各種集合、hash、全 SHA 與零略過 M7。純 docs 本身豁免 production mutation／另跑 local full，此處明定的是 milestone 最終 full。
 
 - [ ] 對 `2255027..候選` 做 whole-branch 規格／品質審查，檢五個焦點、完整路徑與 V/H 對照。C/I 有事項回 owning task，production 修正再跑完整門檻；任何修正均保舊原判，採新的有效 code pin。文檔列出的 READY 跨檔窗口不可宣稱原子。
 

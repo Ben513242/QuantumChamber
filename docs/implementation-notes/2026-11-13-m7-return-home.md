@@ -1,7 +1,62 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 已經第三輪獨立審查清零採用，plan 開始撰寫；尚未實作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，SDD T1 核心候選審查 C0／I12／M2 後，使用者授權先 plan 一席清零、再一輪整改＋一次定向驗證回報；production 尚未修改。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
+## 使用者回覆 T1 checkpoint：驗證縮範圍與一次有界恢復（2026-11-13）
+
+來源：**2026-11-13 使用者在本 Codex 對話回覆 T1 正式全集前 checkpoint**。以下四題、所選選項及說明為使用者看過並選定的原文，由 root 轉交照錄；不是 Claude 稿，也不是技能。root 另存原文於本計畫 SDD 的 `user-t1-scope-ruling-20261113.md`。
+
+1. 題目：「T1 的可行性實證（PoC）每個平台跑幾列？」
+   - 選：「B 每門態六個代表切點（建議）」
+   - 說明：「每平台 18 列，保留六個存檔階段；未抽到的組合由 T4 正式程式的 39 列全驗。Codex 也建議這個。」
+2. 題目：「PoC 要保留多久？（這項影響最大）」
+   - 選：「T4 正式矩陣上線後退役（建議）」
+   - 說明：「T1 跑完的 PoC 證據留存；T4 的正式 39 列通過後，PoC 從完整回歸與 CI 移除，不在 T5～T8 重複跑。T2～T3 期間仍跑，當作守門。」
+3. 題目：「Ubuntu 要驗到什麼程度？」
+   - 選：「比照 M6：原生當機重開只在 Windows（建議）」
+   - 說明：「Ubuntu 跑 JUnit（含真實磁碟的硬連結發佈與大小上限）和 GameTest（含正式拒絕契約）；不寫 Linux 程序管理、不跑 Ubuntu 原生矩陣與「只載正式模組」檢查。代價：Linux 上「當機後重開」的原生行為只靠 Windows 推論。」
+4. 題目：「實作改完之後怎麼恢復執行？」
+   - 選：「先改 plan，再一輪整改＋一次定向驗證後回報（建議）」
+   - 說明：「依上面裁示修改 plan 並一席獨立審查；再做一輪核心整改加一次定向驗證就停下來回報，不開正式全集。」
+
+### 本輪執行界線（controller 依上述裁示落地）
+
+- 先僅修改 plan／必要 spec 驗證平台勘誤，不改玩法；由原唯一 reviewer 獨立審查 plan amendment 及 I1–I12 歸屬，C/I 清零後才可動 exact 清單／CI／oracle／工具。原 review 的 C0/I12/M2 與 finding 不覆寫；「範圍移除」須原 reviewer 確認，Windows 與其他真正缺陷不能整項豁免。
+- T1 為 **Windows 18 列**、六 cut × 三門態；T4 正式 **Windows 39 列**通過後，PoC 從 default full／CI 退役，歷史原件保留；T2–T3 保留 PoC 守門。Ubuntu 僅 JUnit＋GameTest，沒有 native／main-only／Linux owner 程式。exact inventories 與 CI／oracle 同步新集合，禁止 skip 冒充 PASS。
+- 本次只授權原 implementer **一輪核心整改＋一個事前凍結的定向 batch 執行一次**。不開正式18／39、T2、完整回歸、新 CI 或 push；可必要本機未完成候選／docs commit。production 不改。batch 不邊跑邊改；任何非預期工具失敗立即停止，不重試／補修／續跑，安全收回已在途 owned JVM 並留原根。expected negatives 必事前具名。
+- 原 `T1-EVIDENCE-INTEGRITY` 保守第三事件、Native2／main-only2 等歷史計數、舊 FAIL／UNKNOWN／clean 事故與來源漂移診斷全部保留，不因本次有界授權重置。batch 終局後不再 fix／compile／runtime／CI／push；原 reviewer 只讀核差異與原件，新增缺口列 open 待下次裁示。
+- W10 producer 已存在，這輪不重建、不移除、不跑 full；不 clean 刪證據。Ubuntu 若本機不可真跑且需 push 才有 CI，就如實未驗，不模擬 Linux 或擅 push。現在先做文件修訂與一席 review，工具仍未開始整改。
+## 使用者新增正式批前巡檢裁示（2026-11-13，立即生效）
+
+來源：使用者在本 Codex 對話、T1 執行期間貼入的新增訊息，root 照錄於 `.superpowers/sdd/2026-11-13-m7-return-home/user-checkpoint-instruction-20261113.md`；controller 已讀原文。這不是 Claude 派工稿，也不是技能要求；本次不改玩法範圍。
+
+- 使用者原文：「請在 T1 提前核心審查完成後、正式 39 列雙平台批次開跑前，先回報下列四項再繼續」。因此設 **formal-full hold**：先完成本 task 唯一核心審查，再由 root 向使用者回報 checkpoint；在此前不開正式 39 列雙 OS，也不 push 會自動觸發該全集的 workflow。核心編碼、定向驗證與唯一 reviewer 可續，T1 OPEN。
+- 四項為：本機／CI／shard 與 T1–T8 時程（實測、假設、UNKNOWN 分開）；T1 非預期失敗（驗證工具／遊戲功能）與未實跑新能力；T1 PoC 與 T4 正式 owner 的重複／不同風險及縮樣選項；穩定 problem ID／第三次止損。controller 整理 `t1-pre-full-checkpoint.md/json`，核心 review 後補凍結版。
+- 關於縮減，使用者原文：「這是 plan 變更，只提出選項與影響，不要自行修改，由使用者裁示。」所以沒有自行改 plan、清單或門檻。
+- 第 4 項原文：「同一個驗證工具問題連續第三次失敗時，先停下回報，不要繼續疊修。」立即適用；跨 nonce／commit／文件／改名不重置，同問題不拆簽章；expected RED、mutation／negative 被正確拒絕不算非預期工具失敗。有效 GREEN 需直接原件支持。
+- 作者初盤目前無已達第三次者；其中 main-only 的 executable=null 與 oracle 誤判合併為同工具問題兩次，再以新 root 真 JVM／三負例直接 GREEN。其他問題與保全事故將逐項列原 root、原判及狀態；controller 尚待完整索引核對，不以作者自報當最終清零。
+### root 執行裁定：證據完整性工具第三事件止損（2026-11-13）
+
+依上方使用者第4項原文，root 已向使用者回報，保守把 clean 刪證據、active log hash=null、來源指紋不一致合併為穩定問題 `T1-EVIDENCE-INTEGRITY` 的第三事件並止損。**這是 root 的保守計數裁定，不冒稱三者為同一 code root cause，也不偽稱使用者逐字指定這個 group。**
+
+- 停止 T1 新增工具修正、所有新 compile／runtime／重跑／CI／push；只讀盤點、README／狀態整理、現有候選 diff 凍結與本 task 唯一核心靜態 review 可續。此項取代上方較早「核心編碼／定向可續」的執行許可，不能為了 C/I 清零突破止損；未完成能力、open Important 如實交回使用者。
+- 已在途 `t1-core-directed-one-pair`（非39列）於 hold 訊息送達前啟動，後自然完成 Windows crash77／reopen0、鎖釋放；沒有廣殺或新列。完整 chain 44.405 秒、summary 44.606 秒（含匯出與取證成本），原件 summary SHA-256 `C59835C4BF3A9AAC711D96E8B3F8446BC07E1FD8BA0705B8CB3D93FECDB38418`。
+- controller 只讀重讀 1660 份 source／compiled raw copy 的 bytes／hash，0 mismatch；manifest SHA-256 `60FD9137D0E6EC752440CCBFFD92D5996A95F72F42ABDCCAE53A3111A2A7854F`，兩 phase prelaunch hash 吻合、8 summary 負例 KILLED。postcheck 留 `t1-core-one-pair-controller-postcheck.json`。這只證單列，不抵正式39列、Ubuntu或真 project clean 存續，也不自行解除任何止損／formal-full／push hold。
+- 當前 M7 Java0。單列終局後才允許本機明標未完成候選 commit 或 immutable diff，維持 HEAD／消費檔不在 runtime 中途改動；候選供唯一 reviewer 靜態＋既有證據審查。收到審查即把 `t1-pre-full-checkpoint.md/json` 完整交 root，待使用者選下一步。T1 OPEN，M7 未取消，main／tag／人工皆未授權。
+### T1 核心候選凍結與唯一靜態審查（未完成、未 push）
+
+- 本機候選 commit `55c48682279392e23805e08b93c00deb6637db88`（BASE `b26b90c`），訊息明標未完成／hold，20 檔清單見 `task-1-core-commit-files.txt`。controller 已核 `src/main` 無 diff、HEAD／status 符合；只有本 note／AGENTS controller 狀態 dirty。未 push、未有新 CI。
+- 原 runtime 在 BASE＋dirty 候選執行，不能稱這筆 commit 同 SHA gate。已知靜態 diff-check 有 `m7-ci-gametest.ps1` EOF 多空行，止損下留原件，不為修小項再改工具。
+- `review-b26b90c..55c4868.diff` 為技能產生的完整 immutable range，1 commit／232733 bytes；已派本 task 唯一獨立 reviewer `/root/m7_sdd_execution/t1_core_reviewer`（`gpt-6-astra`／high，fresh context）靜態＋既有證據審查。禁止 runtime／compile／修碼／CI，不追加 reviewer；可有 open Important 如實交使用者，不突破第三事件止損求清零。
+- 報告預定 `task-1-core-review.md`；收到後補凍結 `t1-pre-full-checkpoint.md/json` 交 root 回報四項並等使用者下一步。T1 OPEN，正式39／Ubuntu／完整 bundle／project clean 存續／同 SHA CI 仍未完成，所有 hold 維持。
+### T1 唯一核心審查終局與 checkpoint 交回（OPEN、止損維持）
+
+- 唯一獨立審查 `task-1-core-review.md` 已完成並由 controller 完整讀取：**規格❌、品質 Needs fixes，C0／I12／M2，全部 open**。原報告 SHA-256 `8D3C8F3A074B04FF9C49CC30AEE4EF7FD2A2B6A545BEC4C85749449ACBCECC27`。這是現有候選 `b26b90c..55c4868` 的靜態＋既有原件審查，沒有新增 runtime／compile／修碼。
+- 12 個 Important：I1–I3 的合法 schema6 舊列、CLOSE／後繼最壞預算與 bounded raw/depth；I4–I5 的真正 guard／平台入口及同一 PoC 交易內故障／防夾；I6–I9 的 exact owner、完整消費集合／mutable DLI、空 disk／未綁 startup/owner自測/digest、startup strict；I10–I12 的 main-only classload/JAR角色/CI原件、gates/run-all保全與最終重驗、manifest結構化精確性。精確 file:line 與證據見原報告，不以既有測試 GREEN 當作這些缺口已解。
+- Windows 真單列 77／0、兩 receipt hash、1660 raw copy hash 確實存在；但單列不能證完整快照集合／所有 JVM 消費凍結 bytes，JUnit 6/6 的數字也不能證不合法 fixture 的 tracker 最壞上界。正式39列／Ubuntu／完整 artifact bundle／真正 project clean 存續／同 SHA CI 仍缺。T1 三項先導尚未全可採，T2 不放行。
+- 四項 checkpoint 凍結交回版1：`t1-pre-full-checkpoint.md` SHA-256 `E70C0F84F139E84A3864C8D3F2ED73343603B4025A3B64D49E5F399415876EFA`；JSON `B465285EE904ECD10C8D690D2F3D9AE1706F6ACF26DEDDF92BB8F47EE64F1E12`。列真單列44.606秒、39列約29.0分本機native條件情境；Ubuntu／新CI UNKNOWN；至少7 local full＋8 CI，舊CI約31.5分×8≈4.2小時只是同速CI情境，驗證總時長仍 UNKNOWN。
+- checkpoint 列全6次非預期 runtime 工具FAIL與3事故、所有新能力未驗；A39／B18／C25只為選項，不改 plan／清單／門檻。PoC生命週期另需裁示：目前沒有T4退役PoC明文，若保留則本機至少`8n`、taskCI至少`16n`個PoC pair，正式close從T4–T8另反覆跑；不能只算T1＋T4各一次。
+- 依使用者/root止損，不為 Important 清零開 fix／重跑／push。候選55c4868只在本機，遠端讀回仍b26b90c；僅本note／AGENTS dirty。root將四項與審查交使用者選下一步。T1 OPEN、T2–T8未開始，main／tag／人工／PR／LICENSE／退役未執行。
 ## Codex 接手（2026-11-13，規格與計畫已採用，準備 T1）
 
 - 工作樹與分支已核對：`.worktrees/m7-return-home`／`codex/m7-return-home`，接手時 HEAD `30c0c627d7fb3f205d3a329152d62e6d04cdc773`，工作樹乾淨。
@@ -12,7 +67,66 @@
 - plan 初稿 `docs/superpowers/plans/2026-11-13-m7-return-home.md`：334行、8個 task，SHA-256 `00346816839FF702A660040E97C6756D124A0446D1C3AC16B707E13E874F9F8E`；獨立審查中，尚未採用／實作。T1 的 NBT 計量、no-clobber 發布及 B 門 checkpoint 均待實跑，不是已驗結果。
 - plan 第一輪獨立審查 `plan-review-1.md`：Critical 0／Important 7／Minor 2，未採用、禁止派 T1。阻擋包含 Windows／Ubuntu 正式入場預期分流、Linux launcher／唯一切點 manifest、既有入場交易順序、正式 remap／來源 checkpoint 接線、全 BlockState JUnit、舊 M5 W4／W6 oracle 與 typed CLOSE 事件入口。交同作者窄修，未擴張 Linux 玩家 checkpoint 能力、未改 binding spec、未執行 runtime gate。
 - plan 修稿339行、8 task，SHA-256 `7BE47AD2DB5AB11C034E9B7A502E622A50CE1924D4A367227C1A407632C3135A`；第二輪獨立複審 `plan-review-2.md` 為 Critical 0／Important 0／Minor 0，報告 SHA-256 `596D799B40D37AE7B04B37F1637D0B69612A6BBCBAAE7268A6150851CE8D983B`。前輪九項關閉，採用計畫，依授權直接派 SDD T1。此計畫文件 commit 尚待自身同 SHA CI；T1 的跨平台先導與任何 production 功能尚未執行。
+- 計畫文件 commit `b26b90ceefd7827ea907d498a2fc096c873fdaa1` 已正常 push，`ls-remote` 讀回相同 SHA；同 SHA CI `43373504422` 執行中。規格 CI `43370074593` 最近讀回 build／m6-native success、windows-native 執行中，尚無整體通過。本輪 docs gate 只完成獨立審查與文件定向檢查，不冒充 runtime。
 
+### SDD T1：驗證入口與三項可行性實證（2026-11-13，OPEN）
+
+- 計畫文件 CI `43373504422` attempt 1 已終局：HEAD `b26b90ceefd7827ea907d498a2fc096c873fdaa1`，`build`／`windows-native`／`m6-native` 全 success。原件 `ci-43373504422/terminal-ci-verification.json` SHA-256 `2918741462576909603A1AB541BD61A575822A1890844BB6C7741241CACE07EF`，完整 log、run／artifact metadata 與四個 digest 同目錄。實核兩平台 default166／M5 60／M6 35／legacy1、Windows normal13、M6 native9鏈27phase／479反例；這是 plan docs 自身原 scope，不能抵 T1 新增實證／事故後重驗。上方 pending 是歷史。
+
+- 規格文件 CI `43370074593` attempt 1 已終局：HEAD `03b8c9472f7b1fa67427dbb1d7741b8f3a2bbf42`，`build`／`windows-native`／`m6-native` 全部 success。root watch 原件 `ci-43370074593/terminal-ci-verification.json`，controller 重新 parse 核對，SHA-256 `0CB0A84B4A0B8F66841ABDB270E8A09DECA8E96A95FEECB5ECA84DD2A0B768ED`。上方 pending 為歷史；plan CI `43373504422` 與 T1 實證仍獨立，不互抵。
+
+- controller 接手 BASE `b26b90ceefd7827ea907d498a2fc096c873fdaa1`，實查 linked worktree／分支正確；保留既有兩份 controller 文件 dirty。
+- 使用 `subagent-driven-development` 與 `using-git-worktrees`，採用本計畫 workspace，`progress.md` 首行記 plan identity；前置掃描已逐 task 及共享檔案／接口成對列出 8＋28 列，沒有需要新玩法裁示的衝突。細節與 routine 技術裁示留 ledger。
+- 已派 fresh implementer `/root/m7_sdd_execution/t1_implementer`（`gpt-6.1-sol`／high）；只給 T1 brief 與必要共通限制，不派平行 implementer。報告將在 `task-1-report.md`；之後由 controller 派獨立 task reviewer。
+- T1 屬純測試／腳本／build／CI接線，免 production mutation 與本機 full，仍須具名 RED、真 Windows 定向／clean build／隔離、workflow fixture 正負例及同 SHA 雙平台完整 CI 實證。production 尚未修改，任何 T1 gate 尚待終局，不記 PASS；T2–T8 未開始。
+- controller 已依 README 重建 fresh detached W10 producer `.worktrees/m6-w10-m5-producer`；native 工具無固定 absolute path 參數，採 README 的 `git worktree add --detach`。m5 tag object／peeled／原 runner blob、patch／runner bytes／LF diff 六項身分吻合，chcp 65001，target 與祖先非 reparse、Java owner0、fresh 無 session.lock，僅 runner 是允許 dirty。原件 `w10-rebuild-precheck.json`／`w10-rebuild-proof.json`；尚未執行 W10 或 full，不能視為 runtime 通過。producer 不退役，後續另問。T8 人工代操作開始前另問，main／tag／退役／PR／LICENSE 均未啟動。
+#### T1 首輪 JUnit 事件（尚非 task 終局）
+
+- dirty 候選 HEAD 仍 `b26b90c`；首輪 `t1-junit-first/` 的兩份 XML 實際為 Budget 3 案零失敗、Publish 2 案 1 失敗、零略過，Gradle exit 1。原件與 log 保留，SHA 見 ledger；失敗是 Windows JDK `fileKey()` 可為 null 的測試前提錯誤。
+- 原作者改以保留 audit hardlink 與 `Files.isSameFile` 核實檔案身分；新 `t1-compile-2.log` 已自然 `BUILD SUCCESSFUL`，第二輪 `t1-junit-green-2/` 兩份 XML 已由 controller parse 核讀：Budget 3、Publish 2，共 5/5，failures／errors／skipped 皆為 0。log 有既有 deprecation／unchecked warnings，不稱無警告。
+- NBT 初測得到合法可達 tracker 邊界兩側與預留公式，但合法後繼自審仍待；native 首組、兩平台與完整 T1 gate 未完成。上述不當作三項可行性終局，也不放行 T2。
+#### T1 首組 native FAIL（原判保留）
+
+- chain `spike-close-ordinary-after-checkpoint` 的 root `run/m7-home-0012f18edfaa4d378809a0e2f1f49dec`：crash 預定 halt 77、PID 25684、12.03 秒；reopen PID 17632／start `2026-11-13T06:03:08.579Z`，在既定 1200 ticks 觸發 `M7_CHECKPOINT_READY_TIMEOUT`，halt 78、outer exit 1。整組 FAIL，不以 crash 達切點抵通過。
+- failure／startup／latest.log／jstack 原件保留，controller 已核 failure 欄位；hash、owner 與鎖檢查見 `t1-first-native-fail-postcheck.json`。作者正查 test-only fixture 在重啟後 FULL／entity readiness 的根因與 flat generator 設定 log，不改 production、不放寬 deadline，也不視為可洗的偶發重跑；修正後須新 nonce。
+- T1 持續 OPEN、三項可行性未全部證明、T2 不放行。
+#### T1 第二組 Windows native 局部 GREEN（未結案）
+
+- test-only 自有 runtime ticket 與合法 flat generator-settings 修正後，新 nonce `8895aa8fba8e4552aa9a6d891183f491` 的同一 chain 已 crash exit 77／reopen exit 0；controller 核 summary 的兩個 PID／start、鎖釋放與 `Windows`／HEAD。兩 phase 實測 17.283／12.287 秒，summary 總 29.612 秒（outer 29.773 秒）。原件 `build/m7-second-measurement/summary.json`，SHA-256 `37BC4BB64A2CA3ED9339A18F2ACDBBF97F304A728FEADAD5CB88AF659520666C`。
+- 這輪同時改票與 flat 設定，故 root 要求另補最小因果對照／call trace，再判 TIMEOUT 根因是否證實；`No key layers` 另記設定 RED／GREEN，不能混為因果。原 FAIL 不改判。
+- 目前只證一組 Windows PoC，全部 39 列、Ubuntu、清單／CI 與隔離門檻仍待。T1 OPEN，不放行 T2。
+#### T1 證據保全事故與修正要求（尚未結案）
+
+- implementer 在搬出證據前執行 `Gradle clean`，刪除了三個 `build/m7-*` runner 輸出目錄，包括 phase 磁碟複本、launcher logs、summary。這是可避免的保全疏失；不能以重建件冒充原件。controller 已只讀核 `build/m7-second-measurement` 不存在、三個 `run/m7-home-*` root 仍在；完整具名／nonce／phase／唯一檔案清冊待 immutable `evidence-loss-*` 報告，不可知項寫 UNKNOWN。
+- 上述 29.612／29.773 秒與作者後報 ticket-only 69.33 秒目前都屬歷史量測缺口，**不作 gate 或 shard 實測採計**。controller 曾核讀的 summary／8 負例亦因 runner 原件已刪，不作本 task 完成證據。原首輪 FAIL 不變，run 下的 startup／receipt／failure／world 與 SDD top logs 仍保留；現存 primary SHA 清冊為 `t1-evidence-loss-controller-inventory.json`。
+- 立即停止 clean／其他覆蓋 build 的清理，先搬出所有現存 evidence，建立並驗 manifest／hash。runner 和 CI 輸出須改到 clean 不觸及的唯一 SDD／run root；hidden SDD 必核 artifact `include-hidden-files` 及 exact 收據查找。保全完成前不恢復 clean build。
+- 技術修正後用新 nonce 補完整定向證據，並實跑「clean 後原 receipt／log／hash 仍可讀」正控制與反例，交獨立 reviewer 審查。T1 維持 OPEN，不洗原 FAIL、不採 M6 偶發重跑額度；production 未修改。
+#### T1 事故盤點固定（未結案）
+
+- immutable 原件：`evidence-loss-20261113-0620.json`（SHA-256 `24FB865D9FAF635352134461F7248E3480DECB0C33C14F5583B49592EA1775DD`）與同名 `.md`（`176F85E0F4BC861722B16F9D8712527835159E2E1433C63C0633F7F9C09CC6CB`）。三個確切目錄為 `build/m7-first-measurement`／`m7-second-measurement`／`m7-ticket-only-control`，對應 nonce `0012f18e…`／`8895aa8f…`／`d8198b2d…` 的 crash／reopen；刪除的唯一檔完整清單與 hash 為 UNKNOWN，不能還原冒充。
+- 尚存原件 `task-1-surviving-evidence.json` SHA-256 `921F351B84C98B9EC0B8F5DC6154F9BA1A800420D3B52EF345344815728700BA`，controller 逐 17 個現存檔案驗 bytes／hash 吻合；六個原 Java owner 不活躍、三個 session.lock 可獨占。世界、runtime log 與 SDD top logs 原件仍在。
+- 已啟動的 clean build 後自然 exit 0（1m56s），`t1-clean-build.log` 尚存，目前 95 個測試檔先快照到 `t1-clean-build-snapshot-current`。這不代表事故已結案或 T1 全部隔離／clean 存續 gate 通過。作者目前無 Gradle／runtime、clean 停止；後續改安全 evidence root、新 nonce 與實際存續正負控。
+#### T1 完整補充保全已驗（安全修正與新 gate 執行中）
+
+- `evidence-loss-supplement-20261113-0628-stable.json` 共 273 實檔，controller 逐檔重讀 bytes／SHA-256，0 mismatch；清冊 SHA-256 `84FFDF1C7B7AA55FE02C2251F559F234D100F726AF63FB943D39D43A42DE20A1`。涵三原 run 的完整 world／log、95 份測試快照、cleanbuild JARs、SDD RED／GREEN／javap／top 歷史 log；原 run 留安全原地，不搬不寫。
+- 前一 immutable `0627` 補清冊誤納後續正在寫的 `t1-native-final.log`、該欄 hash 為 null；保留前件，stable 明列排除原因，不採該欄作事故保全證明。
+- 新 nonce 完整 39 列已啟動，新 runner 原件皆在 clean 外 SDD／run；首列完成不代表全套通過。clean 存續正負控、獨立 review 與同 SHA 雙平台 CI 均待，T1 OPEN、舊量測不採 gate。
+#### T1 執行中批次降為工程診斷（來源指紋缺口）
+
+- 本批 39 列啟動後，作者曾修改 runner 磁碟文字（長駐 pwsh 已解析舊版）、`build.gradle` 的 `Pm7ExportMain` 分支與 JUnit budget source，Native Java／inventory 未改。因沒有完整一致的消費 snapshot，這批所有結果只列 `diagnostic-only`，不作 T1 正式 gate，也不把範圍縮成只看 Native Java。原件保留，另寫分類 sidecar，不改舊 metadata 冒充新 pin。
+- 可先完成其餘 T1 接線與必要本機測試，正式 gate 前固定 immutable 消費清單／raw bytes、HEAD／dirty、Runner／Gradle／Java／inventory、compiled artifacts／loader argfiles 的 hash。各 phase 實際消費檔跑完逐檔重讀未變才採計；需要改碼先結束 batch、新 nonce。正式兩平台 39 列仍完整，不能以此診斷批抵用。
+- 若在 phase 自然結束後可安全停止下一 dispatch，標 controller 中止診斷並保原件；無安全取消能力則不冒險殺程序。所有新結果仍留 clean 外安全 root，clean 保全與正負控要求不變。T1 OPEN。
+#### T1 工程診斷批 runner FAIL 終局
+
+- `t1-native-final.log` 實際完成 22 列／44 phase；第 23 個 root `run/m7-home-61c6dcb0cc8f4e25a20b4dcc8c6b7059` 的 crash 收據已 exit 77，runner 在 startup 寫入中讀得 null，於讀取 `nonce` 欄位報錯。這是 runner FAIL，不能改記為 controller 已成功取消；原 sidecar 的 `CONTROLLER_ABORTED_DIAGNOSTIC` 須另補終局分類，原件／log 保留。整批原已 diagnostic-only，不抵正式 gate。
+- 作者追 startup 完整發布／讀取及 main-only typed class oracle 的測試前提；後者曾把 Fabric API 的 `FabricGameTestModInitializer` 名稱誤判為 testmod。所有實際失敗與期待負例須分列原件，修正後新 root，不洗原判。
+- 正式 freeze 前仍須完成上述技術修正、合法 budget fixture、main-only／aggregate 正負控、README 及完整 source／compiled／argfiles 快照，再以新 nonce 正式全列。必要可攜 main-only／Loom 匯出薄 helper 納 T1 allowlist／指紋／review，production 未改。T1 OPEN。
+#### T1 startup 最小正負控與剩餘接線（OPEN）
+
+- `t1-startup-publication/` XML 已由 controller 核 `M7PublishSpikeTest.startupPublicationIsInvisibleUntilForcedAndPublished` 1/1，failures／errors／skipped 0，0.062 秒，SHA-256 `9E43B2F71179415AB3C6E741DC03AA7D965584213A5DA9580FB3673F10532889`。作者以實際 `M7HomeProbe.publishDurable` 驗 temp 未發布不可見、force＋hardlink後完整、已發布空／半截／缺欄／錯 nonce 拒絕；正式 native／雙 OS 尚待。
+- 舊 runner 當時實讀 raw bytes／長度／時間未保存，明記 UNKNOWN；現在完整 startup 不能當作當時 raw。工程批已另存 `t1-native-final-terminal.json` 為 `RUNNER_FAIL_DIAGNOSTIC`，保留原分類 sidecar 與 FAIL。
+- main-only 實際首試兩個 FAIL 分開保留：`t1-main-only` 匯出 executable=null、JVM 前拒絕 outer1；`t1-main-only-2` 真 JVM 正常停服但 oracle 誤判 Fabric API 類別名稱，outer1。這些不是設計的隔離負控；修正後須新 root 實跑。
+- 尚欠 main-only runtime／aggregate 正負 fixture、合法 budget 後繼與清單、README／workflow 最終 fixture、immutable source／compiled／argfiles 新 runner 定向驗；補齊再一次凍結，當前無 active JVM／正式全集。T1 OPEN。
 ### binding spec 第一輪獨立審查（2026-11-13）
 
 - 結果：Critical 1／Important 6／Minor 1，禁止進入 plan；本輪沒有 runtime gate。
