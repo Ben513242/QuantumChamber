@@ -12,7 +12,8 @@
 
 - Repository（主 checkout，停在 `main`）：`C:/Users/Ben/Documents/minecraft QuantumChamber`。不要在主 checkout 或 `main` 上實作。
 - M5 歷史開發 worktree／本次退役目標：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m5-collapse`，分支 `feature/m5-collapse`。M5 已合併 main 並建立 tag m5；此目錄依使用者指定不備份退役，不再作為新任務工作區。目錄是否已移除以 `git worktree list` 與實際路徑為準；後續以主 checkout 的已合併 M5 為基準，先確認 M6 範圍，再建立新 worktree，不直接在 main 實作。（M6 範圍已確認，工作樹已建立，見「目前接手入口」。）
-- M6 開發 worktree：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`。M6 已合併 main 並建立 tag `m6`；依「M6／`.worktrees` 退役專屬裁示」，將連同整個 `.worktrees` 不備份刪除，不再作為新任務工作區。實際狀態以 `git worktree list` 與檔案系統為準。下一個 milestone 先確認範圍，再另開新 worktree。
+- M6 開發 worktree：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m6-universe-generation`，分支 `codex/m6-universe-generation`。M6 已合併 main 並建立 tag `m6`；依「M6／`.worktrees` 退役專屬裁示」，已於 2026-11-12 連同整個 `.worktrees` 不備份刪除，結果見 M7 note「`.worktrees` 退役結果」節。分支 `codex/m6-universe-generation` 在本機與 origin 都保留。
+- M7 開發 worktree：`C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m7-return-home`，分支 `codex/m7-return-home`，2026-11-13 從 main `2255027` 開出。範圍見「目前接手入口」與 `docs/implementation-notes/2026-11-13-m7-return-home.md`。
 - M1–M4 的 worktree `.worktrees/m1-chamber` 已於 2026-10-01 完成外部備份與驗證後刪除；分支 `feature/m1-chamber` 仍在本機與 `origin`。它的 `run/`、`.superpowers/`（含 M1–M4 SDD ledger 與 evidence owner）與 `.tools/` 只存在於 repo 外的備份 `C:\Users\Ben\Documents\QC-m1-m4-worktree-backup-20261001\`（資料夾名稱去掉開頭的點：`run`、`superpowers`、`tools`；`MANIFEST-sha256.txt`、`BACKUP-LOG.txt`）。這份備份只讀參考，不得修改。
 - 主 checkout 的 git 會報 dubious ownership：對主 checkout 下指令時，每次單獨加 `git -c safe.directory="C:/Users/Ben/Documents/minecraft QuantumChamber" -C <path> ...`，不要改全域設定。
 - 每個 milestone 要等前一個 milestone ff 進 `main` 並打 tag 之後，才另開新的 worktree 與 branch。
@@ -60,7 +61,7 @@ milestone implementation → automated gates → required manual smoke → task�
   3. main 依使用者另一項裁示「M6 分支修，CI 綠後 main 直接前進（建議）」ff 前進；
   4. 核對唯一 canonical absolute target、非 reparse、沒有 live Java owner、`session.lock` 已釋放；
   5. 兩個已登記的 worktree 以 `git worktree remove --force` 移除後 prune，兩個 clone 直接移除，最後移除空的 `.worktrees`。
-- 不授權刪除其他 worktree、主 repo 的本機或遠端分支（T12 clone 內自己的分支隨 clone 刪除），也不授權移動 tag。刪除後沒有工作樹可以補 commit，實際狀態以 `git worktree list` 與檔案系統為準；刪除結果由下一個 milestone 的 Step0 docs 記錄。
+- 不授權刪除其他 worktree、主 repo 的本機或遠端分支（T12 clone 內自己的分支隨 clone 刪除），也不授權移動 tag。刪除後沒有工作樹可以補 commit，實際狀態以 `git worktree list` 與檔案系統為準；刪除結果由下一個 milestone 的 Step0 docs 記錄（已記錄於 M7 note「`.worktrees` 退役結果」節）。
 
 一般規則（上述 M5 與 M6 專屬裁示取代各自指定範圍的搬出世界與外部備份要求）：刪除其他 worktree（包括當時的 `.worktrees/m1-chamber`）之前，必須先完成：
 
@@ -117,6 +118,25 @@ M4只完成候選門與選擇權威：
 M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 teleport，也不建立 Projection、Nether／End family 或 client renderer。M4單獨完成時，門仍關閉且玩家不換世界。
 
 ## 目前接手入口
+
+**2026-11-13 M7（正規回程）已開工：使用者已逐題裁示範圍，Step0 文件就是本 commit，待同 SHA CI。下一步由 Codex 寫 binding spec。** 範圍裁示原文、與建議稿的差異、不做的事，以及 `.worktrees` 刪除結果，見 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)。
+- 工作樹 `.worktrees/m7-return-home`，分支 `codex/m7-return-home`，基線 main `2255027`（CI 43223550800 三 job 綠）。
+- 範圍摘要（以 M7 note 原文為準）：
+  - 到 B 時同座標出現的投影艙可以啟動，和 A 原艙算同一座艙，A 是它的家。不做「在 B 新蓋的艙」。
+  - 回程走走廊：B 的走廊固定有一扇外觀不同的回家門。M7 的走廊只有回家門，一般門的位置是牆。選了回家門 → 回到 B 的艙 → 量子膜 → 落在 A 原艙內（同座標）。
+  - 回程 A、B 兩端都要供電，而且和出發一樣要進艙關門。全員喝藥依第 2 題選項說明，列在 note「沿用與推論」。
+  - A 的電在選回家門時檢查一次，選定後 A 斷電不影響這趟。M7 另在 B 啟動時先檢查，A 已不能回就拒絕啟動。
+  - A 原艙被拆、結構不完整、未供電或被設為停用時，回家門鎖住並說明原因。A 區塊未載入時暫時載入檢查，不算失效。此時不重建、不寫入 A 的任何方塊。成功回到 A 時也不寫入、不清空 A 原艙；這一條是推論，來源是建議稿 §10.3／C10，見 note「沿用與推論」。
+  - 同一座艙的所有端（A 原艙與各投影艙）同時只能有一趟旅程。走廊中途取消或藥效到期回到 B。任何宇宙裡由這座艙產生的投影艙都能回家。
+  - 提示只做回程需要的；外觀與結構不改，回家門只做最小區別。舊存檔與進行中的舊旅程維持原意，新資料要有版本號，`FamilyCapabilityVersion` 維持 0。
+  - 人工驗收由 Claude 代操作，開始前另問。
+  - 連續穿越 A→B→C 是 M8，方向是「一律以 B 為準」；M7 合併、打 tag 後才開，開工前再確認。
+- 流程：binding spec → 獨立審查 → plan → 獨立審查 → Subagent-Driven Development 實作。spec、plan、實作由 Codex 新對話執行。production 改動走完整門檻。只改測試、腳本或文件時，做一席審查、定向驗證與 CI，免 mutation 與本機完整回歸。這條是 M6 B+C 規則中唯一沿用到 M7 的部分，其餘不自動沿用。出處見 note「流程指示」節。
+- 授權：正常 push 持續授權；main 合併、tag、人工代操作、worktree 退役各自另問。
+- 跑任何會執行 W10 preflight 的入口前，先照 `scripts/verification/README.md` 重建 W10 producer，並在 UTF-8 console（code page 65001）執行。
+- 主 checkout 的 `docs/` 還留著 6 個使用者檔的未追蹤原檔（已由 Step0 納入本分支）；M7 合併 main 時可能擋住 ff，處理方式見 M7 note。
+
+下段是 M6 結案時的紀錄。
 
 **2026-11-12 M6 已以 `--ff-only` 合併 main，並建立 tag `m6`（使用者同意）。依使用者裁示修正兩處同類的 PID 誤判；整個 `.worktrees` 將以文字紀錄取代備份後刪除。下一步：本批 commit 推送 → 同 SHA CI 全綠 → main ff 前進 → 核對後刪除 `.worktrees` → 和使用者確認下一個 milestone 的範圍與優先序。** 人工 smoke：使用者選「由 Claude 代操作（建議）」，並授權在測試世界改檔與下載 Fabric 官方 server launcher。
 - 人工清單 10 列全部 PASS：

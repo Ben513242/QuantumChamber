@@ -1,6 +1,10 @@
 # QuantumChamber
 
-> **M5 已整合（2026-10-24）：** main 已包含 `a2d2b40`，annotated tag `m5` 指向該版本，兩者已推送。塌縮與單向通道、F7、人工 smoke 與獨立 review 均已完成（Critical／Important 0）；純整合狀態文件依本輪裁示採計程式相同的 `f99ce66` 雙平台／同 SHA 兩次 Ubuntu CI。完整證據、已知限制與實際 refs 見 [M5 實作紀錄](docs/implementation-notes/2026-10-01-m5-collapse-passage.md)。M6 尚未開始。
+> **M7（正規回程）已開工（2026-11-13）：** 分支 `codex/m7-return-home`。目前只有範圍裁示，尚未實作；投影艙仍不能啟動，也還沒有正規回程。範圍見 [M7 實作紀錄](docs/implementation-notes/2026-11-13-m7-return-home.md)。
+
+> **M6 已整合（2026-11-12）：** annotated tag `m6` 指向 `53573fc`；main 之後只以文件與驗證腳本修正快轉到 `2255027`，兩者已推送。平行宇宙只有主世界，Nether／End 共用原版。完整證據、已知限制與實際 refs 見 [M6 實作紀錄](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與 [M6 人工 smoke](docs/manual-acceptance/2026-10-24-m6-manual-smoke.md)。
+
+> **M5 已整合（2026-10-24）：** main 已包含 `a2d2b40`，annotated tag `m5` 指向該版本，兩者已推送。塌縮與單向通道、F7、人工 smoke 與獨立 review 均已完成（Critical／Important 0）；純整合狀態文件依本輪裁示採計程式相同的 `f99ce66` 雙平台／同 SHA 兩次 Ubuntu CI。完整證據、已知限制與實際 refs 見 [M5 實作紀錄](docs/implementation-notes/2026-10-01-m5-collapse-passage.md)。
 
 > **功能分支 `feature/m1-chamber`（M1–M4）狀態，驗收分層記錄：** 以下都已實作，並完成自動 gate 與逐 task review：
 >
