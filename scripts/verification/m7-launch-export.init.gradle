@@ -1,0 +1,23 @@
+// Loom 1.7.4 的公共 JVM argument provider 會先生成真 classpath argfile；本入口只匯出，不啟動遊戲。
+// 可攜 runner 在啟動前保存／雜湊這些 exact bytes，再以原命令直接持有 JVM handle。
+allprojects {
+    afterEvaluate {
+        def selected=providers.gradleProperty('m7ExportTask').get()
+        tasks.named(selected) {
+            if(selected == 'runServer') {
+                workingDir project.file(providers.gradleProperty('m7ExportRoot').get())
+                jvmArgs '-Xlog:class+load=info:file=classload-%p.log'
+                systemProperty 'quantumchamber.m7MainNonce', providers.gradleProperty('m7ExportNonce').get()
+            }
+            doFirst {
+                def output=project.file(providers.gradleProperty('m7ExportFile').get())
+                output.parentFile.mkdirs()
+                def completeJvm=(allJvmArgs.toList()+jvmArguments.get()).unique()
+                def completeArgs=args.toList()+argumentProviders.collectMany { it.asArguments().toList() }
+                def javaExecutable=executable ?: javaLauncher.get().executablePath.asFile.absolutePath
+                output.text=groovy.json.JsonOutput.toJson([executable:javaExecutable,jvmArgs:completeJvm,classpath:classpath.asPath,main:mainClass.get(),args:completeArgs,root:workingDir.absolutePath])
+                throw new org.gradle.api.tasks.StopExecutionException('M7_LAUNCH_EXPORTED；尚未啟動 JVM')
+            }
+        }
+    }
+}

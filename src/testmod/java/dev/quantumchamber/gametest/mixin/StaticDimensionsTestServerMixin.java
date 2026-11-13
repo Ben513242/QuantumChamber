@@ -20,6 +20,7 @@ public abstract class StaticDimensionsTestServerMixin {
     private static DimensionOptionsRegistryHolder.DimensionsConfig quantumchamber$includeStaticDimensions(
             DimensionOptionsRegistryHolder holder, Registry<DimensionOptions> ignored,
             LevelInfo levelInfo, SaveLoading.LoadContextSupplierContext context) {
+        boolean m7=Boolean.getBoolean("quantumchamber.test.m7Home");
         boolean defaultNormal="true".equals(System.getProperty("quantumchamber.gametest.defaultNormal"));
         boolean normal="true".equals(System.getProperty("quantumchamber.gametest.m4NormalOnly"));
         boolean m5Only="true".equals(System.getProperty("quantumchamber.gametest.m5Only"));
@@ -30,6 +31,7 @@ public abstract class StaticDimensionsTestServerMixin {
         if (defaultNormal && (normal || Boolean.getBoolean("quantumchamber.gametest.legacyOnly")
                 || Boolean.getBoolean("quantumchamber.gametest.m5Only") || Boolean.getBoolean("quantumchamber.gametest.m6Only")))
             throw new IllegalStateException("M4_TEST_PRESET_SCOPE：defaultNormal 不得與任何 Only scope 混用");
+        if(m7 && (defaultNormal || normal || m5Only || m5Normal || Boolean.getBoolean("quantumchamber.gametest.m6Only") || Boolean.getBoolean("quantumchamber.gametest.legacyOnly"))) throw new IllegalStateException("M7_SCOPE_MISMATCH");
         var normalHolder=context.worldGenRegistryManager().get(RegistryKeys.WORLD_PRESET)
                 .entryOf(WorldPresets.DEFAULT).value().createDimensionsRegistryHolder();
         if (defaultNormal || normal || m5Normal && m5Only) holder=normalHolder;

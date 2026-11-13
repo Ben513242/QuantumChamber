@@ -8,6 +8,227 @@ permissions:
   contents: read
 
 jobs:
+  m7-validation:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: Windows
+          - os: ubuntu-latest
+            platform: Ubuntu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      M7_PLATFORM: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 編譯 M7 驗證與正式封裝
+        shell: pwsh
+        run: |
+          $gradle = if ($IsWindows) { './gradlew.bat' } else { './gradlew' }
+          & $gradle clean build --console=plain
+          if ($LASTEXITCODE -ne 0) { throw 'M7_BUILD_FAILED' }
+      - name: 執行 M7 獨立 GameTest
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
+      - name: 確認 M7 精確集合與隔離
+        shell: pwsh
+        run: |
+          # m7_home：逐字 fixture 亦執行同一精確集合、runtime 與遞迴 artifact oracle。
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-verified
+      - name: M7 正式 classpath 獨立 main-only
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m7-ci-main-only.ps1 -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-main
+      - name: 上傳 M7 定向證據
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m7-validation-${{ matrix.platform }}
+          include-hidden-files: true
+          path: |
+            .superpowers/m7-*/**
+            build/test-results/test/*.xml
+            build/gametest-m7-results.xml
+            build/libs/*.jar
+            run/gametest-m7/**
+
+  m7-measurement:
+    needs: m7-validation
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: Windows
+          - os: ubuntu-latest
+            platform: Ubuntu
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 每平台先量一組 crash 與 reopen
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m7-home-probe.ps1 -Platform '${{ matrix.platform }}' -Only spike-close-ordinary-after-checkpoint -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-measurement
+          $sample = Get-Content .superpowers/m7-measurement/summary.json -Raw | ConvertFrom-Json
+          $estimate = 3 * $sample.elapsedSeconds * 2 + 600
+          if ($estimate -ge 5400) { throw "M7_SHARD_BUDGET：每 shard 三列估計 $estimate 秒，停止並調整 shard；不延長舊 deadline" }
+          @{ actualSeconds=$sample.elapsedSeconds; rowsPerShard=3; safetyFactor=2; reserveSeconds=600; estimatedSeconds=$estimate; hardLimitSeconds=5400 } | ConvertTo-Json | Set-Content .superpowers/m7-measurement/shard-budget.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m7-measurement-${{ matrix.platform }}
+          include-hidden-files: true
+          path: |
+            .superpowers/m7-measurement/**
+            run/m7-home-*/**
+
+  m7-native:
+    needs: m7-measurement
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: Windows
+            shard: 0
+          - os: windows-latest
+            platform: Windows
+            shard: 1
+          - os: windows-latest
+            platform: Windows
+            shard: 2
+          - os: windows-latest
+            platform: Windows
+            shard: 3
+          - os: windows-latest
+            platform: Windows
+            shard: 4
+          - os: windows-latest
+            platform: Windows
+            shard: 5
+          - os: windows-latest
+            platform: Windows
+            shard: 6
+          - os: windows-latest
+            platform: Windows
+            shard: 7
+          - os: windows-latest
+            platform: Windows
+            shard: 8
+          - os: windows-latest
+            platform: Windows
+            shard: 9
+          - os: windows-latest
+            platform: Windows
+            shard: 10
+          - os: windows-latest
+            platform: Windows
+            shard: 11
+          - os: windows-latest
+            platform: Windows
+            shard: 12
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 0
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 1
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 2
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 3
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 4
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 5
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 6
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 7
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 8
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 9
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 10
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 11
+          - os: ubuntu-latest
+            platform: Ubuntu
+            shard: 12
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: 執行 M7 固定切點 shard
+        timeout-minutes: 70
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m7-home-probe.ps1 -Platform '${{ matrix.platform }}' -AllEnabled -Shard ${{ matrix.shard }} -ShardCount 13 -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-native
+      - name: 唯讀反驗 M7 shard
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m7-home-probe.ps1 -Platform '${{ matrix.platform }}' -VerifySummary .superpowers/m7-native/summary.json -SelfTest -ExpectedHead $env:GITHUB_SHA
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m7-native-${{ matrix.platform }}-${{ matrix.shard }}
+          include-hidden-files: true
+          path: |
+            .superpowers/m7-native/**
+            run/m7-home-*/**
+
+  m7-aggregate:
+    needs: m7-native
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: m7-native-*
+          path: .superpowers/m7-downloads
+      - name: 同 SHA 匯總雙平台全部切點
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m7-home-probe.ps1 -AggregateRoot .superpowers/m7-downloads -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-aggregate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: m7-native-aggregate
+          include-hidden-files: true
+          path: .superpowers/m7-aggregate/**
+
   m6-native:
     runs-on: windows-latest
     timeout-minutes: 90
@@ -787,7 +1008,7 @@ jobs:
               $caseName = $file.BaseName.ToLowerInvariant() + '.' + $match.Groups['name'].Value
               if ($annotation -match 'batchId\s*=\s*"m5_universe') {
                 $declaredM5 += $caseName
-              } elseif ($annotation -notmatch 'batchId\s*=\s*"(?:m4_legacy_runtime"|m4_normal_|m6_universe)') {
+              } elseif ($annotation -notmatch 'batchId\s*=\s*"(?:m4_legacy_runtime"|m4_normal_|m6_universe|m7_home)') {
                 $declared += $caseName
               }
             }

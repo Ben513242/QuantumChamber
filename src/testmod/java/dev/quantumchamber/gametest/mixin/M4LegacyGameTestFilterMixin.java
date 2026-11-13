@@ -20,14 +20,18 @@ abstract class M4LegacyGameTestFilterMixin {
         boolean legacy=Boolean.getBoolean("quantumchamber.gametest.legacyOnly");
         boolean m5=Boolean.getBoolean("quantumchamber.gametest.m5Only");
         boolean m6=Boolean.getBoolean("quantumchamber.gametest.m6Only");
+        boolean m7=Boolean.getBoolean("quantumchamber.test.m7Home");
         boolean normal=Boolean.getBoolean("quantumchamber.gametest.m4NormalOnly");
-        if((normal ? 1 : 0)+(legacy ? 1 : 0)+(m5 ? 1 : 0)+(m6 ? 1 : 0)>1) throw new IllegalStateException("M6_SCOPE_MISMATCH：scope flags 不可混用");
+        if((normal ? 1 : 0)+(legacy ? 1 : 0)+(m5 ? 1 : 0)+(m6 ? 1 : 0)+(m7 ? 1 : 0)>1) throw new IllegalStateException("M6_SCOPE_MISMATCH：scope flags 不可混用");
         var selected=callback.getReturnValue().stream().filter(test -> {
             boolean normalBatch=test.batchId().startsWith("m4_normal_");
             boolean legacyBatch=test.batchId().equals("m4_legacy_runtime");
             boolean m5Batch=test.batchId().startsWith("m5_universe");
             boolean m6Batch=test.batchId().startsWith("m6_universe");
-            return normal ? normalBatch : legacy ? legacyBatch : m5 ? m5Batch : m6 ? m6Batch : !normalBatch && !legacyBatch && !m5Batch && !m6Batch;
+            boolean m7Batch=test.batchId().startsWith("m7_home");
+            boolean m7Platform=!test.batchId().endsWith("_windows")&&!test.batchId().endsWith("_ubuntu")
+                    || test.batchId().endsWith(com.sun.jna.Platform.isWindows()?"_windows":"_ubuntu");
+            return m7 ? m7Batch&&m7Platform : normal ? normalBatch : legacy ? legacyBatch : m5 ? m5Batch : m6 ? m6Batch : !normalBatch && !legacyBatch && !m5Batch && !m6Batch && !m7Batch;
         }).toList();
         if(selected.isEmpty() || legacy && selected.size()!=1) throw new IllegalStateException("原生測試隔離範圍不符");
         // 僅 RED 取證用：明確列出的 batch 子集；未設定時完整 suite 不受影響。

@@ -26,6 +26,9 @@ param(
     [switch]$PresetFixture,
     [ValidateSet('none','missing-marker','wrong-flag','wrong-m5-only','wrong-m5-normal','wrong-config','rollover','duplicate','split-marker','format-drift','bad-gzip','wrong-name','bad-date','unexpected-log','cross-root','old-piece','truncated-gzip','missing-one','middle-truncated','crc','isize','flags','extra-tail','duplicate-trailer','second-member','compressed-limit','expanded-limit','original-truncated')][string]$PresetMutation='none',
     [ValidateSet('default','legacy','normal','m5','m6')][string]$PresetMutationScope='default',
+    [string]$M7GameTestXml='',
+    [string]$M7RuntimeLog='',
+    [ValidateSet('Windows','Ubuntu')][string]$M7Platform='Windows',
     [string]$M6GameTestXml='',
     [string]$M6RuntimeLog='',
     [string]$M6RuntimeRoot='',
@@ -38,7 +41,7 @@ param(
     [Parameter(Mandatory)][string]$SourceRoot,
     [ValidateSet('none','drop','skip','fail','wrong-scope')][string]$Mutation='none',
     [string]$MutationTarget='',
-    [ValidateSet('default','normal','m5','m6')][string]$MutationXml='default',
+    [ValidateSet('default','normal','m5','m6','m7_home')][string]$MutationXml='default',
     [ValidateSet('none','interpose-annotation','rename-windows')][string]$SourceMutation='none',
     [string]$SourceTarget='',
     [string]$EvidenceRoot=''
@@ -53,7 +56,7 @@ $EvidenceRoot=[IO.Path]::GetFullPath($EvidenceRoot)
 if(-not $EvidenceRoot.StartsWith($repo+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw "evidence 目錄必須在 repo 內：$EvidenceRoot"}
 $cursor=$EvidenceRoot
 while($cursor){ if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw "拒絕 reparse：$cursor"}; $parent=[IO.Path]::GetDirectoryName($cursor); if($parent -eq $cursor){break}; $cursor=$parent }
-git -C $repo check-ignore -q -- ([IO.Path]::GetRelativePath($repo,$EvidenceRoot).Replace('\','/')+'/x')
+git -c "safe.directory=$repo" -C $repo check-ignore -q -- ([IO.Path]::GetRelativePath($repo,$EvidenceRoot).Replace('\','/')+'/x')
 if($LASTEXITCODE -ne 0){throw "evidence 目錄未被 gitignore：$EvidenceRoot"}
 if(-not(Test-Path -LiteralPath $EvidenceRoot)){New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null}
 $root=Join-Path $EvidenceRoot ("ci-$Label-"+[Guid]::NewGuid().ToString('N'))
@@ -79,6 +82,39 @@ for($i=$runIndex+1;$i -lt $lines.Count;$i++){
 }
 $common=($body | Where-Object {$_.Length -gt 0} | ForEach-Object {($_ -replace '^(\s*).*$','$1').Length} | Measure-Object -Minimum).Minimum
 $script=($body | ForEach-Object { if($_.Length -ge $common){$_.Substring($common)}else{$_} }) -join "`n"
+if($M7GameTestXml){
+    if($Step -cne '確認 M7 精確集合與隔離'){throw 'M7_FIXTURE_STEP'}
+    $fixture=Join-Path $root 'fixture';New-Item -ItemType Directory -Path $fixture|Out-Null
+    foreach($directory in @('scripts/verification','src/testmod','src/test/java/dev/quantumchamber/persistence','build/test-results/test','build/libs','run/gametest-m7/logs')){New-Item -ItemType Directory -Path (Join-Path $fixture $directory) -Force|Out-Null}
+    foreach($name in @('m7-ci-gametest.ps1','m7-inventory.json','m6-ci-gametest.ps1','gates.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $fixture 'scripts/verification')}
+    Copy-Item -LiteralPath $SourceRoot -Destination (Join-Path $fixture 'src/testmod/java') -Recurse
+    foreach($name in @('M7BudgetSpikeTest.java','M7PublishSpikeTest.java')){Copy-Item -LiteralPath (Join-Path $repo "src/test/java/dev/quantumchamber/persistence/$name") -Destination (Join-Path $fixture 'src/test/java/dev/quantumchamber/persistence')}
+    Copy-Item -Path (Join-Path $JUnitDir 'TEST-dev.quantumchamber.persistence.M7*.xml') -Destination (Join-Path $fixture 'build/test-results/test')
+    Copy-Item -Path (Join-Path $repo 'build/libs/*.jar') -Destination (Join-Path $fixture 'build/libs')
+    Copy-Item -LiteralPath $M7RuntimeLog -Destination (Join-Path $fixture 'run/gametest-m7/logs/latest.log')
+    Copy-Item -LiteralPath (Join-Path (Split-Path (Split-Path $M7RuntimeLog)) 'm7-gametest-runtime.json') -Destination (Join-Path $fixture 'run/gametest-m7')
+    [xml]$m7=Get-Content -LiteralPath $M7GameTestXml -Raw
+    if($Mutation -cne 'none'){
+        $node=$m7.SelectSingleNode("//testcase[@name='$MutationTarget']");if($null -eq $node){throw 'M7_FIXTURE_TARGET'}
+        switch($Mutation){'drop'{$null=$node.ParentNode.RemoveChild($node)};'skip'{$null=$node.AppendChild($m7.CreateElement('skipped'))};'fail'{$null=$node.AppendChild($m7.CreateElement('failure'))};'wrong-scope'{$node.SetAttribute('name','m6universegametests.wrong_scope')}}
+    }
+    $m7.Save((Join-Path $fixture 'build/gametest-m7-results.xml'))
+    if($SourceMutation -cne 'none'){
+        $file=Join-Path $fixture 'src/testmod/java/dev/quantumchamber/gametest/M7HomeSpikeGameTests.java';$text=Get-Content -LiteralPath $file -Raw
+        $needle="public void $SourceTarget(TestContext";if(-not $text.Contains($needle)){throw 'M7_FIXTURE_SOURCE_TARGET'}
+        $replacement=if($SourceMutation -ceq 'interpose-annotation'){"@SuppressWarnings(`"unused`")`n    $needle"}else{"public void ${SourceTarget}_windows(TestContext"}
+        $text.Replace($needle,$replacement)|Set-Content -LiteralPath $file -Encoding utf8
+    }
+    $runner=Join-Path $root 'step.ps1';[IO.File]::WriteAllText($runner,"`$ErrorActionPreference='Stop'`n"+$script+"`nif(`$LASTEXITCODE -and `$LASTEXITCODE -ne 0){exit `$LASTEXITCODE}")
+    $before=$env:M7_PLATFORM;$beforeHead=$env:GITHUB_SHA
+    try{
+        $env:M7_PLATFORM=$M7Platform;$env:GITHUB_SHA=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim();Push-Location $fixture
+        try{$output=(& pwsh -NoProfile -File $runner 2>&1|Out-String);$code=$LASTEXITCODE}finally{Pop-Location}
+    }finally{$env:M7_PLATFORM=$before;$env:GITHUB_SHA=$beforeHead}
+    $verdict=if($code -eq 0){'PASS'}else{'FAIL'}
+    [ordered]@{schema=1;fixture=$true;platform=$M7Platform;head=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim();workflowSha256=(Get-FileHash -LiteralPath $Workflow).Hash;step=$Step;mutation=$Mutation;sourceMutation=$SourceMutation;verdict=$verdict;exitCode=$code;output=$output;m7GameTestXmlSha256=(Get-FileHash -LiteralPath $M7GameTestXml).Hash}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
+    "M7_CI_FIXTURE verdict=$verdict root=$root";return
+}
 $fixture=Join-Path $root 'fixture'
 New-Item -ItemType Directory -Path (Join-Path $fixture 'build/test-results/test') -Force | Out-Null
 Copy-Item -Path (Join-Path $JUnitDir 'TEST-*.xml') -Destination (Join-Path $fixture 'build/test-results/test')
@@ -98,7 +134,7 @@ if($M6GameTestXml){
     if($Step -ceq '確認 Ubuntu M6 精確集合與隔離'){
         # 僅本機workflow規則fixture：literal合法排除；不是實際Ubuntu執行證據。
         New-Item -ItemType Directory -Path (Join-Path $fixture 'build/m6-verification') -Force | Out-Null
-        [ordered]@{head=(git -C $repo rev-parse HEAD).Trim();platform='Ubuntu';actualPlatform='Ubuntu';status='UNSUPPORTED';reason='M6_NATIVE_WINDOWS_REQUIRED';supported=$false;nativeExecuted=$false} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $fixture 'build/m6-verification/unsupported-native.json') -Encoding utf8
+        [ordered]@{head=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim();platform='Ubuntu';actualPlatform='Ubuntu';status='UNSUPPORTED';reason='M6_NATIVE_WINDOWS_REQUIRED';supported=$false;nativeExecuted=$false} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $fixture 'build/m6-verification/unsupported-native.json') -Encoding utf8
     }
     foreach($boundary in @(Get-ChildItem -LiteralPath $M6RuntimeRoot -Filter 'm4-boundary-*.json' -File)){Copy-Item -LiteralPath $boundary.FullName -Destination (Join-Path $fixture 'run/gametest-m6')}
 }
@@ -139,7 +175,7 @@ if($Step -cin @('確認 Windows 原生案例確實執行','確認非 Windows 跨
             $execution=Get-Content -LiteralPath (Join-Path $gateRoot 'execution/execution.json') -Raw|ConvertFrom-Json -DateKind String
             if($gateReceipt.evidence -cne $gateRoot -or $scopeReceipt.xml -cne $xmlInput){throw 'M4_PRESET_INPUT：receipt不是exact gate/XML路徑'}
             $sourceHead=$scopeReceipt.head
-            if($gateReceipt.status -cne 'PASS' -or $scopeReceipt.status -cne 'PASS' -or $scopeReceipt.scope -cne $presetScope -or $sourceHead -cne (git -C $repo rev-parse HEAD).Trim() -or $execution.exitCode -ne 0){throw 'M4_PRESET_INPUT：gate/scope/HEAD/exit不符'}
+            if($gateReceipt.status -cne 'PASS' -or $scopeReceipt.status -cne 'PASS' -or $scopeReceipt.scope -cne $presetScope -or $sourceHead -cne (git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim() -or $execution.exitCode -ne 0){throw 'M4_PRESET_INPUT：gate/scope/HEAD/exit不符'}
             $xmlTime=(Get-Item -LiteralPath $xmlInput).LastWriteTimeUtc
             if($xmlTime -lt ([DateTimeOffset]$execution.start).UtcDateTime -or $xmlTime -gt ([DateTimeOffset]$execution.end).UtcDateTime){throw 'M4_PRESET_INPUT：XML不是當次execution原件'}
             $xmlHash=(Get-FileHash -LiteralPath $xmlInput).Hash
@@ -257,7 +293,7 @@ if($M6NativeSummary) {
     $native | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $fixture 'build/m6-native-summary.json') -Encoding utf8
 }
 if($MainReceipt){
-    & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -VerifyOnly -Receipt $MainReceipt -ExpectedHead (git -C $repo rev-parse HEAD).Trim() | Out-Null
+    & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -VerifyOnly -Receipt $MainReceipt -ExpectedHead (git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim() | Out-Null
     $mainOriginalHash=(Get-FileHash -LiteralPath $MainReceipt).Hash
     $main=Get-Content -LiteralPath $MainReceipt -Raw | ConvertFrom-Json -DateKind String
     $originalBundle=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($MainReceipt))
@@ -323,7 +359,7 @@ $stepFile=Join-Path $root 'step.ps1'
 Set-Content -LiteralPath $stepFile -Value ("`$ErrorActionPreference = 'stop'`n"+$script) -Encoding utf8
 $info=[Diagnostics.ProcessStartInfo]::new('pwsh')
 foreach($argument in @('-NoProfile','-NonInteractive','-Command',". '$($stepFile.Replace("'","''"))'")){$info.ArgumentList.Add($argument)}
-$info.Environment['GITHUB_SHA']=(git -C $repo rev-parse HEAD).Trim()
+$info.Environment['GITHUB_SHA']=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
 $info.WorkingDirectory=$fixture;$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
 $process=[Diagnostics.Process]::Start($info)
 $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEnd();$process.WaitForExit()
@@ -336,7 +372,7 @@ $result=[ordered]@{label=$Label;workflow=(Resolve-Path -LiteralPath $Workflow).P
     gameTestXml=(Resolve-Path -LiteralPath $GameTestXml).Path;gameTestXmlSha256=(Get-FileHash -LiteralPath $GameTestXml -Algorithm SHA256).Hash
     m5GameTestXml=(Resolve-Path -LiteralPath $M5GameTestXml).Path;m5GameTestXmlSha256=(Get-FileHash -LiteralPath $M5GameTestXml -Algorithm SHA256).Hash
     m4NormalGameTestXmlSha256=$(if($M4NormalGameTestXml){(Get-FileHash -LiteralPath $M4NormalGameTestXml).Hash}else{''})
-    head=(git -C $repo rev-parse HEAD).Trim();m6GameTestXmlSha256=$(if($M6GameTestXml){(Get-FileHash -LiteralPath $M6GameTestXml).Hash}else{''});m6RuntimeLogSha256=$(if($M6RuntimeLog){(Get-FileHash -LiteralPath $M6RuntimeLog).Hash}else{''})
+    head=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim();m6GameTestXmlSha256=$(if($M6GameTestXml){(Get-FileHash -LiteralPath $M6GameTestXml).Hash}else{''});m6RuntimeLogSha256=$(if($M6RuntimeLog){(Get-FileHash -LiteralPath $M6RuntimeLog).Hash}else{''})
     mainReceipt=$MainReceipt;mainReceiptSha256=$mainOriginalHash;mainMutation=$MainMutation;mainFixtureRuntimeLaunched=$false
     nativeSummary=$M6NativeSummary;nativeSummarySha256=$(if($M6NativeSummary){(Get-FileHash -LiteralPath $M6NativeSummary).Hash}else{''});nativeMutation=$NativeMutation;nativeFixtureRuntimeLaunched=$false
     presetFixture=[bool]$PresetFixture;presetMutation=$PresetMutation;presetMutationScope=$PresetMutationScope;presetSources=$presetSources

@@ -29,7 +29,7 @@ $EvidenceRoot=[IO.Path]::GetFullPath($EvidenceRoot)
 if(-not $EvidenceRoot.StartsWith($repo+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw "evidence 目錄必須在 repo 內：$EvidenceRoot"}
 $cursor=$EvidenceRoot
 while($cursor){ if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw "拒絕 reparse：$cursor"}; $parent=[IO.Path]::GetDirectoryName($cursor); if($parent -eq $cursor){break}; $cursor=$parent }
-git -C $repo check-ignore -q -- ([IO.Path]::GetRelativePath($repo,$EvidenceRoot).Replace('\','/')+'/x')
+git -c "safe.directory=$repo" -C $repo check-ignore -q -- ([IO.Path]::GetRelativePath($repo,$EvidenceRoot).Replace('\','/')+'/x')
 if($LASTEXITCODE -ne 0){throw "evidence 目錄未被 gitignore：$EvidenceRoot"}
 if(-not(Test-Path -LiteralPath $EvidenceRoot)){New-Item -ItemType Directory -Path $EvidenceRoot | Out-Null}
 $runRoot=Join-Path $EvidenceRoot ('run-all-'+[Guid]::NewGuid().ToString('N'))
@@ -37,9 +37,9 @@ New-Item -ItemType Directory -Path $runRoot | Out-Null
 $log=Join-Path $runRoot 'console.log'
 if(Test-Path -LiteralPath $log){throw "console log 已存在，禁止覆寫：$log"}
 function Say([string]$text){ $text | Add-Content -LiteralPath $log -Encoding utf8; Write-Output $text }
-$startHead=(git -C $repo rev-parse HEAD).Trim()
+$startHead=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
 Say "START $([DateTimeOffset]::Now.ToString('o')) HEAD=$startHead"
-Say "STATUS $((@(git -C $repo status --porcelain --untracked-files=no)) -join ' | ')"
+Say "STATUS $((@(git -c "safe.directory=$repo" -C $repo status --porcelain --untracked-files=no)) -join ' | ')"
 Say "RUN_ROOT=$runRoot"
 foreach($file in Get-ChildItem -LiteralPath $PSScriptRoot -File | Sort-Object Name){ Say "HARNESS $($file.Name) sha256=$((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant())" }
 function Step([string]$name,[scriptblock]$body) {
@@ -258,6 +258,13 @@ Step 'm6-oracle-and-safety' {
     foreach($case in @('move-fresh','owned-root','optional-probe-properties','ci-cwd-preflight')){& (Join-Path $PSScriptRoot 'm6-harness-safety-check.ps1') -Case $case -Label "full-$case"}
 }
 Step 'm6-gametest' { & $gates -Mode M6GameTest -Label m6-gametest -EvidenceRoot $runRoot -Gradle $Gradle }
+Step 'm7-home' {
+    & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Gradle $Gradle -OutputRoot (Join-Path $runRoot 'm7-gametest') -ExpectedHead $startHead
+    & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -SelfTest -OutputRoot (Join-Path $runRoot 'm7-verified') -ExpectedHead $startHead
+    & (Join-Path $PSScriptRoot 'm7-ci-main-only.ps1') -Gradle $Gradle -SelfTest -OutputRoot (Join-Path $runRoot 'm7-main-only') -ExpectedHead $startHead
+    & (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -AllEnabled -SelfTest -Gradle $Gradle -OutputRoot (Join-Path $runRoot 'm7-native') -ExpectedHead $startHead
+    & (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -VerifySummary (Join-Path $runRoot 'm7-native/summary.json') -SelfTest -ExpectedHead $startHead
+}
 Step 'main' { & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -EvidenceRoot $runRoot -Gradle $Gradle -ExpectedHead $startHead }
 Step 'main-oracle' {
     $main=One 'gate-main-only-'
@@ -302,7 +309,7 @@ Step 'ci-rule' {
 }
 Step 'summary' {
     # 唯讀：只讀本次 run root 的原始 XML／receipt／JAR／oracle／CI 結果，任何不符直接 throw；不改寫任何 gate root。
-    $head=(git -C $repo rev-parse HEAD).Trim()
+    $head=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
     if($head -cne $startHead){throw "HEAD 在執行期間改變：$startHead -> $head"}
     $normal=One 'gate-m4-normal-'; $full=One 'gate-full-'; $legacy=One 'gate-legacy-'; $m5=One 'gate-m5-gametest-'; $m6=One 'gate-m6-gametest-'; $main=One 'gate-main-only-'; $m3=One 'gate-m3-'; $recoveryFile=One 'recovery-run-' '.json'; $collapseFile=One 'collapse-run-' '.json'
     foreach($gate in @([pscustomobject]@{root=$full;mode='Full'},[pscustomobject]@{root=$normal;mode='M4NormalGameTest'},[pscustomobject]@{root=$legacy;mode='Legacy'},[pscustomobject]@{root=$m5;mode='M5GameTest'},[pscustomobject]@{root=$m6;mode='M6GameTest'},[pscustomobject]@{root=$main;mode='Main'},[pscustomobject]@{root=$m3;mode='M3'})) {
@@ -535,10 +542,11 @@ Step 'summary' {
         junit=[ordered]@{total=$junitTotal;failures=$failures;errors=$errors;skipped=$junitSkipped;skippedCases=$skips;windowsCheckpointTests=$windowsTests}
         jars=$jars;mainOnly=[ordered]@{ciReceipt=(Join-Path $runRoot 'main-ci-receipt.json');ciReceiptSha256=Hash (Join-Path $runRoot 'main-ci-receipt.json');status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
         m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count}
+        m7Home=[ordered]@{game=(Read-Json (Join-Path $runRoot 'm7-verified/summary.json'));main=(Read-Json (Join-Path $runRoot 'm7-main-only/summary.json'));native=(Read-Json (Join-Path $runRoot 'm7-native/summary.json'))}
         m6Native=[ordered]@{summary=$nativeFile;sha256=Hash $nativeFile;mode='PER_CHAIN';phaseCount=$native.phaseCount;chains=$native.chains;functionalAssertionsRemainRed=$true}
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;normal=$normal;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}
     $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runRoot 'summary.json') -Encoding utf8
     Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) normal=$($normalCases.Count)/13 perTest=$fullReceipts+$normalReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:$(@($native.phases | Where-Object expectedMode -CEQ 'DIAGNOSTIC').Count),FUNCTIONAL:$(@($native.phases | Where-Object expectedMode -CEQ 'FUNCTIONAL').Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
 }
-Say "END ALL exit=0 HEAD=$((git -C $repo rev-parse HEAD).Trim())"
+Say "END ALL exit=0 HEAD=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())"

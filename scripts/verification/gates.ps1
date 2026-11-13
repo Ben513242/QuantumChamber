@@ -14,7 +14,7 @@
 #   -Gradle        gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
 # M3 probe 的 evidence owner 由 testmod ProbeEvidenceOwner 固定為 <repo>/.superpowers/sdd/2026-09-21-m4-candidate-doors，不受 -EvidenceRoot 影響。
 param(
-    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','M4NormalGameTest','M5GameTest','Windows','M3','M6Compile','M6JUnit','M6GameTest')][string]$Mode,
+    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','M4NormalGameTest','M5GameTest','Windows','M3','M6Compile','M6JUnit','M6GameTest','M7GameTest')][string]$Mode,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string]$Label='run',
     [ValidateSet('','universe','transfer')][string]$Only='',
     [string]$EvidenceRoot='',
@@ -55,7 +55,7 @@ function Check-Path([string]$path) {
 }
 # evidence 目錄必須被 gitignore，不得落在 tracked tree。
 function Assert-Ignored([string]$path) {
-    git -C $repo check-ignore -q -- ([IO.Path]::GetRelativePath($repo,$path).Replace('\','/')+'/x')
+    git -c "safe.directory=$repo" -C $repo check-ignore -q -- ([IO.Path]::GetRelativePath($repo,$path).Replace('\','/')+'/x')
     if($LASTEXITCODE -ne 0) { throw "evidence 目錄未被 gitignore：$path" }
 }
 function Files-Hash([string]$root) {
@@ -258,7 +258,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
 }
 function Distinct-Count($items) { $set=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal); foreach($item in $items){[void]$set.Add($item)}; return $set.Count }
 # plan 決策 6 的 batch 前綴矩陣（與 testmod M4LegacyGameTestFilterMixin 相同）：m4_legacy_runtime 屬 legacy run，前綴 m5_universe 屬 M5 run，其餘屬 default run。
-function Batch-Scope([string]$batch) { if($batch.StartsWith('m4_normal_',[StringComparison]::Ordinal)){return 'normal'}; if($batch -ceq 'm4_legacy_runtime'){return 'legacy'}; if($batch.StartsWith('m5_universe',[StringComparison]::Ordinal)){return 'm5'}; if($batch.StartsWith('m6_universe',[StringComparison]::Ordinal)){return 'm6'}; return 'default' }
+function Batch-Scope([string]$batch) { if($batch.StartsWith('m7_home',[StringComparison]::Ordinal)){return 'm7_home'}; if($batch.StartsWith('m4_normal_',[StringComparison]::Ordinal)){return 'normal'}; if($batch -ceq 'm4_legacy_runtime'){return 'legacy'}; if($batch.StartsWith('m5_universe',[StringComparison]::Ordinal)){return 'm5'}; if($batch.StartsWith('m6_universe',[StringComparison]::Ordinal)){return 'm6'}; return 'default' }
 # testmod 原始碼宣告的全部 GameTest：XML testcase 名稱（class 小寫＋'.'＋方法名稱）、batchId（沒寫時是原版預設 defaultBatch）與所屬 run。
 # 先去掉註解行（去掉前導空白後以 //、/*、* 開頭的行，含 Javadoc 內的 {@code @GameTest}），再掃描；每個檔的 @GameTest 數必須等於可解析的
 # 宣告數，不一致代表宣告格式漂移（例如 @GameTest 與方法之間多了 annotation），直接失敗。
@@ -297,7 +297,7 @@ function Assert-Scope([string]$xmlPath,[string]$scope,[string]$SourceRoot=(Join-
     $status=if($expected.Count -gt 0 -and $missing.Count -eq 0 -and $extra.Count -eq 0 -and $actual.Count -eq $expected.Count -and (Distinct-Count $actual) -eq $actual.Count -and @($report.SelectNodes('//testcase/failure|//testcase/error|//testcase/skipped')).Count -eq 0){'PASS'}else{'FAIL'}
     Save-Json (Join-Path $gate 'scope.json') ([ordered]@{scope=$scope;status=$status;onlyBatches=$only;xml=$xmlPath
         declared=[ordered]@{default=@($declared | Where-Object {$_.scope -ceq 'default'}).Count;legacy=@($declared | Where-Object {$_.scope -ceq 'legacy'}).Count;normal=@($declared | Where-Object {$_.scope -ceq 'normal'}).Count;m5=@($declared | Where-Object {$_.scope -ceq 'm5'}).Count;m6=@($declared | Where-Object {$_.scope -ceq 'm6'}).Count}
-        head=(git -C $repo rev-parse HEAD).Trim();expected=$expected.Count;actual=$actual.Count;expectedCases=$expectedNames;actualCases=$actual;missing=$missing;extra=$extra})
+        head=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim();expected=$expected.Count;actual=$actual.Count;expectedCases=$expectedNames;actualCases=$actual;missing=$missing;extra=$extra})
     if($status -ne 'PASS'){throw "M6_SCOPE_MISMATCH：GameTest run 範圍不符（$scope）：expected=$($expected.Count) actual=$($actual.Count) 缺 [$($missing -join ', ')] 多 [$($extra -join ', ')]"}
     return $expected
 }
@@ -454,6 +454,7 @@ try {
         'Legacy' {Fresh-Game $false 'legacy'}
         'M4NormalGameTest' {Fresh-Game $false 'normal'}
         'M5GameTest' {Fresh-Game $false 'm5'}
+        'M7GameTest' { & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Gradle $Gradle; if($LASTEXITCODE -ne 0){throw 'M7_GATE_FAILED'} }
         'M6GameTest' {Fresh-Game $false 'm6'}
         'M6Compile' {
             $exit=@(Invoke-Gradle @('classes','clientClasses','testClasses','testmodClasses','--rerun-tasks') (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds') -timeout 180 -runtimeLogMode compile-only)[-1]
@@ -471,7 +472,7 @@ try {
                 $suites+=([string]$xml.testsuite.name);$cases+=@($xml.SelectNodes('//testcase'))
             }
             if(-not $cases.Count -or @($cases | Where-Object {$_.SelectSingleNode('failure|error')}).Count -or ($TestClass -and ($suites.Count -ne 1 -or $suites[0] -cne $TestClass -or @($cases | Where-Object {$_.SelectSingleNode('skipped')}).Count))){throw 'M6_JUNIT_SCOPE_MISMATCH：JUnit 集合缺失／失敗／非指定 class'}
-            Save-Json (Join-Path $gate 'junit-scope.json') ([ordered]@{status='PASS';head=(git -C $repo rev-parse HEAD).Trim();testClass=$TestClass;classes=$suites;cases=@($cases | ForEach-Object {$_.classname+'|'+$_.name})})
+            Save-Json (Join-Path $gate 'junit-scope.json') ([ordered]@{status='PASS';head=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim();testClass=$TestClass;classes=$suites;cases=@($cases | ForEach-Object {$_.classname+'|'+$_.name})})
         }
         'Windows' {
             Copy-Build (Join-Path $gate 'prior-build')

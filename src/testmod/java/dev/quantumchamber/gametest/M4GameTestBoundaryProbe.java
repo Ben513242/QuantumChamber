@@ -27,7 +27,7 @@ final class M4GameTestBoundaryProbe {
         boolean m5 = Boolean.getBoolean("quantumchamber.gametest.m5Only");
         boolean m6 = Boolean.getBoolean("quantumchamber.gametest.m6Only");
         if ((legacy ? 1 : 0) + (m5 ? 1 : 0) + (m6 ? 1 : 0) > 1) throw new IllegalStateException("M6_SCOPE_MISMATCH：scope flags 不可混用");
-        if (m6) return;
+        if (m6 || Boolean.getBoolean("quantumchamber.test.m7Home")) return;
         // M5 run（plan 決策 6）刻意配置 Universe，不做 suite 前後的不變快照；改由每個 M5 test 自己斷言 catalog 增量，
         // suite 結束時再寫出 catalog 的最終狀態（gates.ps1 -Mode M5GameTest 核對）。
         if (Boolean.getBoolean("quantumchamber.gametest.m5Only")) {

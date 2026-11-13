@@ -162,6 +162,29 @@ loom {
         }
         // M5 plan 決策 6：會配置或物化 Universe、或會留下 M5 record 的 GameTest（batch id 前綴 m5_universe）在獨立的 fresh 世界執行，
         // 不放在共用的 default run（它的 M4 boundary oracle 要求整個 suite 前後的 catalog 與 world keys 不變）。
+        m7HomeProbe {
+            server()
+            name 'M7 HOME Test-only Close Spike'
+            source sourceSets.testmod
+            def nonce=providers.gradleProperty('m7ProbeNonce').getOrElse('disabled')
+            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M7 nonce 格式不符')
+            runDir "run/m7-home-${nonce}"
+            vmArg '-Dquantumchamber.test.m7Home=true'
+            ['nonce','chain','phase','root','head','startupNonce'].each { key ->
+                def property='m7' + (key == 'nonce' ? 'ProbeNonce' : key.capitalize())
+                if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m7home.${key}=${providers.gradleProperty(property).get()}"
+            }
+        }
+        gameTestM7 {
+            server()
+            name 'M7 HOME Spike GameTest'
+            source sourceSets.testmod
+            runDir 'run/gametest-m7'
+            vmArg '-Dfabric-api.gametest'
+            vmArg '-Dquantumchamber.test.m7Home=true'
+            vmArg '-Dquantumchamber.gametest.minTickMillis=10'
+            vmArg "-Dfabric-api.gametest.report-file=${project.layout.buildDirectory.file('gametest-m7-results.xml').get().asFile}"
+        }
         gameTestM6 {
             server()
             name 'M6 Universe Game Test'
@@ -354,6 +377,22 @@ tasks.register('verifySourceRemap', JavaExec) {
 
 tasks.named('check') {
     dependsOn tasks.named('verifySourceRemap')
+}
+
+// 僅 M7 隔離 oracle：匯出正式 server 的完整 JavaExec 命令，由可攜 runner 直接持有 JVM handle。
+// StopExecutionException 只略過這次 run task，並非啟動成功收據；runner 仍須真的啟動並核三層隔離。
+tasks.named('runServer') {
+    if (providers.gradleProperty('m7ExportMain').isPresent()) {
+        workingDir project.file(providers.gradleProperty('m7MainRoot').get())
+        jvmArgs '-Xlog:class+load=info:file=classload-%p.log'
+        systemProperty 'quantumchamber.m7MainNonce', providers.gradleProperty('m7MainNonce').get()
+        doFirst {
+            def output=project.file(providers.gradleProperty('m7ExportMain').get())
+            output.parentFile.mkdirs()
+            output.text=groovy.json.JsonOutput.toJson([executable:executable,jvmArgs:allJvmArgs,classpath:classpath.asPath,main:mainClass.get(),args:args,root:workingDir.absolutePath])
+            throw new org.gradle.api.tasks.StopExecutionException('M7_MAIN_EXPORTED；尚未啟動 JVM')
+        }
+    }
 }
 
 test {
