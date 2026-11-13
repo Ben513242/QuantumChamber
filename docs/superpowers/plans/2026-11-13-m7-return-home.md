@@ -115,6 +115,8 @@
 
 整改第1輪（N0=5）：原席T2-I01～I05皆正式正確性，回原作者核實；必要最小擴檔含 `P/candidate/CandidateLedgerService.java`、`P/corridor/{CorridorPageManager,CorridorRepositionService}.java` 及具名資料／caller測試與exact inventory。不得改舊sameAuthority/occupies、不得以純容量pending吞真正IO/strict錯誤，不新增nativePoC或驗證框架。初候選full innerPASS/outerUNKNOWN受控終止，修後另新pin/full，未預勾最末閉合項。
 
+2026-11-13 fix1實際測試接線：`G/M7HomeSpikeGameTests.java`新增Windows真caller容量案，`G/M2CorridorGameTests.java`僅walkNative package可見供重用既有native walk，新增 `src/testmod/java/dev/quantumchamber/persistence/M7CapacityFixture.java`；M7 exact集合21JUnit、Windows4GT／Ubuntu沿平台集合。source候選9d1e6ba已focused149與六owner mutation；先原席N1 C/I0，再修後完整full/CI，最後閉合項未勾。
+
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 
 **產出**　`sealed interface JournalSession` 共同提供 `UUID sessionUuid()/chamberUuid()`、`List<Participant> participants()`、`List<SpaceLease> spaceLeases()`、`SessionState state()`。舊 record 與新 `HomeSessionRecord` 實作；新列提供 `ChamberOriginAuthority rootAnchor()`、`HomeSessionRecord.EntryEndpoint entryEndpoint()`、`HomeSessionRecord.Home home()`。

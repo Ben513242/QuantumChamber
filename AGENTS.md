@@ -119,7 +119,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 現行：T2 OPEN，原席初審 C0/I5/M1（N0=5），進整改第1輪；不得啟T3。** production初候選81bd13e7、full HEAD71c47ba，focused118與M7 16/3已核；較短預設root full內層自然ENDALL0/summaryPASS，但外wrapper無自然退出，安全精確終止後outerUNKNOWN/-1，不能當完整full門檻通過。原件與五finding詳M7 note／SDD task-2-review.md。原full期間source/HEAD未改；現已postcheck95鎖獨占、無world owner，原作者依fix1 brief逐項核實/修正，舊sameAuthority/occupies不變，需新pin完整門檻＋原席N1＋同SHA全CI。controller `/root/m7_t2_onward` 唯一狀態writer；T1 closed不重做，B guard至T7仍封。
+**2026-11-13 現行：T2 OPEN，fix1 production `9d1e6bab4840ca658191a6c005fbd172d7bcef06` 已凍結，focused149／Windows M7 21JUnit/4GT/11SelfTest已核，待唯一原席N1。** N0=C0/I5/M1歷史保留，六owner mutation實體XML/hash/bytes還原已核；新N1未評，不能先稱五項清零。root現行順序：N1 C/I0才啟修後完整full，再同SHA全部required CI；原初候選innerPASS/outerUNKNOWN/-1不得抵用。controller `/root/m7_t2_onward` 唯一狀態writer，T3未啟、未push/CI，B guard仍封至T7。詳M7 note／SDD report/proof。
 - **full driver目前2/3**：長cwd267、短root outer未返回是同一實際full driver兩次非預期工具失敗，原因各保，不因新wrapper名/簽章/docs重置；新候選第三次即停報。可選hash/人工source解碼另列操作事件，不能冒稱遊戲失敗。
 - 新止損：同 task 同範圍 N0/N1/N2… Important 總數含新項，任一兩整改輪窗口未下降即停；同穩定 problem ID 驗證工具連續第三次非預期 FAIL 即停，不再疊修。expected RED／negative／mutation 正確拒絕分列；舊 FAIL／UNKNOWN／Evidence3／NativeStartup3／main-only2 保留。
 - T1 source67／CI57 的 CI43418385083 attempt1 五 job 真 success 原判不變，不重做 T1／PoC。既有 W10 producer 只核不重建／重套；production full 前照 README 核實並 UTF-8。人工代操作開始、main／tag／PR／LICENSE／退役仍未授。

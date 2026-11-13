@@ -22,8 +22,12 @@
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
-## T2 初候選回歸界線／N0=5；進入整改第1輪（2026-11-13）
+## T2 fix1 候選9d1e6ba已凍結；focused149，待原席N1（2026-11-13）
 
+- fix1 production候選 `9d1e6bab4840ca658191a6c005fbd172d7bcef06`，14檔，原席fixBASE71c47ba、實作起點a34d4c0；作者report SHA `7308DA43449B063EF0BB23EEA685F7C2DA453788FEA11B738224E04AF3AA5F83`。六類focused 11/6/52/13/41/26共149、Windows M7 21JUnit/4GT、11個自測按預期完成；controller `t2-fix1-focused-controller-readback.json`核實際XML/hash/九raw及pin9d1/平台，M7零skip。
+- fix1 I01～I05及reposition六個直接owner mutation，controller `t2-fix1-mutations-controller-readback.json`核各實體XML/hash/目標assert、保存before/mutant bytes、還原SHA，六個owner現行bytes也等於變異前bytes。I01與reposition均為正式caller目標assert，非cleanup timeout；I03/I04原history RED具名2FAIL、原件SHA `E009BEA0…`。原首I01仍保正式remap漏撤reserve導致權威不符＋fixture最後僅cleanup逾時兩層因果，不冒充目標RED、不回填新marker。
+- mutation site多行CRLF/LF不匹配在source/runtime前拒絕的原事件1保留；單行唯一命中修正後新nonce才KILLED，不重設fullDriver2/3。controller讀fix1 proof曾誤用初版JSON欄位xml產生KeyError，是已保留的只讀操作事件；改按實際xmlSha/mutated/hits核原件，未重跑mutation、不改source、不當遊戲或fullDriver失敗。
+- 現行順序由root調整：先同席N1增量審查，C/I0才啟修後完整full，然後同SHA全部required CI；未減最終門檻，不在未清source中間pin先耗full。N0=5歷史保留，N1未評；五項「作者已修」尚不是獨立採用。M01診斷修改一併待原席核。T2仍OPEN、T3未啟，未push/CI。
 - controller `/root/m7_t2_onward`；BASE `6032027`，續行狀態 docs `670c782`；fresh implementer `t2_implementer`（gpt-6-astra/high/fork none）。source 初候選 `8c6e542`、兩個未知版本負例修正 `363d4df`，首次未知寫入占用修正後最終 production code pin `81bd13e7ccebe167fcb36341c1416384e305ebec`；均未 push。T1 不重做、B activation guard 仍封至 T7。
 - 新 `JournalSession`／`HomeSessionRecord`／`HomeJournalCodec`／`HomeJournalBudget`／`HomeReceiptStore` 與共用 journal owner 完成候選。current/flushed/quarantine/pending 由同一資料源管理；pending exact-attempt 未確認時保守占用，向後提供 typed `pendingSessions()`。T3 busy、T4 root fence/CLOSE event owner、T5 startup space 留各自 task，不因本候選宣稱 M7 完成。
 - 正式 schema6 writer 三案行為 RED、歷史 API 缺失 compile RED 分列；I2 可編譯正式 owner 特定行為 RED 真 3 案恰1FAIL，SHA `2629BA16…`。I2 同32租約 current50,397→COLLAPSING＋root latch50,445，保留48；64租約亦48，1租約2,010、8租約162。另第一次 HOME atomic move 後 readback未知的占用缺口真 RED1/8→GREEN8/8，未確認時不借用玩家／Chamber／slot，修後 pin81。
