@@ -19,6 +19,8 @@ public final class M7CloseSpikePhases {
     static final UUID UNIVERSE=UUID.fromString("77000000-0000-4000-8000-000000000001"), CHAMBER=UUID.fromString("77000000-0000-4000-8000-000000000002");
     static final ChamberFrame FRAME=new ChamberFrame(new BlockPos(15,76,15),Direction.NORTH);
     private static final net.minecraft.server.world.ChunkTicketType<UUID> TICKET=net.minecraft.server.world.ChunkTicketType.create("m7_spike_poc",Comparator.comparing(UUID::toString));
+    static final List<String> POC_CUTS=List.of("before-close","after-door","after-checkpoint","after-temp-force","after-publish","after-remove");
+    static final List<String> DOORS=List.of("ordinary","sealed","passable");
     static final List<String> CUTS=List.of("before-close","after-close","before-door","after-door","before-checkpoint","after-checkpoint","after-temp-force","before-publish","after-publish","after-readback","after-recheck","before-remove","after-remove");
     private final Path root,journal,receipt,temporary;
     private final String phase,cut,door;
@@ -33,7 +35,7 @@ public final class M7CloseSpikePhases {
     M7CloseSpikePhases(Path root,String chain,String phase,ServerWorld world,Map<String,Object> proof,ThrowingAction halt) {
         this.root=root;this.phase=phase;this.world=world;this.proof=proof;this.halt=halt;
         String suffix=chain.substring("spike-close-".length());door=suffix.substring(0,suffix.indexOf('-'));cut=suffix.substring(door.length()+1);
-        M7HomeProbe.require(CUTS.contains(cut),"M7_CUT");
+        M7HomeProbe.require(POC_CUTS.contains(cut)&&DOORS.contains(door),"M7_CUT");
         Path data=root.resolve("world/data/m7-spike");journal=data.resolve("active.dat");receipt=data.resolve("receipt.dat");temporary=data.resolve("receipt.complete.tmp");
         for(int x=0;x<=1;x++)for(int z=0;z<=1;z++)chunks.add(new ChunkPos(x,z));
     }
@@ -70,18 +72,6 @@ public final class M7CloseSpikePhases {
         proof.put("fixture","TEST_ONLY_PROOF_OF_CONCEPT_NOT_FORMAL_ADMISSION");proof.put("initialDoor",door);
         // 同一 save volume 的 admission 能力測試；正式 SID 尚未進行任何旅行。
         Path capability=journal.resolveSibling("capability.tmp"),linked=journal.resolveSibling("capability.link");Files.write(capability,new byte[]{7},StandardOpenOption.CREATE_NEW);Files.createLink(linked,capability);M7HomeProbe.require(Files.isSameFile(capability,linked),"M7_VOLUME_CAPABILITY");
-        var doorPosition=ChamberGeometry.localToWorld(FRAME,3,2,0);
-        var entity=new net.minecraft.entity.decoration.ArmorStandEntity(world,doorPosition.getX()+0.5,doorPosition.getY(),doorPosition.getZ()+0.5);entity.setNoGravity(true);
-        M7HomeProbe.require(world.spawnEntity(entity),"M7_ENTITY_FIXTURE");
-        boolean blocked=ChamberGeometry.bulkheadPositions(FRAME).stream().anyMatch(pos->!world.getOtherEntities(null,new Box(pos),candidate->candidate.isAlive()).isEmpty());
-        M7HomeProbe.require(blocked,"M7_ENTITY_NOT_OBSERVED");
-        apply(blocked?ChamberDoorService.DoorState.OPEN:ChamberDoorService.DoorState.CLOSED);
-        M7HomeProbe.require(entity.isAlive()&&entity.getPos().equals(new Vec3d(doorPosition.getX()+0.5,doorPosition.getY(),doorPosition.getZ()+0.5)),"M7_ENTITY_CLAMPED");
-        proof.put("entityAntiClampWitness",true);entity.discard();apply(new ChamberDoorService.DoorState(true,membrane));
-        // 真 checkpoint hook 拒絕一次，未寫 receipt／未移除 active。
-        var refusal=new M5TestHooks.ChunkCheckpointProbe(world.getRegistryKey(),1,index->"M7_POC_REFUSAL");M5TestHooks.CHUNK_CHECKPOINT_PROBE.install(refusal,null);
-        boolean rejected=false;try{ChunkSaveCheckpoint.save(server,Map.of(world,chunks));}catch(IllegalStateException expected){rejected=true;}finally{M5TestHooks.CHUNK_CHECKPOINT_PROBE.remove(refusal);}
-        M7HomeProbe.require(rejected&&refusal.calls().size()==1&&!Files.exists(receipt)&&Files.exists(journal),"M7_CHECKPOINT_REFUSAL");proof.put("checkpointRefusalWitness",refusal.calls().size());
     }
     private void readInitialDisk()throws Exception {
         proof.put("diskInitialDoors",doors());proof.put("diskInitialJournal",Files.exists(journal)?hash(journal):"ABSENT");proof.put("diskInitialReceipt",Files.exists(receipt)?hash(receipt):"ABSENT");
@@ -89,17 +79,26 @@ public final class M7CloseSpikePhases {
         var initialMembrane=switch(door){case "ordinary"->MembraneState.NONE;case "sealed"->MembraneState.SEALED_X;case "passable"->MembraneState.PASSABLE_X;default->throw new IllegalStateException("M7_DOOR");};
         var expected=index>=CUTS.indexOf("after-checkpoint")?ChamberDoorService.DoorState.CLOSED:new ChamberDoorService.DoorState(true,initialMembrane);
         assertDoors(expected);
-        if(Files.exists(journal))M7HomeProbe.require(read(journal).equals(fixture(index>0)),"M7_DISK_JOURNAL_EXACT");
+        boolean expectActive=index<CUTS.indexOf("after-remove"),expectReceipt=index>=CUTS.indexOf("after-publish"),expectTemp=index>=CUTS.indexOf("after-temp-force");
+        M7HomeProbe.require(Files.exists(journal)==expectActive,"M7_DISK_ACTIVE_PRESENCE");M7HomeProbe.require(Files.exists(receipt)==expectReceipt,"M7_DISK_RECEIPT_PRESENCE");M7HomeProbe.require(Files.exists(temporary)==expectTemp,"M7_DISK_TEMP_PRESENCE");
+        if(expectActive)M7HomeProbe.require(read(journal).equals(fixture(index>0)),"M7_DISK_JOURNAL_EXACT");if(expectTemp)M7HomeProbe.require(read(temporary).equals(receiptFixture()),"M7_DISK_TEMP_EXACT");
         if(index>=CUTS.indexOf("after-publish")){M7HomeProbe.require(Files.exists(receipt),"M7_RECEIPT_NOT_DURABLE");M7HomeProbe.require(read(receipt).equals(receiptFixture()),"M7_DISK_RECEIPT_EXACT");}
         if(index>=CUTS.indexOf("after-remove"))M7HomeProbe.require(!Files.exists(journal),"M7_ACTIVE_NOT_REMOVED");
         closed=fixture(true);
     }
     private void execute(MinecraftServer server)throws Exception {
         boolean removed=!Files.exists(journal);
-        if(removed){M7HomeProbe.require(phase.equals("reopen")&&Files.exists(receipt),"M7_EARLY_REMOVE");proof.put("alreadyRemoved",true);assertDoors(ChamberDoorService.DoorState.CLOSED);complete();return;}
+        if(removed){M7HomeProbe.require(phase.equals("reopen")&&cut.equals("after-remove")&&Files.exists(receipt),"M7_EARLY_REMOVE");proof.put("alreadyRemoved",true);assertDoors(ChamberDoorService.DoorState.CLOSED);complete();return;}
         hit("before-close");writeJournal(closed);hit("after-close");
-        hit("before-door");apply(ChamberDoorService.DoorState.CLOSED);hit("after-door");
-        hit("before-checkpoint");ChunkSaveCheckpoint.save(server,Map.of(world,chunks));hit("after-checkpoint");
+        hit("before-door");
+        if(phase.equals("crash")){
+            var pos=ChamberGeometry.localToWorld(FRAME,3,2,0);var entity=new net.minecraft.entity.decoration.ArmorStandEntity(world,pos.getX()+0.5,pos.getY(),pos.getZ()+0.5);entity.setNoGravity(true);M7HomeProbe.require(world.spawnEntity(entity),"M7_ENTITY_FIXTURE");
+            var refusal=new M5TestHooks.ChunkCheckpointProbe(world.getRegistryKey(),1,index->"M7_CLOSE_CHECKPOINT_REFUSAL");M5TestHooks.CHUNK_CHECKPOINT_PROBE.install(refusal,null);
+            boolean rejected=false;try{closeDoorAndCheckpoint(server);}catch(IllegalStateException expected){rejected=true;}finally{M5TestHooks.CHUNK_CHECKPOINT_PROBE.remove(refusal);}
+            M7HomeProbe.require(rejected&&refusal.calls().size()==1&&Files.exists(journal)&&!Files.exists(receipt)&&!Files.exists(temporary),"M7_CLOSE_REFUSAL_TERMINAL");
+            assertDoors(ChamberDoorService.DoorState.OPEN);M7HomeProbe.require(entity.isAlive(),"M7_CLOSE_ENTITY_CLAMPED");proof.put("entityAntiClampWitness",true);proof.put("checkpointRefusalWitness",refusal.calls().size());entity.discard();
+        }
+        apply(closeGoal());hit("after-door");hit("before-checkpoint");closeDoorAndCheckpoint(server);hit("after-checkpoint");
         NbtCompound wrapper=receiptFixture();
         if(!Files.exists(temporary)){NbtIo.writeCompressed(wrapper,temporary);force(temporary);}else M7HomeProbe.require(read(temporary).equals(wrapper),"M7_TEMP_EXACT");hit("after-temp-force");
         hit("before-publish");try{Files.createLink(receipt,temporary);}catch(FileAlreadyExistsException existing){M7HomeProbe.require(read(receipt).equals(wrapper),"M7_RECEIPT_CONFLICT");}hit("after-publish");
@@ -107,8 +106,10 @@ public final class M7CloseSpikePhases {
         assertDoors(ChamberDoorService.DoorState.CLOSED);ChunkSaveCheckpoint.save(server,Map.of(world,chunks));hit("after-recheck");
         hit("before-remove");Files.delete(journal);hit("after-remove");complete();
     }
+    private ChamberDoorService.DoorState closeGoal(){boolean blocked=ChamberGeometry.bulkheadPositions(FRAME).stream().anyMatch(pos->!world.getOtherEntities(null,new Box(pos),entity->entity.isAlive()).isEmpty());return blocked?ChamberDoorService.DoorState.OPEN:ChamberDoorService.DoorState.CLOSED;}
+    private void closeDoorAndCheckpoint(MinecraftServer server){apply(closeGoal());ChunkSaveCheckpoint.save(server,Map.of(world,chunks));}
     private void complete()throws Exception {proof.put("journalFinal","ABSENT");proof.put("receiptHash",hash(receipt));proof.put("finalDoors",doors());proof.put("nativeCheckpoint",true);for(var chunk:chunks)world.getChunkManager().removeTicket(TICKET,chunk,0,CHAMBER);}
-    private void hit(String point)throws Exception {trace.add(point);Files.writeString(root.resolve("evidence/"+phase+"/trace.txt"),String.join("\n",trace));if(phase.equals("crash")&&point.equals(cut)){proof.put("hit",point);proof.put("journalHash",Files.exists(journal)?hash(journal):"ABSENT");proof.put("receiptHash",Files.exists(receipt)?hash(receipt):"ABSENT");proof.put("doorsAtCut",doors());halt.run();}}
+    private void hit(String point)throws Exception {trace.add(point);Files.writeString(root.resolve("evidence/"+phase+"/trace.txt"),String.join("\n",trace));if(phase.equals("crash")&&point.equals(cut)){proof.put("hit",point);proof.put("journalHash",Files.exists(journal)?hash(journal):"ABSENT");proof.put("receiptHash",Files.exists(receipt)?hash(receipt):"ABSENT");proof.put("tempHash",Files.exists(temporary)?hash(temporary):"ABSENT");proof.put("doorsAtCut",doors());halt.run();}}
     private void apply(ChamberDoorService.DoorState target) {var result=new ChamberDoorService().applyTarget(world,FRAME,target);M7HomeProbe.require(Set.of(ChamberDoorService.ApplyResult.Outcome.APPLIED,ChamberDoorService.ApplyResult.Outcome.UNCHANGED).contains(result.outcome()),"M7_APPLY "+result);assertDoors(target);}
     private void assertDoors(ChamberDoorService.DoorState target){for(var position:ChamberGeometry.bulkheadPositions(FRAME)){var state=world.getBlockState(position);M7HomeProbe.require(state.get(QuantumBulkheadBlock.OPEN)==target.open()&&QuantumBulkheadBlock.membrane(state)==target.membrane(),"M7_DISK_DOOR "+position);}}
     private List<String> doors(){return ChamberGeometry.bulkheadPositions(FRAME).stream().sorted(Comparator.comparingLong(BlockPos::asLong)).map(pos->pos.toShortString()+"="+world.getBlockState(pos)).toList();}

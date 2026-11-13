@@ -2,7 +2,7 @@
 param([ValidateSet('Windows','Ubuntu')][string]$Platform=$(if($IsWindows){'Windows'}else{'Ubuntu'}),
       [switch]$CheckWorkflow,[switch]$Fixture,[switch]$VerifyOnly,[switch]$SelfTest,
       [string]$Workflow='', [string]$GameTestXml='', [string]$JUnitDir='', [string]$RuntimeLog='',
-      [string]$OutputRoot='',[string]$Gradle='',[string]$ExpectedHead='')
+      [string]$OutputRoot='',[string]$Gradle='',[string]$ExpectedHead='',[string]$GameNonce='', [string]$RuntimeRoot='')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -13,6 +13,7 @@ if($CheckWorkflow){
     'M7_WORKFLOW_SCOPE PASS';return
 }
 
+. (Join-Path $PSScriptRoot 'm7-contract.ps1')
 $head=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
 if(-not $ExpectedHead){$ExpectedHead=if($env:GITHUB_SHA){$env:GITHUB_SHA}else{$head}}
 if($ExpectedHead -cne $head){throw 'M7_HEAD'}
@@ -61,27 +62,40 @@ function Assert-M7Files([string]$Xml,[string]$Junit,[string]$Log){
     if(-not $text.Contains('quantumchamber-testmod') -or $text.Contains('M5_UNIVERSE_SUITE_END')){throw 'M7_RUNTIME_SCOPE'}
     $run=Split-Path (Split-Path $Log)
     $runtime=Get-Content -LiteralPath (Join-Path $run 'm7-gametest-runtime.json') -Raw|ConvertFrom-Json
-    if($runtime.scope -cne 'm7_home' -or 'quantumchamber-testmod' -cnotin $runtime.loadedMods -or '-Dquantumchamber.test.m7Home=true' -cnotin $runtime.flags -or @($runtime.flags|Where-Object {$_ -cmatch '^-Dquantumchamber.gametest.(m6Only|m5Only|legacyOnly|m4NormalOnly|defaultNormal)=true$'}).Count){throw 'M7_RUNTIME_SCOPE'}
+    if($runtime.head -cne $head -or $runtime.nonce -cnotmatch  '^[0-9a-f]{32}$' -or $runtime.scope -cne 'm7_home' -or 'quantumchamber-testmod' -cnotin $runtime.loadedMods -or '-Dquantumchamber.test.m7Home=true' -cnotin $runtime.flags -or @($runtime.flags|Where-Object {$_ -cmatch '^-Dquantumchamber.gametest.(m6Only|m5Only|legacyOnly|m4NormalOnly|defaultNormal)=true$'}).Count){throw 'M7_RUNTIME_SCOPE'}
     $pace=Assert-M6Runtime $Log $run
     return @{game=$nodes.Count;junit=$junitCases.Count;pace=$pace;pid=$runtime.pid;startTimeUtc=$runtime.startTimeUtc}
 }
 if(-not $VerifyOnly -and -not $Fixture){
     if($Platform -cne $(if($IsWindows){'Windows'}else{'Ubuntu'})){throw 'M7_ACTUAL_PLATFORM'}
-    $world=Join-Path $repo 'run/gametest-m7'
+    if(-not $GameNonce){$GameNonce=[guid]::NewGuid().ToString('N')}
+    $world=Join-Path $repo "run/gametest-m7-$GameNonce";$RuntimeRoot=$world;$RuntimeLog=Join-Path $world 'logs/latest.log'
     if(Test-Path -LiteralPath $world){throw 'M7_FRESH_WORLD_REQUIRED：既有世界保留；另行可恢復move後才可重跑'}
     if(-not $Gradle){$Gradle=if($IsWindows){Join-Path $repo 'gradlew.bat'}else{Join-Path $repo 'gradlew'}}
     $start=[DateTime]::UtcNow
-    & $Gradle test --tests dev.quantumchamber.persistence.M7BudgetSpikeTest --tests dev.quantumchamber.persistence.M7PublishSpikeTest runGameTestM7 "-Pm7Head=$head" --console=plain
-    if($LASTEXITCODE -ne 0){throw 'M7_RUNTIME_EXIT'}
+    if($IsWindows){Invoke-M7FrozenGame $Gradle $repo $world (Join-Path $OutputRoot 'launch') $GameNonce $head}else{
+        & $Gradle runGameTestM7 "-Pm7GameNonce=$GameNonce" "-Pm7Head=$head" --console=plain
+        if($LASTEXITCODE -ne 0){throw 'M7_RUNTIME_EXIT'}
+    }
     foreach($file in @($GameTestXml,$RuntimeLog)){if((Get-Item -LiteralPath $file).LastWriteTimeUtc -lt $start){throw 'M7_STALE_RUNTIME'}}
 }
 if(-not(Test-Path -LiteralPath $OutputRoot)){New-Item -ItemType Directory -Path $OutputRoot|Out-Null}
+$raw=Join-Path $OutputRoot 'raw'
+if(-not $VerifyOnly -and -not $Fixture){
+    if(Test-Path $raw){throw 'M7_RAW_EXISTS'};New-Item -ItemType Directory -Path (Join-Path $raw 'junit'),(Join-Path $raw 'runtime/logs'),(Join-Path $raw 'artifacts') -Force|Out-Null
+    Copy-Item -LiteralPath $GameTestXml -Destination (Join-Path $raw 'gametest.xml');Copy-Item -Path (Join-Path $JUnitDir 'TEST-dev.quantumchamber.persistence.M7*.xml') -Destination (Join-Path $raw 'junit');Copy-Item -LiteralPath $RuntimeLog -Destination (Join-Path $raw 'runtime/logs/latest.log');Copy-Item -LiteralPath (Join-Path (Split-Path (Split-Path $RuntimeLog)) 'm7-gametest-runtime.json') -Destination (Join-Path $raw 'runtime');Copy-Item -Path (Join-Path $repo 'build/libs/*.jar') -Destination (Join-Path $raw 'artifacts')
+    $files=@(Get-ChildItem $raw -Recurse -File|ForEach-Object {@{path=$_.FullName;sha256=(Get-FileHash $_.FullName).Hash}});$files|ConvertTo-Json -Depth 5|Set-Content (Join-Path $OutputRoot 'raw-files.json') -Encoding utf8
+}
+if($VerifyOnly -and -not(Test-Path $raw)){throw 'M7_RAW_REQUIRED'}
+if(Test-Path $raw){$rawSaved=@(Get-Content (Join-Path $OutputRoot 'raw-files.json') -Raw|ConvertFrom-Json);$rawActual=@(Get-ChildItem $raw -Recurse -File|ForEach-Object FullName);if(@(Compare-Object (@($rawSaved.path)|Sort-Object) ($rawActual|Sort-Object) -CaseSensitive).Count){throw 'M7_RAW_MEMBERS'};$GameTestXml=Join-Path $raw 'gametest.xml';$JUnitDir=Join-Path $raw 'junit';$RuntimeLog=Join-Path $raw 'runtime/logs/latest.log';foreach($file in (Get-Content (Join-Path $OutputRoot 'raw-files.json') -Raw|ConvertFrom-Json)){if((Get-FileHash $file.path).Hash -cne $file.sha256){throw 'M7_RAW_HASH'}}}
 $proof=Assert-M7Files $GameTestXml $JUnitDir $RuntimeLog
-$jars=@(Get-ChildItem -LiteralPath (Join-Path $repo 'build/libs') -Filter '*.jar'|Where-Object {$_.Name -notmatch '-dev[.]jar$'})
+$jarDirectory=if(Test-Path $raw){Join-Path $raw 'artifacts'}else{Join-Path $repo 'build/libs'}
+$jars=@(Get-ChildItem -LiteralPath $jarDirectory -Filter '*.jar'|Where-Object {$_.Name -notmatch '-dev[.]jar$'})
 if($jars.Count -ne 2){throw 'M7_ARTIFACT_COUNT'}
+$roles=Get-M7JarRoles @($jars.FullName)
 $artifacts=@($jars|ForEach-Object {Assert-M6Artifact $_.FullName})
-$summary=@{schema=1;scope='m7_home';status='PASS';head=$head;platform=$Platform;fixture=[bool]$Fixture;proof=$proof;xmlHash=(Get-FileHash -LiteralPath $GameTestXml).Hash;logHash=(Get-FileHash -LiteralPath $RuntimeLog).Hash;artifacts=$artifacts}
-$summary|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $OutputRoot 'summary.json') -Encoding utf8
+$summary=@{schema=1;scope='m7_home';status='PASS';head=$head;platform=$Platform;fixture=[bool]$Fixture;proof=$proof;roles=$roles;xmlHash=(Get-FileHash -LiteralPath $GameTestXml).Hash;logHash=(Get-FileHash -LiteralPath $RuntimeLog).Hash;artifacts=$artifacts}
+if(-not $VerifyOnly){$summary|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $OutputRoot 'summary.json') -Encoding utf8}else{$saved=Get-M7Json (Join-Path $OutputRoot 'summary.json');if($saved.head -cne $head -or $saved.platform -cne $Platform -or $saved.status -cne 'PASS' -or $saved.xmlHash -cne $summary.xmlHash -or $saved.logHash -cne $summary.logHash){throw 'M7_SAVED_SCOPE'}}
 if($SelfTest){
     $cases=@('drop','skip','wrong-scope','platform-success','platform-rejection')
     $negatives=@()
@@ -103,4 +117,3 @@ if($SelfTest){
     $negatives|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $OutputRoot 'negative-results.json') -Encoding utf8
 }
 "M7_SCOPE PASS platform=$Platform game=$($proof.game) junit=$($proof.junit) head=$head fixture=$Fixture"
-

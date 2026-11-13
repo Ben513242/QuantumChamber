@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "portable": {
     "junit": [
       "dev.quantumchamber.persistence.M7BudgetSpikeTest.legalHomeAtAndBeyondTrackerLimit",
@@ -37,31 +37,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-close",
-      "chain": "spike-close-ordinary-after-close",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "before-door",
-      "chain": "spike-close-ordinary-before-door",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -73,19 +50,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "before-checkpoint",
-      "chain": "spike-close-ordinary-before-checkpoint",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -97,7 +63,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -109,19 +76,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "before-publish",
-      "chain": "spike-close-ordinary-before-publish",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -133,43 +89,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-readback",
-      "chain": "spike-close-ordinary-after-readback",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-recheck",
-      "chain": "spike-close-ordinary-after-recheck",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "before-remove",
-      "chain": "spike-close-ordinary-before-remove",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -181,7 +102,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -193,31 +115,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-close",
-      "chain": "spike-close-sealed-after-close",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "before-door",
-      "chain": "spike-close-sealed-before-door",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -229,19 +128,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "before-checkpoint",
-      "chain": "spike-close-sealed-before-checkpoint",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -253,7 +141,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -265,19 +154,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "before-publish",
-      "chain": "spike-close-sealed-before-publish",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -289,43 +167,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-readback",
-      "chain": "spike-close-sealed-after-readback",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-recheck",
-      "chain": "spike-close-sealed-after-recheck",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "before-remove",
-      "chain": "spike-close-sealed-before-remove",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -337,7 +180,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -349,31 +193,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-close",
-      "chain": "spike-close-passable-after-close",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "before-door",
-      "chain": "spike-close-passable-before-door",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -385,19 +206,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "before-checkpoint",
-      "chain": "spike-close-passable-before-checkpoint",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -409,7 +219,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -421,19 +232,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "before-publish",
-      "chain": "spike-close-passable-before-publish",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -445,43 +245,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-readback",
-      "chain": "spike-close-passable-after-readback",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-recheck",
-      "chain": "spike-close-passable-after-recheck",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Windows",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "before-remove",
-      "chain": "spike-close-passable-before-remove",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -493,7 +258,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": true
     },
     {
       "platform": "Windows",
@@ -505,7 +271,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -517,7 +284,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -529,7 +297,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -541,7 +310,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -553,7 +323,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -565,7 +336,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -577,7 +349,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -589,7 +362,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -601,7 +375,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -613,7 +388,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -625,7 +401,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -637,7 +414,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -649,7 +427,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -661,7 +440,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -673,7 +453,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -685,7 +466,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -697,7 +479,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -709,7 +492,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -721,7 +505,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -733,7 +518,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -745,7 +531,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -757,7 +544,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -769,7 +557,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -781,7 +570,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -793,7 +583,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -805,7 +596,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -817,7 +609,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -829,7 +622,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -841,7 +635,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -853,7 +648,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -865,7 +661,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -877,7 +674,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -889,7 +687,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -901,7 +700,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -913,7 +713,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -925,7 +726,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -937,7 +739,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -949,7 +752,8 @@
       "phases": [
         "crash",
         "reopen"
-      ]
+      ],
+      "enabled": false
     },
     {
       "platform": "Windows",
@@ -961,943 +765,18 @@
       "phases": [
         "crash",
         "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "before-close",
-      "chain": "spike-close-ordinary-before-close",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-close",
-      "chain": "spike-close-ordinary-after-close",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "before-door",
-      "chain": "spike-close-ordinary-before-door",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-door",
-      "chain": "spike-close-ordinary-after-door",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "before-checkpoint",
-      "chain": "spike-close-ordinary-before-checkpoint",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-checkpoint",
-      "chain": "spike-close-ordinary-after-checkpoint",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-temp-force",
-      "chain": "spike-close-ordinary-after-temp-force",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "before-publish",
-      "chain": "spike-close-ordinary-before-publish",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-publish",
-      "chain": "spike-close-ordinary-after-publish",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-readback",
-      "chain": "spike-close-ordinary-after-readback",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-recheck",
-      "chain": "spike-close-ordinary-after-recheck",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "before-remove",
-      "chain": "spike-close-ordinary-before-remove",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "ordinary",
-      "cut": "after-remove",
-      "chain": "spike-close-ordinary-after-remove",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "before-close",
-      "chain": "spike-close-sealed-before-close",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-close",
-      "chain": "spike-close-sealed-after-close",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "before-door",
-      "chain": "spike-close-sealed-before-door",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-door",
-      "chain": "spike-close-sealed-after-door",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "before-checkpoint",
-      "chain": "spike-close-sealed-before-checkpoint",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-checkpoint",
-      "chain": "spike-close-sealed-after-checkpoint",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-temp-force",
-      "chain": "spike-close-sealed-after-temp-force",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "before-publish",
-      "chain": "spike-close-sealed-before-publish",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-publish",
-      "chain": "spike-close-sealed-after-publish",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-readback",
-      "chain": "spike-close-sealed-after-readback",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-recheck",
-      "chain": "spike-close-sealed-after-recheck",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "before-remove",
-      "chain": "spike-close-sealed-before-remove",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "sealed",
-      "cut": "after-remove",
-      "chain": "spike-close-sealed-after-remove",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "before-close",
-      "chain": "spike-close-passable-before-close",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-close",
-      "chain": "spike-close-passable-after-close",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "before-door",
-      "chain": "spike-close-passable-before-door",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-door",
-      "chain": "spike-close-passable-after-door",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "before-checkpoint",
-      "chain": "spike-close-passable-before-checkpoint",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-checkpoint",
-      "chain": "spike-close-passable-after-checkpoint",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-temp-force",
-      "chain": "spike-close-passable-after-temp-force",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "before-publish",
-      "chain": "spike-close-passable-before-publish",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-publish",
-      "chain": "spike-close-passable-after-publish",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-readback",
-      "chain": "spike-close-passable-after-readback",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-recheck",
-      "chain": "spike-close-passable-after-recheck",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "before-remove",
-      "chain": "spike-close-passable-before-remove",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "spike-close",
-      "door": "passable",
-      "cut": "after-remove",
-      "chain": "spike-close-passable-after-remove",
-      "implemented": true,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "before-close",
-      "chain": "close-ordinary-before-close",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "after-close",
-      "chain": "close-ordinary-after-close",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "before-door",
-      "chain": "close-ordinary-before-door",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "after-door",
-      "chain": "close-ordinary-after-door",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "before-checkpoint",
-      "chain": "close-ordinary-before-checkpoint",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "after-checkpoint",
-      "chain": "close-ordinary-after-checkpoint",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "after-temp-force",
-      "chain": "close-ordinary-after-temp-force",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "before-publish",
-      "chain": "close-ordinary-before-publish",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "after-publish",
-      "chain": "close-ordinary-after-publish",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "after-readback",
-      "chain": "close-ordinary-after-readback",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "after-recheck",
-      "chain": "close-ordinary-after-recheck",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "before-remove",
-      "chain": "close-ordinary-before-remove",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "ordinary",
-      "cut": "after-remove",
-      "chain": "close-ordinary-after-remove",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "before-close",
-      "chain": "close-sealed-before-close",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "after-close",
-      "chain": "close-sealed-after-close",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "before-door",
-      "chain": "close-sealed-before-door",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "after-door",
-      "chain": "close-sealed-after-door",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "before-checkpoint",
-      "chain": "close-sealed-before-checkpoint",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "after-checkpoint",
-      "chain": "close-sealed-after-checkpoint",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "after-temp-force",
-      "chain": "close-sealed-after-temp-force",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "before-publish",
-      "chain": "close-sealed-before-publish",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "after-publish",
-      "chain": "close-sealed-after-publish",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "after-readback",
-      "chain": "close-sealed-after-readback",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "after-recheck",
-      "chain": "close-sealed-after-recheck",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "before-remove",
-      "chain": "close-sealed-before-remove",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "sealed",
-      "cut": "after-remove",
-      "chain": "close-sealed-after-remove",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "before-close",
-      "chain": "close-passable-before-close",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "after-close",
-      "chain": "close-passable-after-close",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "before-door",
-      "chain": "close-passable-before-door",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "after-door",
-      "chain": "close-passable-after-door",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "before-checkpoint",
-      "chain": "close-passable-before-checkpoint",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "after-checkpoint",
-      "chain": "close-passable-after-checkpoint",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "after-temp-force",
-      "chain": "close-passable-after-temp-force",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "before-publish",
-      "chain": "close-passable-before-publish",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "after-publish",
-      "chain": "close-passable-after-publish",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "after-readback",
-      "chain": "close-passable-after-readback",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "after-recheck",
-      "chain": "close-passable-after-recheck",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "before-remove",
-      "chain": "close-passable-before-remove",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
-    },
-    {
-      "platform": "Ubuntu",
-      "stage": "close",
-      "door": "passable",
-      "cut": "after-remove",
-      "chain": "close-passable-after-remove",
-      "implemented": false,
-      "phases": [
-        "crash",
-        "reopen"
-      ]
+      ],
+      "enabled": false
     }
-  ]
+  ],
+  "lifecycle": {
+    "defaultStage": "spike-close",
+    "guardMilestones": [
+      "T1",
+      "T2",
+      "T3"
+    ],
+    "retirementRequires": "T4_WINDOWS39_LOCAL_AND_SAME_SHA_CI_THEN_RETIREMENT_CI",
+    "historicalReadOnly": true
+  }
 }

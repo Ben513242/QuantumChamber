@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           $gradle = if ($IsWindows) { './gradlew.bat' } else { './gradlew' }
-          & $gradle clean build --console=plain
+          & $gradle build --console=plain
           if ($LASTEXITCODE -ne 0) { throw 'M7_BUILD_FAILED' }
       - name: 執行 M7 獨立 GameTest
         shell: pwsh
@@ -41,9 +41,10 @@ jobs:
       - name: 確認 M7 精確集合與隔離
         shell: pwsh
         run: |
-          # m7_home：逐字 fixture 亦執行同一精確集合、runtime 與遞迴 artifact oracle。
-          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-verified
-      - name: M7 正式 classpath 獨立 main-only
+          # m7_home：同一份不可覆寫原XML/JUnit/log/JAR，不借另一root。
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
+      - name: Windows M7 正式 classpath 獨立 main-only
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           & ./scripts/verification/m7-ci-main-only.ps1 -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-main
@@ -54,24 +55,16 @@ jobs:
           name: m7-validation-${{ matrix.platform }}
           include-hidden-files: true
           path: |
-            .superpowers/m7-*/**
-            build/test-results/test/*.xml
-            build/gametest-m7-results.xml
-            build/libs/*.jar
-            run/gametest-m7/**
+            .superpowers/m7-own/**
+            .superpowers/m7-main/**
+            run/m7-main-*/classload-*.log
 
   m7-measurement:
     needs: m7-validation
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: Windows
-          - os: ubuntu-latest
-            platform: Ubuntu
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
     timeout-minutes: 90
+    outputs:
+      matrix: ${{ steps.budget.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -79,108 +72,33 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - name: 每平台先量一組 crash 與 reopen
+      - name: Windows先量一組
+        id: budget
         shell: pwsh
         run: |
-          & ./scripts/verification/m7-home-probe.ps1 -Platform '${{ matrix.platform }}' -Only spike-close-ordinary-after-checkpoint -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-measurement
-          $sample = Get-Content .superpowers/m7-measurement/summary.json -Raw | ConvertFrom-Json
-          $estimate = 3 * $sample.elapsedSeconds * 2 + 600
-          if ($estimate -ge 5400) { throw "M7_SHARD_BUDGET：每 shard 三列估計 $estimate 秒，停止並調整 shard；不延長舊 deadline" }
-          @{ actualSeconds=$sample.elapsedSeconds; rowsPerShard=3; safetyFactor=2; reserveSeconds=600; estimatedSeconds=$estimate; hardLimitSeconds=5400 } | ConvertTo-Json | Set-Content .superpowers/m7-measurement/shard-budget.json
+          $total=[Diagnostics.Stopwatch]::StartNew()
+          & ./scripts/verification/m7-home-probe.ps1 -Only spike-close-ordinary-after-checkpoint -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-measurement
+          $sample=Get-Content .superpowers/m7-measurement/summary.json -Raw|ConvertFrom-Json
+          $rows=[Math]::Floor((5400-600)/(2*$total.Elapsed.TotalSeconds))
+          if($rows -lt 1){throw 'M7_SHARD_BUDGET'}
+          $count=[int][Math]::Ceiling(18/[Math]::Min(18,$rows))
+          $include=@(0..($count-1)|ForEach-Object {@{shard=$_;count=$count}})
+          'matrix='+(@{include=$include}|ConvertTo-Json -Compress) >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: m7-measurement-${{ matrix.platform }}
+          name: m7-measurement-Windows
           include-hidden-files: true
           path: |
             .superpowers/m7-measurement/**
-            run/m7-home-*/**
+            .superpowers/m7-measurement.*
 
   m7-native:
     needs: m7-measurement
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: windows-latest
-            platform: Windows
-            shard: 0
-          - os: windows-latest
-            platform: Windows
-            shard: 1
-          - os: windows-latest
-            platform: Windows
-            shard: 2
-          - os: windows-latest
-            platform: Windows
-            shard: 3
-          - os: windows-latest
-            platform: Windows
-            shard: 4
-          - os: windows-latest
-            platform: Windows
-            shard: 5
-          - os: windows-latest
-            platform: Windows
-            shard: 6
-          - os: windows-latest
-            platform: Windows
-            shard: 7
-          - os: windows-latest
-            platform: Windows
-            shard: 8
-          - os: windows-latest
-            platform: Windows
-            shard: 9
-          - os: windows-latest
-            platform: Windows
-            shard: 10
-          - os: windows-latest
-            platform: Windows
-            shard: 11
-          - os: windows-latest
-            platform: Windows
-            shard: 12
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 0
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 1
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 2
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 3
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 4
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 5
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 6
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 7
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 8
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 9
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 10
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 11
-          - os: ubuntu-latest
-            platform: Ubuntu
-            shard: 12
-    runs-on: ${{ matrix.os }}
+      matrix: ${{ fromJSON(needs.m7-measurement.outputs.matrix) }}
+    runs-on: windows-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -189,36 +107,37 @@ jobs:
           distribution: temurin
           java-version: '21'
       - uses: gradle/actions/setup-gradle@v4
-      - name: 執行 M7 固定切點 shard
+      - name: Windows M7 PoC18 shard
         timeout-minutes: 70
         shell: pwsh
         run: |
-          & ./scripts/verification/m7-home-probe.ps1 -Platform '${{ matrix.platform }}' -AllEnabled -Shard ${{ matrix.shard }} -ShardCount 13 -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-native
-      - name: 唯讀反驗 M7 shard
+          & ./scripts/verification/m7-home-probe.ps1 -AllEnabled -Shard ${{ matrix.shard }} -ShardCount ${{ matrix.count }} -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-native
+      - name: 唯讀反驗 Windows M7 shard
         timeout-minutes: 15
         shell: pwsh
         run: |
-          & ./scripts/verification/m7-home-probe.ps1 -Platform '${{ matrix.platform }}' -VerifySummary .superpowers/m7-native/summary.json -SelfTest -ExpectedHead $env:GITHUB_SHA
+          & ./scripts/verification/m7-home-probe.ps1 -VerifySummary .superpowers/m7-native/summary.json -ExpectedHead $env:GITHUB_SHA
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: m7-native-${{ matrix.platform }}-${{ matrix.shard }}
+          name: m7-native-Windows-${{ matrix.shard }}
           include-hidden-files: true
           path: |
-            .superpowers/m7-native/**
-            run/m7-home-*/**
+            .superpowers/m7-native.zip
+            .superpowers/m7-native.descriptor.json
+            .superpowers/m7-native.files.json
 
   m7-aggregate:
     needs: m7-native
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: m7-native-*
+          pattern: m7-native-Windows-*
           path: .superpowers/m7-downloads
-      - name: 同 SHA 匯總雙平台全部切點
+      - name: 同SHA核artifact本體與Windows18全集
         shell: pwsh
         run: |
           & ./scripts/verification/m7-home-probe.ps1 -AggregateRoot .superpowers/m7-downloads -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-aggregate

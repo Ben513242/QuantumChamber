@@ -86,7 +86,7 @@ if($M7GameTestXml){
     if($Step -cne '確認 M7 精確集合與隔離'){throw 'M7_FIXTURE_STEP'}
     $fixture=Join-Path $root 'fixture';New-Item -ItemType Directory -Path $fixture|Out-Null
     foreach($directory in @('scripts/verification','src/testmod','src/test/java/dev/quantumchamber/persistence','build/test-results/test','build/libs','run/gametest-m7/logs')){New-Item -ItemType Directory -Path (Join-Path $fixture $directory) -Force|Out-Null}
-    foreach($name in @('m7-ci-gametest.ps1','m7-inventory.json','m6-ci-gametest.ps1','gates.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $fixture 'scripts/verification')}
+    foreach($name in @('m7-contract.ps1','m7-ci-gametest.ps1','m7-inventory.json','m6-ci-gametest.ps1','gates.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $fixture 'scripts/verification')}
     Copy-Item -LiteralPath $SourceRoot -Destination (Join-Path $fixture 'src/testmod/java') -Recurse
     foreach($name in @('M7BudgetSpikeTest.java','M7PublishSpikeTest.java')){Copy-Item -LiteralPath (Join-Path $repo "src/test/java/dev/quantumchamber/persistence/$name") -Destination (Join-Path $fixture 'src/test/java/dev/quantumchamber/persistence')}
     Copy-Item -Path (Join-Path $JUnitDir 'TEST-dev.quantumchamber.persistence.M7*.xml') -Destination (Join-Path $fixture 'build/test-results/test')
@@ -105,6 +105,10 @@ if($M7GameTestXml){
         $replacement=if($SourceMutation -ceq 'interpose-annotation'){"@SuppressWarnings(`"unused`")`n    $needle"}else{"public void ${SourceTarget}_windows(TestContext"}
         $text.Replace($needle,$replacement)|Set-Content -LiteralPath $file -Encoding utf8
     }
+    $m7Output=Join-Path $fixture '.superpowers/m7-own';$m7Raw=Join-Path $m7Output 'raw';New-Item -ItemType Directory -Path (Join-Path $m7Raw 'junit'),(Join-Path $m7Raw 'runtime/logs'),(Join-Path $m7Raw 'artifacts') -Force|Out-Null
+    Copy-Item -LiteralPath (Join-Path $fixture 'build/gametest-m7-results.xml') -Destination (Join-Path $m7Raw 'gametest.xml');Copy-Item -Path (Join-Path $fixture 'build/test-results/test/TEST-dev.quantumchamber.persistence.M7*.xml') -Destination (Join-Path $m7Raw 'junit');Copy-Item -LiteralPath (Join-Path $fixture 'run/gametest-m7/logs/latest.log') -Destination (Join-Path $m7Raw 'runtime/logs/latest.log');Copy-Item -LiteralPath (Join-Path $fixture 'run/gametest-m7/m7-gametest-runtime.json') -Destination (Join-Path $m7Raw 'runtime');Copy-Item -Path (Join-Path $fixture 'build/libs/*.jar') -Destination (Join-Path $m7Raw 'artifacts')
+    @(Get-ChildItem $m7Raw -Recurse -File|ForEach-Object {@{path=$_.FullName;sha256=(Get-FileHash $_.FullName).Hash}})|ConvertTo-Json -Depth 5|Set-Content (Join-Path $m7Output 'raw-files.json') -Encoding utf8
+    $originalSummary=Join-Path (Split-Path (Split-Path ([IO.Path]::GetFullPath($M7GameTestXml)))) 'summary.json';Copy-Item -LiteralPath $originalSummary -Destination (Join-Path $m7Output 'summary.json')
     $runner=Join-Path $root 'step.ps1';[IO.File]::WriteAllText($runner,"`$ErrorActionPreference='Stop'`n"+$script+"`nif(`$LASTEXITCODE -and `$LASTEXITCODE -ne 0){exit `$LASTEXITCODE}")
     $before=$env:M7_PLATFORM;$beforeHead=$env:GITHUB_SHA
     try{

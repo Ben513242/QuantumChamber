@@ -21,20 +21,22 @@ class M7BudgetSpikeTest {
 
     @Test void legalHomeAtAndBeyondTrackerLimit() throws Exception {
         NbtCompound home=home(false,1,0,false,"",false);validateHome(home);
-        NbtCompound old=SessionRecoverySchema3Test.record(SessionRecoverySchema3Test.fixture(false,false)).copy();
+        NbtCompound old=legacyFive();
         var allocator=new SlotAllocator();allocator.reserve(new BlockBox(0,0,0,6,6,6)).orElseThrow();var reserved=allocator.reserve(new BlockBox(0,0,0,6,6,6)).orElseThrow();
         var lease=old.getList("SpaceLeases",10).getCompound(0);lease.putInt("SlotId",reserved.slotId());var box=reserved.bounds();lease.putIntArray("Bounds",new int[]{box.getMinX(),box.getMinY(),box.getMinZ(),box.getMaxX(),box.getMaxY(),box.getMaxZ()});
-        old.getList("Participants",10).getCompound(0).put("SourcePosition",vector(7.5,66,12.5));
-        SessionRecoveryRecord.fromNbt(old,3);
+        old.getList("Participants",10).getCompound(0).put("SourcePosition",vector(1007.5,66,12.5));
+        SessionRecoveryRecord.fromNbt(old,5);
         long current=measure(wrap(List.of(home,old)));NbtCompound template=old.getList("CandidateLedger",10).getCompound(1).copy();
         appendCandidate(old,template,10);long growth=measure(wrap(List.of(home,old)))-current;
         int additions=(int)((LIMIT-current)/growth);
         for(int i=1;i<additions;i++)appendCandidate(old,template,10+i);
-        SessionRecoveryRecord.fromNbt(old,3);
+        SessionRecoveryRecord.fromNbt(old,5);
+        validateOwnership(List.of(home,old));
+        NbtCompound missing=old.copy();missing.remove("Collapse");assertThrows(IllegalArgumentException.class,()->SessionRecoveryRecord.fromNbt(missing,5));
         NbtCompound below=wrap(List.of(home,old));long used=measure(below);
         assertTrue(used<=LIMIT);assertTrue(old.getList("CandidateLedger",10).size()<=16384);
-        byte[] bytes=compressed(below);assertEquals(below,decode(bytes,LIMIT));scan(bytes);
-        appendCandidate(old,template,10+additions);SessionRecoveryRecord.fromNbt(old,3);
+        byte[] bytes=compressed(below);assertEquals(6,scan(bytes));assertEquals(below,decode(bytes,LIMIT));
+        appendCandidate(old,template,10+additions);SessionRecoveryRecord.fromNbt(old,5);
         NbtCompound above=wrap(List.of(home,old));long next=measure(above);
         assertTrue(next>LIMIT);assertThrows(RuntimeException.class,()->decode(compressed(above),LIMIT));
         var tracker=NbtSizeTracker.of(LIMIT);tracker.add(LIMIT);assertThrows(RuntimeException.class,()->tracker.add(1));
@@ -49,9 +51,10 @@ class M7BudgetSpikeTest {
         for(String stop:List.of("","ROOT_DISABLED","ROOT_INVALID_STRUCTURE","ROOT_DESTROYED","ROOT_IDENTITY_MISMATCH")) {
             legal.add(home(true,64,0,false,stop,false));
             legal.add(home(true,0,25,false,stop,false));
-            legal.add(home(true,0,24,true,"",false));
+
             legal.add(home(true,0,0,false,stop,true));
         }
+        legal.add(home(true,0,24,true,"",false));
         for(String state:List.of("ARMING","SUPERPOSITION","RETURNING")){var row=home(false,64,0,false,"",false);row.putString("State",state);legal.add(row);}
         for(String stop:List.of("","ROOT_DISABLED","ROOT_INVALID_STRUCTURE","ROOT_DESTROYED","ROOT_IDENTITY_MISMATCH")){
             var row=home(true,64,0,false,stop,false);row.putString("State","COLLAPSING");row.getCompound("Home").putLong("CommittedAtGameTime",20);legal.add(row);
@@ -60,33 +63,35 @@ class M7BudgetSpikeTest {
             var row=home(true,0,reason.equals("TRANSFER_RECOVERY_REQUIRED")?24:25,reason.equals("TRANSFER_RECOVERY_REQUIRED"),"",false);row.putString("State","SEALED");row.getCompound("Home").putString("SealedReason",reason);legal.add(row);
         }
         var closes=new ArrayList<NbtCompound>();
-        for(String reason:List.of("ALL_CROSSED","EXPIRED","PARTICIPANT_CLOSED","ENTRY_STOPPED","RESTART_CLOSED","ROOT_DISABLED","ROOT_INVALID_STRUCTURE","ROOT_DESTROYED","ROOT_IDENTITY_MISMATCH")){
-            var row=home(true,0,reason.equals("ALL_CROSSED")?25:24,false,reason.startsWith("ROOT_")?reason:"",true);
-            var intent=row.getCompound("Home").getCompound("CloseIntent");intent.putString("CloseReason",reason);intent.putString("DoorGoal",reason.equals("PARTICIPANT_CLOSED")?"CLOSE_IF_CLEAR_ELSE_OPEN":"OPEN");
-            NbtCompound evidence=kind(reason.startsWith("ROOT_")?"ROOT_STOP":reason);
-            if(reason.startsWith("ROOT_")){evidence.putString("Reason",reason);evidence.putLong("ObservedAtGameTime",40);}
-            else if(reason.equals("EXPIRED"))evidence.putLong("ObservedAtGameTime",1230);
-            else if(reason.equals("PARTICIPANT_CLOSED")){evidence.putUuid("Actor",new UUID(7,100));evidence.putString("Phase","PASSAGE");evidence.putLong("ObservedAtGameTime",40);}
-            else if(reason.equals("ENTRY_STOPPED")){evidence.putString("Signal","DISABLED");evidence.putLong("ObservedAtGameTime",40);}
-            else if(reason.equals("RESTART_CLOSED")){evidence.putUuid("StartupInstanceUuid",new UUID(7,500));evidence.putLong("ObservedAtGameTime",40);}
-            intent.put("Evidence",evidence);closes.add(row);legal.add(row);
+        for(int crossed=0;crossed<=25;crossed++) {
+            for(String reason:List.of("ALL_CROSSED","EXPIRED","PARTICIPANT_CLOSED","ENTRY_STOPPED","RESTART_CLOSED","ROOT_DISABLED","ROOT_INVALID_STRUCTURE","ROOT_DESTROYED","ROOT_IDENTITY_MISMATCH")) {
+                if(reason.equals("ALL_CROSSED")&&crossed!=25)continue;
+                closes.add(closeRow(reason,"PASSAGE_READY",crossed,true));
+                if(reason.startsWith("ROOT_")||reason.equals("RESTART_CLOSED"))closes.add(closeRow(reason,"SEALED",crossed,true));
+            }
         }
-        var prepare=home(true,0,0,false,"",true);prepare.putString("State","COLLAPSING");prepare.getCompound("Home").putLong("PassageOpenedAtGameTime",-1);prepare.getCompound("Home").putLong("PassageExpiresAtGameTime",-1);prepare.getCompound("Home").getCompound("CloseIntent").getCompound("Evidence").putString("Phase","PREPARE");closes.add(prepare);legal.add(prepare);
+        for(String reason:List.of("ROOT_DISABLED","ROOT_INVALID_STRUCTURE","ROOT_DESTROYED","ROOT_IDENTITY_MISMATCH")){
+            for(String state:List.of("MEASURED","COLLAPSING","SEALED"))closes.add(closeRow(reason,state,0,false));
+        }
+        closes.add(closeRow("PARTICIPANT_CLOSED","COLLAPSING",0,false));legal.addAll(closes);
         for(NbtCompound row:legal){validateHome(row);long amount=measure(wrap(List.of(row)));if(amount>maximum){maximum=amount;maximumName=row.getString("State")+"/"+row.getCompound("Home").getString("StopReason");}}
+        var invalidClose=closeRow("EXPIRED","PASSAGE_READY",25,true);invalidClose.getCompound("Home").getCompound("CloseIntent").getCompound("Evidence").putLong("ObservedAtGameTime",1229);assertThrows(IllegalArgumentException.class,()->validateHome(invalidClose));
+        var invalidGoal=closeRow("ROOT_DISABLED","SEALED",25,true);invalidGoal.getCompound("Home").getCompound("CloseIntent").putString("DoorGoal","CLOSED");assertThrows(IllegalArgumentException.class,()->validateHome(invalidGoal));
         long reserve=maximum-current;
         assertTrue(reserve>0);
         long leaseGrowth=measure(wrap(List.of(home(false,64,0,false,"",false))))-current;
         assertTrue(leaseGrowth>0,"尚未使用的 remap lease 仍須預留");
-        NbtCompound competing=SessionRecoverySchema3Test.record(SessionRecoverySchema3Test.fixture(false,false)).copy();
+        NbtCompound competing=legacyFive();
         var competitorLease=competing.getList("SpaceLeases",10).getCompound(0);competitorLease.putInt("SlotId",1);competitorLease.putIntArray("Bounds",new int[]{1192,70,2000,1198,76,2006});
         NbtCompound template=competing.getList("CandidateLedger",10).getCompound(1).copy();long usage=measure(wrap(List.of(unselected,competing)));appendCandidate(competing,template,10);long step=measure(wrap(List.of(unselected,competing)))-usage;usage+=step;
         int index=11;while(usage+reserve<=LIMIT){appendCandidate(competing,template,index++);usage+=step;}
-        SessionRecoveryRecord.fromNbt(competing,3);assertEquals(usage,measure(wrap(List.of(unselected,competing))));
+        SessionRecoveryRecord.fromNbt(competing,5);assertEquals(usage,measure(wrap(List.of(unselected,competing))));
         assertTrue(usage<=LIMIT,"合法競爭append仍能被同一有界tracker讀回");assertEquals(wrap(List.of(unselected,competing)),decode(compressed(wrap(List.of(unselected,competing))),LIMIT));
         assertFalse(usage+reserve<=LIMIT,"共用writer必須拒絕吃掉已入艙HOME的remap與close餘額");
         for(int fixed:List.of(1,32,64)) {
             long selected=measure(wrap(List.of(home(true,fixed,0,false,"",false))));
-            long cleared=measure(wrap(List.of(home(true,0,0,false,"",false))));assertTrue(selected>=cleared);
+            var clear=home(true,0,0,false,"",false);clear.putString("State","MEASURED");var clearHome=clear.getCompound("Home");clearHome.putLong("CommittedAtGameTime",-1);clearHome.putLong("PassageOpenedAtGameTime",-1);clearHome.putLong("PassageExpiresAtGameTime",-1);validateHome(clear);
+            long cleared=measure(wrap(List.of(clear)));assertTrue(selected>=cleared);long fixedMaximum=selected;for(var next:legal)if(next.getCompound("Home").getCompound("Selection").getString("Kind").equals("HOME")&&next.getList("SpaceLeases",10).size()<=fixed)fixedMaximum=Math.max(fixedMaximum,measure(wrap(List.of(next))));assertTrue(selected+(fixedMaximum-selected)<=LIMIT);System.out.println("M7_FIXED_LEASE fixed="+fixed+" actual="+selected+" successorUpper="+fixedMaximum+" reserve="+(fixedMaximum-selected));
         }
         NbtCompound receipt=new NbtCompound();receipt.putInt("SchemaVersion",1);receipt.putUuid("SessionUuid",SID);
         NbtCompound closed=home(true,0,0,false,"ROOT_IDENTITY_MISMATCH",true);
@@ -105,16 +110,19 @@ class M7BudgetSpikeTest {
         for(String duplicate:List.of("wrapper","data","inner")) {
             byte[] invalid=duplicate(duplicate);
             IOException failure=assertThrows(IOException.class,()->scan(invalid));
-            assertTrue(failure.getMessage().contains("DUPLICATE $"),failure.toString());
+            assertEquals("DUPLICATE "+switch(duplicate){case "wrapper"->"$.Repeated";case "data"->"$.data.Repeated";default->"$.data.Home.Repeated";},failure.getMessage());
         }
         int last=0;
         for(int depth=509;depth<=513;depth++) {
             NbtCompound root=new NbtCompound(), cursor=root;
             for(int i=0;i<depth;i++){NbtCompound next=new NbtCompound();cursor.put("n",next);cursor=next;}
-            try{decode(compressed(root),LIMIT);last=depth;}catch(RuntimeException failure){assertTrue(depth>=512);}
+            byte[] sameDepth=compressed(root);
+            if(depth<=511){decode(sameDepth,LIMIT);scan(sameDepth);last=depth;}else{assertThrows(RuntimeException.class,()->decode(sameDepth,LIMIT));var depthFailure=assertThrows(IOException.class,()->scan(sameDepth));assertEquals("M7_RAW_DEPTH",depthFailure.getMessage());}
         }
         assertEquals(511,last,"原生 tracker compound root 也占一層，512 個容器可讀");
-        scan(snapshot);
+        assertEquals(6,scan(snapshot));
+        var over=new NbtCompound();over.putByteArray("payload",new byte[(int)LIMIT+1]);var bomb=compressed(over);
+        assertTrue(bomb.length<100000);var rawOver=assertThrows(IOException.class,()->scan(bomb));assertEquals("M7_RAW_TOTAL_BYTES",rawOver.getMessage());
     }
     static NbtCompound home(boolean selected,int leaseCount,int crossed,boolean recovery,String stop,boolean close) {
         NbtCompound row=new NbtCompound();row.putInt("RecordVersion",2);row.putUuid("SessionUuid",SID);row.putUuid("ChamberUuid",CHAMBER);
@@ -142,6 +150,7 @@ class M7BudgetSpikeTest {
         row.put("Home",h);return row;
     }
     static void validateHome(NbtCompound row) {
+        validateMatrix(row);
         JournalNbt.keys(row,"RecordVersion","SessionUuid","ChamberUuid","RootAnchor","EntryEndpoint","Participants","SpaceLeases","State","RestoreEntryEffectOnReturn","SessionSemantics","TravelCapabilityVersion","Home");
         assertEquals(25,row.getList("Participants",10).size());assertEquals(2,row.getInt("RecordVersion"));assertEquals(1,row.getInt("TravelCapabilityVersion"));
         Set<UUID> ids=new HashSet<>();for(var raw:row.getList("Participants",10)){var p=(NbtCompound)raw;assertTrue(ids.add(p.getUuid("PlayerUuid")));new SessionRecoveryRecord.Participant(p.getUuid("PlayerUuid"),new net.minecraft.util.math.Vec3d(p.getList("SourcePosition",6).getDouble(0),p.getList("SourcePosition",6).getDouble(1),p.getList("SourcePosition",6).getDouble(2)),net.minecraft.util.math.Vec3d.ZERO,p.getFloat("Yaw"),p.getFloat("Pitch"),p.getCompound("QuantumState"),p.getBoolean("Returned"));}
@@ -164,15 +173,76 @@ class M7BudgetSpikeTest {
     static NbtCompound decode(byte[] same,long limit)throws IOException{return NbtIo.readCompressed(new ByteArrayInputStream(same),NbtSizeTracker.of(limit));}
     static long measure(NbtCompound value)throws IOException{var tracker=NbtSizeTracker.of(Long.MAX_VALUE);NbtIo.readCompressed(new ByteArrayInputStream(compressed(value)),tracker);return tracker.getAllocatedBytes();}
     static byte[] duplicate(String where)throws IOException{var output=new ByteArrayOutputStream();try(var out=new DataOutputStream(new GZIPOutputStream(output))){out.writeByte(10);out.writeUTF("");if(!where.equals("wrapper")){out.writeByte(10);out.writeUTF("data");}if(where.equals("inner")){out.writeByte(10);out.writeUTF("Home");}for(int i=0;i<2;i++){out.writeByte(3);out.writeUTF("Repeated");out.writeInt(i);}out.writeByte(0);if(where.equals("inner"))out.writeByte(0);if(!where.equals("wrapper"))out.writeByte(0);}return output.toByteArray();}
-    static void scan(byte[] same)throws IOException{try(var input=new DataInputStream(new GZIPInputStream(new ByteArrayInputStream(same)))){if(input.readUnsignedByte()!=10)throw new IOException("ROOT");input.readUTF();raw(input,10,"$",0);if(input.read()!=-1)throw new IOException("TAIL");}}
-    static void raw(DataInputStream in,int type,String path,int depth)throws IOException {
-        if(depth>512)throw new IOException("DEPTH "+path);
-        switch(type){
-            case 1->in.readByte();case 2->in.readShort();case 3,5->in.readInt();case 4,6->in.readLong();case 8->in.readUTF();
-            case 7,11,12->{int length=in.readInt();if(length<0||length>LIMIT)throw new IOException("LENGTH");long bytes=(long)length*(type==7?1:type==11?4:8);in.skipNBytes(bytes);}
-            case 9->{int held=in.readUnsignedByte(),length=in.readInt();if(length<0||length>LIMIT)throw new IOException("LENGTH");for(int i=0;i<length;i++)raw(in,held,path+"["+i+"]",depth+1);}
-            case 10->{Set<String> keys=new HashSet<>();int child;while((child=in.readUnsignedByte())!=0){String key=in.readUTF();if(!keys.add(key))throw new IOException("DUPLICATE "+path+"."+key);raw(in,child,path+"."+key,depth+1);}}
-            default->throw new IOException("TYPE "+type);
+    static int scan(byte[] same)throws IOException {
+        if(same.length>LIMIT)throw new IOException("M7_RAW_COMPRESSED_BYTES");
+        try(var bounded=new RawBudget(new GZIPInputStream(new ByteArrayInputStream(same)));var input=new DataInputStream(bounded)){
+            if(input.readUnsignedByte()!=10)throw new IOException("M7_RAW_ROOT");input.readUTF();var walker=new RawWalker(input);walker.read(10,"$",0);if(input.read()!=-1)throw new IOException("M7_RAW_TAIL");return walker.version;
         }
+    }
+    static final class RawBudget extends FilterInputStream {
+        long count;RawBudget(InputStream input){super(input);}
+        void charge(long bytes)throws IOException{count=Math.addExact(count,bytes);if(count>LIMIT)throw new IOException("M7_RAW_TOTAL_BYTES");}
+        @Override public int read()throws IOException{int value=in.read();if(value>=0)charge(1);return value;}
+        @Override public int read(byte[] bytes,int offset,int length)throws IOException{int amount=in.read(bytes,offset,length);if(amount>0)charge(amount);return amount;}
+        @Override public long skip(long amount)throws IOException{long result=in.skip(Math.min(amount,LIMIT+1-count));charge(result);return result;}
+    }
+    static final class RawWalker {
+        final DataInputStream in;int version=-1;long names,characters,elements;
+        RawWalker(DataInputStream input){in=input;}
+        void read(int type,String path,int containers)throws IOException{
+            if(type==9||type==10){if(containers>=512)throw new IOException("M7_RAW_DEPTH");containers++;}
+            switch(type){
+                case 1->in.readByte();case 2->in.readShort();case 3->{int value=in.readInt();if(path.equals("$.data.SchemaVersion"))version=value;}case 5->in.readInt();case 4,6->in.readLong();case 8->in.readUTF();
+                case 7,11,12->{int length=in.readInt();if(length<0)throw new IOException("M7_RAW_LENGTH");long bytes=Math.multiplyExact((long)length,type==7?1:type==11?4:8);if(bytes>LIMIT)throw new IOException("M7_RAW_TOTAL_BYTES");in.skipNBytes(bytes);}
+                case 9->{int held=in.readUnsignedByte(),length=in.readInt();elements+=length;if(length<0||elements>LIMIT)throw new IOException("M7_RAW_ELEMENTS");for(int i=0;i<length;i++)read(held,path+"["+i+"]",containers);}
+                case 10->{Set<String> keys=new HashSet<>();int child;while((child=in.readUnsignedByte())!=0){String key=in.readUTF();names++;characters+=key.length();if(names>LIMIT/32||characters>LIMIT)throw new IOException("M7_RAW_KEYS");if(!keys.add(key))throw new IOException("DUPLICATE "+path+"."+key);read(child,path+"."+key,containers);}}
+                default->throw new IOException("M7_RAW_TYPE");
+            }
+        }
+    }
+    static NbtCompound legacyFive(){
+        var upgraded=SessionRecoveryRecord.fromNbt(SessionRecoverySchema3Test.record(SessionRecoverySchema3Test.fixture(false,false)),3).toNbt(5);
+        upgraded.getCompound("Origin").putIntArray("ControllerPos",new int[]{1007,70,9});upgraded.getList("Participants",10).getCompound(0).put("SourcePosition",vector(1007.5,66,12.5));
+        var state=new NbtCompound();state.putInt("SchemaVersion",5);var rows=new NbtList();rows.add(upgraded);state.put("Records",rows);SessionRecoveryState.fromNbt(state).requireHealthy();return upgraded;
+    }
+    static void validateOwnership(List<NbtCompound> rows){
+        var sessions=new HashSet<UUID>();var players=new HashSet<UUID>();var roots=new HashSet<String>();var slots=new HashSet<Integer>();var boxes=new ArrayList<BlockBox>();
+        for(var row:rows){if(!sessions.add(row.getUuid("SessionUuid")))throw new IllegalArgumentException("M7_SESSION_DUPLICATE");var origin=row.contains("RecordVersion")?row.getCompound("RootAnchor"):row.getCompound("Origin");if(!roots.add(origin.getString("WorldKey")+Arrays.toString(origin.getIntArray("ControllerPos"))))throw new IllegalArgumentException("M7_ROOT_ALIAS");
+            for(var person:row.getList("Participants",10))if(!players.add(((NbtCompound)person).getUuid("PlayerUuid")))throw new IllegalArgumentException("M7_PLAYER_DUPLICATE");
+            for(var raw:row.getList("SpaceLeases",10)){var lease=(NbtCompound)raw;var b=lease.getIntArray("Bounds");if(b.length!=6||!slots.add(lease.getInt("SlotId")))throw new IllegalArgumentException("M7_SLOT_DUPLICATE");var box=new BlockBox(b[0],b[1],b[2],b[3],b[4],b[5]);if(b[4]-b[1]!=6||!(b[3]-b[0]==6||b[5]-b[2]==6)||boxes.stream().anyMatch(box::intersects))throw new IllegalArgumentException("M7_SLOT_BOUNDS");boxes.add(box);}
+        }if(slots.size()>64)throw new IllegalArgumentException("M7_SLOT_CAP");
+    }
+    static NbtCompound closeRow(String reason,String state,int crossed,boolean opened){
+        var row=home(true,0,crossed,false,reason.startsWith("ROOT_")?reason:"",false);row.putString("State",state);var h=row.getCompound("Home");
+        h.putLong("CommittedAtGameTime",state.equals("MEASURED")?-1:20);if(!opened){h.putLong("PassageOpenedAtGameTime",-1);h.putLong("PassageExpiresAtGameTime",-1);}if(state.equals("SEALED"))h.putString("SealedReason","AUTHORITY_UNREADABLE");
+        var close=kind("CLOSE");close.putInt("CloseRevision",1);close.putString("CloseReason",reason);close.putLong("ClosedAtGameTime",2000);close.putString("DoorGoal",reason.equals("PARTICIPANT_CLOSED")?"CLOSE_IF_CLEAR_ELSE_OPEN":"OPEN");var evidence=kind(reason.startsWith("ROOT_")?"ROOT_STOP":reason);
+        if(!reason.equals("ALL_CROSSED"))evidence.putLong("ObservedAtGameTime",reason.startsWith("ROOT_")?40:reason.equals("EXPIRED")?1230:40);
+        if(reason.startsWith("ROOT_"))evidence.putString("Reason",reason);
+        if(reason.equals("PARTICIPANT_CLOSED")){evidence.putUuid("Actor",new UUID(7,100));evidence.putString("Phase",opened?"PASSAGE":"PREPARE");}
+        if(reason.equals("ENTRY_STOPPED"))evidence.putString("Signal","DISABLED");if(reason.equals("RESTART_CLOSED"))evidence.putUuid("StartupInstanceUuid",new UUID(7,500));close.put("Evidence",evidence);h.put("CloseIntent",close);return row;
+    }
+    static void validateMatrix(NbtCompound row){
+        JournalNbt.requireType(row,"RecordVersion",NbtElement.INT_TYPE);JournalNbt.requireType(row,"TravelCapabilityVersion",NbtElement.INT_TYPE);JournalNbt.requireType(row,"Home",NbtElement.COMPOUND_TYPE);
+        var h=row.getCompound("Home");for(String key:List.of("CommittedAtGameTime","PassageOpenedAtGameTime","PassageExpiresAtGameTime","StoppedAtGameTime"))JournalNbt.requireType(h,key,NbtElement.LONG_TYPE);for(String key:List.of("StopReason","SealedReason"))JournalNbt.requireType(h,key,NbtElement.STRING_TYPE);
+        String state=row.getString("State"),stop=h.getString("StopReason"),sealed=h.getString("SealedReason");boolean selected=h.getCompound("Selection").getString("Kind").equals("HOME"),returned=true;for(var p:row.getList("Participants",10))returned&=((NbtCompound)p).getBoolean("Returned");
+        long commit=h.getLong("CommittedAtGameTime"),opened=h.getLong("PassageOpenedAtGameTime"),expires=h.getLong("PassageExpiresAtGameTime"),stopped=h.getLong("StoppedAtGameTime");int crossed=h.getList("Crossed",11).size(),recovery=h.getList("RecoveryRequired",11).size(),leases=row.getList("SpaceLeases",10).size();
+        if(!Set.of("ARMING","SUPERPOSITION","RETURNING","MEASURED","COLLAPSING","PASSAGE_READY","SEALED").contains(state))throw new IllegalArgumentException("M7_HOME_STATE");
+        if(!stop.isEmpty()&&!Set.of("ROOT_DISABLED","ROOT_INVALID_STRUCTURE","ROOT_DESTROYED","ROOT_IDENTITY_MISMATCH").contains(stop)||stop.isEmpty()!=(stopped==-1))throw new IllegalArgumentException("M7_HOME_STOP");
+        if(opened<0?(expires!=-1||crossed!=0):(expires!=Math.addExact(opened,1200)))throw new IllegalArgumentException("M7_HOME_TIMING");
+        if(!selected){if(!Set.of("ARMING","SUPERPOSITION","RETURNING").contains(state)||leases==0||commit!=-1||opened!=-1||recovery!=0||!stop.isEmpty()||!sealed.isEmpty())throw new IllegalArgumentException("M7_HOME_UNSELECTED");}
+        else{if(Set.of("ARMING","SUPERPOSITION","RETURNING").contains(state)||state.equals("MEASURED")&&(commit!=-1||opened!=-1)||!state.equals("MEASURED")&&commit<10||leases==0&&!returned)throw new IllegalArgumentException("M7_HOME_SELECTED");if(!state.equals("SEALED")&&(!sealed.isEmpty()||recovery!=0))throw new IllegalArgumentException("M7_HOME_SEALED");if(state.equals("PASSAGE_READY")&&(leases!=0||opened<0)||state.equals("COLLAPSING")&&opened!=-1||state.equals("SEALED")&&(leases!=0||!Set.of("ENTRY_AUTHORITY_INVALID","AUTHORITY_CORRUPT","AUTHORITY_UNREADABLE","TRANSFER_RECOVERY_REQUIRED").contains(sealed)))throw new IllegalArgumentException("M7_HOME_PROGRESS");}
+        var close=h.getCompound("CloseIntent");if(close.getString("Kind").equals("NONE")){JournalNbt.keys(close,"Kind");return;}
+        if(!close.getString("Kind").equals("CLOSE"))throw new IllegalArgumentException("M7_CLOSE_KIND");JournalNbt.requireType(close,"ClosedAtGameTime",NbtElement.LONG_TYPE);JournalNbt.requireType(close,"CloseRevision",NbtElement.INT_TYPE);
+        JournalNbt.keys(close,"Kind","CloseRevision","CloseReason","ClosedAtGameTime","DoorGoal","Evidence");if(!selected||!returned||leases!=0||recovery!=0||sealed.equals("ENTRY_AUTHORITY_INVALID")||sealed.equals("AUTHORITY_CORRUPT")||sealed.equals("TRANSFER_RECOVERY_REQUIRED"))throw new IllegalArgumentException("M7_CLOSE_STATE");
+        String reason=close.getString("CloseReason");var e=close.getCompound("Evidence");long time=close.getLong("ClosedAtGameTime");if(time<Math.max(10,Math.max(commit,opened)))throw new IllegalArgumentException("M7_CLOSE_TIME");
+        if(reason.startsWith("ROOT_")){JournalNbt.keys(e,"Kind","Reason","ObservedAtGameTime");if(!reason.equals(stop)||!e.getString("Reason").equals(stop)||!e.getString("Kind").equals("ROOT_STOP")||e.getLong("ObservedAtGameTime")!=stopped||time<stopped)throw new IllegalArgumentException("M7_CLOSE_ROOT");}
+        else{if(!stop.isEmpty())throw new IllegalArgumentException("M7_CLOSE_STOP");if(!reason.equals("PARTICIPANT_CLOSED")&&!reason.equals("RESTART_CLOSED")&&!state.equals("PASSAGE_READY"))throw new IllegalArgumentException("M7_CLOSE_SOURCE");switch(reason){
+            case "ALL_CROSSED"->{JournalNbt.keys(e,"Kind");if(crossed!=25)throw new IllegalArgumentException("M7_CLOSE_CROSSED");}
+            case "EXPIRED"->{JournalNbt.keys(e,"Kind","ObservedAtGameTime");if(e.getLong("ObservedAtGameTime")<expires)throw new IllegalArgumentException("M7_CLOSE_EXPIRY");}
+            case "PARTICIPANT_CLOSED"->{JournalNbt.keys(e,"Kind","Actor","Phase","ObservedAtGameTime");if(!Set.of("COLLAPSING","PASSAGE_READY").contains(state)||!(e.getUuid("Actor").getMostSignificantBits()==7&&e.getUuid("Actor").getLeastSignificantBits()>=100&&e.getUuid("Actor").getLeastSignificantBits()<125)||!e.getString("Phase").equals(state.equals("COLLAPSING")?"PREPARE":"PASSAGE"))throw new IllegalArgumentException("M7_CLOSE_PARTICIPANT");}
+            case "ENTRY_STOPPED"->{JournalNbt.keys(e,"Kind","Signal","ObservedAtGameTime");if(!Set.of("LOW","DISABLED","INVALID").contains(e.getString("Signal")))throw new IllegalArgumentException("M7_CLOSE_SIGNAL");}
+            case "RESTART_CLOSED"->{JournalNbt.keys(e,"Kind","StartupInstanceUuid","ObservedAtGameTime");if(opened<0||!Set.of("PASSAGE_READY","SEALED").contains(state))throw new IllegalArgumentException("M7_CLOSE_RESTART");}
+            default->throw new IllegalArgumentException("M7_CLOSE_REASON");}if(!e.getString("Kind").equals(reason)||e.contains("ObservedAtGameTime")&&(e.getLong("ObservedAtGameTime")<Math.max(commit,opened)||time<e.getLong("ObservedAtGameTime")))throw new IllegalArgumentException("M7_CLOSE_OBSERVED");}
+        if(close.getInt("CloseRevision")!=1||!close.getString("DoorGoal").equals(reason.equals("PARTICIPANT_CLOSED")?"CLOSE_IF_CLEAR_ELSE_OPEN":"OPEN"))throw new IllegalArgumentException("M7_CLOSE_GOAL");
     }
 }

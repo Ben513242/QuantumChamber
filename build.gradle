@@ -179,7 +179,12 @@ loom {
             server()
             name 'M7 HOME Spike GameTest'
             source sourceSets.testmod
-            runDir 'run/gametest-m7'
+            def nonce=providers.gradleProperty('m7GameNonce').getOrElse('disabled')
+            if(!(nonce ==~ /[a-z0-9]+/)) throw new GradleException('M7 GameTest nonce格式')
+            runDir "run/gametest-m7-${nonce}"
+            vmArg "-Dquantumchamber.m7game.nonce=${nonce}"
+            vmArg "-Dquantumchamber.m7game.root=${project.file("run/gametest-m7-${nonce}").absolutePath}"
+            vmArg "-Dquantumchamber.m7game.head=${providers.gradleProperty('m7Head').getOrElse('disabled')}"
             vmArg '-Dfabric-api.gametest'
             vmArg '-Dquantumchamber.test.m7Home=true'
             vmArg '-Dquantumchamber.gametest.minTickMillis=10'
@@ -379,21 +384,6 @@ tasks.named('check') {
     dependsOn tasks.named('verifySourceRemap')
 }
 
-// 僅 M7 隔離 oracle：匯出正式 server 的完整 JavaExec 命令，由可攜 runner 直接持有 JVM handle。
-// StopExecutionException 只略過這次 run task，並非啟動成功收據；runner 仍須真的啟動並核三層隔離。
-tasks.named('runServer') {
-    if (providers.gradleProperty('m7ExportMain').isPresent()) {
-        workingDir project.file(providers.gradleProperty('m7MainRoot').get())
-        jvmArgs '-Xlog:class+load=info:file=classload-%p.log'
-        systemProperty 'quantumchamber.m7MainNonce', providers.gradleProperty('m7MainNonce').get()
-        doFirst {
-            def output=project.file(providers.gradleProperty('m7ExportMain').get())
-            output.parentFile.mkdirs()
-            output.text=groovy.json.JsonOutput.toJson([executable:executable,jvmArgs:allJvmArgs,classpath:classpath.asPath,main:mainClass.get(),args:args,root:workingDir.absolutePath])
-            throw new org.gradle.api.tasks.StopExecutionException('M7_MAIN_EXPORTED；尚未啟動 JVM')
-        }
-    }
-}
 
 test {
     useJUnitPlatform()

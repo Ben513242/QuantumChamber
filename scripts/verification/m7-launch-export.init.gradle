@@ -8,6 +8,7 @@ allprojects {
                 workingDir project.file(providers.gradleProperty('m7ExportRoot').get())
                 jvmArgs '-Xlog:class+load=info:file=classload-%p.log'
                 systemProperty 'quantumchamber.m7MainNonce', providers.gradleProperty('m7ExportNonce').get()
+                systemProperty 'quantumchamber.m7MainRoot', providers.gradleProperty('m7ExportRoot').get()
             }
             doFirst {
                 def output=project.file(providers.gradleProperty('m7ExportFile').get())

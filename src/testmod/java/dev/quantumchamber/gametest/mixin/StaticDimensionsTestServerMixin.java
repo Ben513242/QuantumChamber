@@ -34,12 +34,12 @@ public abstract class StaticDimensionsTestServerMixin {
         if(m7 && (defaultNormal || normal || m5Only || m5Normal || Boolean.getBoolean("quantumchamber.gametest.m6Only") || Boolean.getBoolean("quantumchamber.gametest.legacyOnly"))) throw new IllegalStateException("M7_SCOPE_MISMATCH");
         var normalHolder=context.worldGenRegistryManager().get(RegistryKeys.WORLD_PRESET)
                 .entryOf(WorldPresets.DEFAULT).value().createDimensionsRegistryHolder();
-        if (defaultNormal || normal || m5Normal && m5Only) holder=normalHolder;
+        if (m7 || defaultNormal || normal || m5Normal && m5Only) holder=normalHolder;
         var config=holder.toConfig(context.dimensionsRegistryManager().get(RegistryKeys.DIMENSION));
         var generator=config.dimensions().get(DimensionOptions.OVERWORLD).chunkGenerator();
         boolean flat=generator instanceof net.minecraft.world.gen.chunk.FlatChunkGenerator;
         boolean normalConfig=generator==normalHolder.getChunkGenerator();
-        if (!(defaultNormal || normal || m5Normal && m5Only) && !flat)
+        if (!(m7 || defaultNormal || normal || m5Normal && m5Only) && !flat)
             throw new IllegalStateException("M4_TEST_PRESET_MISMATCH：legacy/M6 或未啟用 normal 的 M5 必須保留 flat");
         org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod").info(
                 "M4_TEST_PRESET defaultNormal={} normalScope={} m5Only={} m5Normal={} flatConfig={} normalConfig={}",defaultNormal,normal,m5Only,m5Normal,flat,normalConfig);

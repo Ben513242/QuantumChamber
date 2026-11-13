@@ -27,7 +27,7 @@ public final class M7HomeProbe implements ModInitializer {
             if(Boolean.getBoolean("quantumchamber.test.m7Home")&&System.getProperty("fabric-api.gametest")!=null){
                 ServerLifecycleEvents.SERVER_STARTED.register(server->{
                     try {
-                        Map<String,Object> runtime=new LinkedHashMap<>();runtime.put("scope","m7_home");runtime.put("pid",ProcessHandle.current().pid());runtime.put("startTimeUtc",ProcessHandle.current().info().startInstant().orElseThrow().toString());
+                        Map<String,Object> runtime=new LinkedHashMap<>();runtime.put("scope","m7_home");runtime.put("head",System.getProperty("quantumchamber.m7game.head"));runtime.put("nonce",System.getProperty("quantumchamber.m7game.nonce"));runtime.put("root",Path.of("").toRealPath().toString());runtime.put("pid",ProcessHandle.current().pid());runtime.put("startTimeUtc",ProcessHandle.current().info().startInstant().orElseThrow().toString());
                         runtime.put("flags",java.lang.management.ManagementFactory.getRuntimeMXBean().getInputArguments());runtime.put("loadedMods",FabricLoader.getInstance().getAllMods().stream().map(m->m.getMetadata().getId()).sorted().toList());
                         Files.writeString(Path.of("m7-gametest-runtime.json"),new Gson().toJson(runtime),StandardOpenOption.CREATE_NEW);
                     }catch(Exception failure){throw new IllegalStateException("M7_RUNTIME_RECEIPT",failure);}
@@ -44,13 +44,13 @@ public final class M7HomeProbe implements ModInitializer {
             require(Set.of("crash","reopen").contains(phase),"M7_PHASE");
             require(chain.matches("spike-close-(ordinary|sealed|passable)-[a-z-]+"),"M7_CHAIN");
             evidence=root.resolve("evidence").resolve(phase);Files.createDirectories(evidence);
+            require(com.sun.jna.Platform.isWindows(),"M7_NATIVE_WINDOWS_ONLY");proof.put("platform","Windows");
             proof.put("schema",1);proof.put("proofOfConcept",true);proof.put("runtimeScope","testmod-present");
             proof.put("head",System.getProperty("quantumchamber.m7home.head"));proof.put("nonce",nonce);proof.put("chain",chain);proof.put("phase",phase);proof.put("root",root.toString());
             proof.put("startupNonce",System.getProperty("quantumchamber.m7home.startupNonce"));
             proof.put("pid",ProcessHandle.current().pid());proof.put("startTimeUtc",ProcessHandle.current().info().startInstant().orElseThrow().toString());
             proof.put("javaExecutable",ProcessHandle.current().info().command().orElseThrow());
             proof.put("loadedMods",FabricLoader.getInstance().getAllMods().stream().map(m->m.getMetadata().getId()).sorted().toList());
-            if(Files.exists(Path.of("/proc/self/stat"))){String stat=Files.readString(Path.of("/proc/self/stat"));proof.put("linuxStartTicks",stat.substring(stat.lastIndexOf(')')+2).split(" ")[19]);proof.put("bootId",Files.readString(Path.of("/proc/sys/kernel/random/boot_id")).trim());}
             durable("startup.json");
             var after=Identifier.of("quantumchamber:m7_after");ServerLifecycleEvents.SERVER_STARTED.addPhaseOrdering(Event.DEFAULT_PHASE,after);
             ServerLifecycleEvents.SERVER_STARTED.register(after,this::started);

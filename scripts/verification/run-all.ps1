@@ -260,7 +260,7 @@ Step 'm6-oracle-and-safety' {
 Step 'm6-gametest' { & $gates -Mode M6GameTest -Label m6-gametest -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm7-home' {
     & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Gradle $Gradle -OutputRoot (Join-Path $runRoot 'm7-gametest') -ExpectedHead $startHead
-    & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -SelfTest -OutputRoot (Join-Path $runRoot 'm7-verified') -ExpectedHead $startHead
+    & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -SelfTest -OutputRoot (Join-Path $runRoot 'm7-gametest') -ExpectedHead $startHead
     & (Join-Path $PSScriptRoot 'm7-ci-main-only.ps1') -Gradle $Gradle -SelfTest -OutputRoot (Join-Path $runRoot 'm7-main-only') -ExpectedHead $startHead
     & (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -AllEnabled -SelfTest -Gradle $Gradle -OutputRoot (Join-Path $runRoot 'm7-native') -ExpectedHead $startHead
     & (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -VerifySummary (Join-Path $runRoot 'm7-native/summary.json') -SelfTest -ExpectedHead $startHead
@@ -537,12 +537,15 @@ Step 'summary' {
     }
     & (Join-Path $PSScriptRoot 'm6-universe-probe.ps1') -VerifySummary $nativeFile -ExpectedHead $head -SelfTest |
         Tee-Object -FilePath (Join-Path $runRoot 'm6-native-verify.log')
+    . (Join-Path $PSScriptRoot 'm7-contract.ps1')
+    Assert-M7RawSummary (Join-Path $runRoot 'm7-gametest') $head|Out-Null
+    & (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -VerifySummary (Join-Path $runRoot 'm7-native/summary.json') -ExpectedHead $head
     $summary=[ordered]@{status='PASS';head=$head;runRoot=$runRoot
         gameTest=[ordered]@{normal=$normalCases.Count;normalXmlSha256=Hash $normalXml;default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;m6=$m6Cases.Count;m6XmlSha256=Hash $m6Xml;m6Pacing=$m6Oracle.pacing;m6Cases=$identities;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;normal=$normalReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas);m5SuiteEnd=$m5Oracle.suiteEnd}
         junit=[ordered]@{total=$junitTotal;failures=$failures;errors=$errors;skipped=$junitSkipped;skippedCases=$skips;windowsCheckpointTests=$windowsTests}
         jars=$jars;mainOnly=[ordered]@{ciReceipt=(Join-Path $runRoot 'main-ci-receipt.json');ciReceiptSha256=Hash (Join-Path $runRoot 'main-ci-receipt.json');status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
         m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count}
-        m7Home=[ordered]@{game=(Read-Json (Join-Path $runRoot 'm7-verified/summary.json'));main=(Read-Json (Join-Path $runRoot 'm7-main-only/summary.json'));native=(Read-Json (Join-Path $runRoot 'm7-native/summary.json'))}
+        m7Home=[ordered]@{game=(Read-Json (Join-Path $runRoot 'm7-gametest/summary.json'));main=(Read-Json (Join-Path $runRoot 'm7-main-only/summary.json'));native=(Read-Json (Join-Path $runRoot 'm7-native/summary.json'))}
         m6Native=[ordered]@{summary=$nativeFile;sha256=Hash $nativeFile;mode='PER_CHAIN';phaseCount=$native.phaseCount;chains=$native.chains;functionalAssertionsRemainRed=$true}
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;normal=$normal;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}

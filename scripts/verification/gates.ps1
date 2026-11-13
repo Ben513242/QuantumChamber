@@ -454,7 +454,7 @@ try {
         'Legacy' {Fresh-Game $false 'legacy'}
         'M4NormalGameTest' {Fresh-Game $false 'normal'}
         'M5GameTest' {Fresh-Game $false 'm5'}
-        'M7GameTest' { & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Gradle $Gradle; if($LASTEXITCODE -ne 0){throw 'M7_GATE_FAILED'} }
+        'M7GameTest' { & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform $(if($IsWindows){'Windows'}else{'Ubuntu'}) -Gradle $Gradle -OutputRoot (Join-Path $gate 'm7'); if($LASTEXITCODE -ne 0){throw 'M7_GATE_FAILED'} }
         'M6GameTest' {Fresh-Game $false 'm6'}
         'M6Compile' {
             $exit=@(Invoke-Gradle @('classes','clientClasses','testClasses','testmodClasses','--rerun-tasks') (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds') -timeout 180 -runtimeLogMode compile-only)[-1]

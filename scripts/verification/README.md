@@ -705,39 +705,16 @@ W10 的 producer pin 以 PowerShell 擷取 `git diff` 輸出算 `runnerPatchSha2
 
 兩案仍各自唯一batch `m2_native_offline`／`m2_pin_capacity`，沒有JVM隔離或新增runner接線；default完整166案仍含兩案。以既有 `gates.ps1 -Mode GameTest -Label <fresh>` 配合process-local `JAVA_TOOL_OPTIONS=-Dquantumchamber.gametest.onlyBatches=<batch>` 可跑單案，逗號連接兩batch可核合併exact XML。`-Batch` 參數只支援M6／M4normal，對本兩案會在launch前拒絕，不能當功能RED。環境只改本process：保存原值、拒重複onlyBatches、append所需選項、finally精確還原，不改OS／setx；後續full／CI不帶subset並核default166與兩案皆在當次XML。offline保原斷言後同UUID真重連、正式返還與release/ack；pin-cap先在原等待界線內等待全Space admission，再核overflow全窗口只含自己，保256合法／257拒、物品真返還與原timeout。`M2_CAPACITY_CLEAN` 僅證當次自有space／租約／journal清除、release已ack；附總liveSpaces／protectedSlots便於核對，不冒full最大slot或已證4096根因。失敗只清自己，原primary與cleanup錯保留，無法安全收尾即停。本機單案與合併targeted已通過；admission與prepare共用原10秒deadline後再核2/2。兩個testmod故意失敗控制保留原錯並完成自身清理，原FAIL不改判；獨立審查／CI與T14完整出口仍待。
 
-## M7 HOME 純驗證入口（T1）
+## M7 T1 fix1 現行有界接線（候選、尚未驗）
 
-本節是可重跑接線，不代表 T1 已 closed、正式 HOME 已實作或 B activation 已放行。production guard 與 PlayerCheckpointStore 的非 Windows 保守拒絕維持。PoC 的 `<save>/data/m7-spike/` 是 test-only 交易，不能拿它當正式入場或正式 close owner 證據；T4 須用 production owner 重跑 `close-*`，目前該 stage 在 manifest 明標 `implemented=false`，不會由 T1 啟動。
+2026-11-13裁示：Windows PoC為ordinary/sealed/passable×before-close、after-door、after-checkpoint、after-temp-force、after-publish、after-remove，共18列36phase。Ubuntu只兩spike JUnit（真volume/no-clobber/大小）及正式拒絕GameTest；不含Linux owner/native/main-only程式或成功列。Linux crash/reopen只由Windows推論，沒有把移除項標PASS。
 
-三個基本入口：
+`m7-inventory.json`、Java POC_CUTS／CUTS／DOORS、runner、source/XML及CI共同核Windows結構。T4正式39列78phase仍全量；T4本機＋同SHA CI逐列通過並留digest/原件後，以獨立純接線提交退休PoC default full/CI，退休CI成功才進T5；T2/T3仍跑PoC，T5–T8不重跑。歷史FAIL及具名唯讀原件保留。
 
-```powershell
-pwsh -NoProfile -File scripts/verification/gates.ps1 -Mode M7GameTest -Label m7-home-unique
-pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -VerifyOnly -SelfTest -OutputRoot .superpowers/m7-verify-unique
-pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -AllEnabled -SelfTest -OutputRoot .superpowers/m7-native-unique
-```
+入口：`gates.ps1 -Mode M7GameTest`將當輪gate root傳給M7 runner；`m7-ci-gametest.ps1 -Platform Windows|Ubuntu`啟動唯一nonce GameTest runDir，保存XML/JUnit/完整log/runtime receipt與恰一release/一sources JAR到safe root。`-VerifyOnly`讀同root原件重驗，不依賴後續可能被clean刪除的build。`m7-home-probe.ps1 -Only <chain>|-AllEnabled -SelfTest`及`-VerifySummary <summary> -ExpectedHead <SHA>`只限Windows；`m7-ci-main-only.ps1`亦在非Windows啟動前拒絕。
 
-Ubuntu 將 `-Platform` 設為 `Ubuntu`，Gradle 為原生 `./gradlew`、Java 是 toolchain 的實際 executable，Linux owner 用 `/proc/<pid>/stat` starttime、boot_id、NUL argv、cwd、exe 與 pidfd。不得用 Windows 的 CIM、powershell.exe、java.exe 或 GUI 參數代替。`-Only spike-close-ordinary-after-checkpoint` 只跑一列量測，不能冒充39列全集。`-Shard 0 -ShardCount 13` 每平台固定3列，phase均是 crash（77）→reopen（0）獨立JVM；同鏈沿用 fresh save，不跨cut共用root。
+Windows native source先固定，編譯後再固定完整classes/resources/JAR成員與raw bytes/hash；source/compiled新增、刪除及內容漂移都FAIL。每JVM前的實際argfile與DLI複製封存，實際-Dfabric.dli.config改指該copy，不容每phase另換baseline；各phase及batch末重核。Windows exact owner共用m7-contract.ps1，以原handle、CIM PID/start、CommandLineToArgvW exact argv／exe／nonce／root核對後才收回，未知身分保留報錯，不掃名廣殺。所有logs、startup、owner、receipt、region/dat/tmp與預定selftests均需綁定；artifact本體zip的digest、manifest及Windows跨shard unique root/nonce/JVM一起核，不能空disk或漏selftest放行。
 
-`m7-inventory.json` 是平台／stage／door／cut／JUnit class.method／GameTest template＋class.method 的固定清單。T1 每 OS 39 列、78 phase；兩 OS 合計78列156phase。所有預定 phase、exact root、nonce、HEAD、PID＋start、退出碼、原件hash及鎖釋放都須一致，不能拿 Windows 成功案例塞入 Ubuntu 清單或移除 Ubuntu 正式拒絕案。
+所有M7原件在唯一`.superpowers`／`run` root，既有世界不刪不覆寫。任何project clean前必先逐檔保全與hash驗；本fix1禁止project clean，跨真clean存續仍待驗。CI使用include-hidden-files上傳safe raw；Windows main-only的非空exact-PID production class-load raw也在safe evidence中。兩平台都區分release/sources角色並遞迴掃nested JAR。
 
-唯讀重驗與跨 shard 彙整：
-
-```powershell
-pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifySummary <summary.json> -ExpectedHead <完整SHA> -SelfTest
-pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -AggregateRoot <已下載artifact父目錄> -ExpectedHead <完整SHA> -OutputRoot .superpowers/m7-aggregate-unique
-pwsh -NoProfile -File scripts/verification/m7-ci-main-only.ps1 -SelfTest -OutputRoot .superpowers/m7-main-unique
-```
-
-CI 先在各 OS 做獨立 M7 JUnit／GameTest／兩JAR遞迴隔離／main-only，再各量一組 crash＋reopen，實測符合90分鐘硬界的保守預算才開後續13 shard。舊 M6 的70／15分鐘 step與90分鐘job不變。下載後每平台必須恰好13個shard、39個唯一chain與78phase，stage只能是spike-close，同SHA與所有raw hash一起重驗，不能跨平台補洞。fixture與實際CI／本機runtime分開記錄。
-
-證據與消費快照：
-
-- **所有 M7 runner evidence 預設放 `.superpowers`，不放 `build`。** `gradle clean` 會刪除整個 build；執行任何 clean 前，先盤點並保全仍需保存的build XML/JAR/log/receipt至唯一repo內SDD或repo外備份，逐檔hash核對，不得刪除唯一證據。`run/`仍是測試世界與原收據的owner；不是可清空的暫存。
-- `m7-launch-export.init.gradle` 先透過已安裝Loom1.7.4的真正argument provider匯出JavaExec與classpath argfile；尚未啟動JVM。runner先複製／雜湊argfile、DLI config、來源、build classes/resources與JAR，再以原命令啟動，保存prelaunch時間及指紋。每phase開始／結束與batch末尾重讀原件hash，任何消費bytes漂移即FAIL，換新nonce，不在同root改判。
-- startup與終局receipt先寫獨立temp、force完整bytes，再硬連結原子no-clobber發布。已發布的空／損壞JSON是FAIL，不能略過nonce或延長deadline等它變好；讀者保存實際同handle bytes、長度與讀取時間。未發布才可繼續原有deadline內等待。
-- source snapshot的HEAD／dirty、compiled raw bytes、實際啟動argfile與end hash都納入review package；普通HEAD字串不足以證明dirty候選相同。測試期間凍結消費檔，有改動先結束batch，新nonce重開。
-- workflow使用 `include-hidden-files: true` 上傳明確的`.superpowers/m7-*`與本次`run/m7-home-*`。`m7-native-<Platform>-<Shard>` artifact名稱是精確來源，不以其他stage或root補件。
-- GameTest固定runDir為`run/gametest-m7`，已有世界時入口拒絕覆寫。需再跑時先核canonical path、非reparse、exact Java owner已退出及session.lock可獨占，再可恢復地move到唯一備份，保留hash與原件；不可刪掉世界湊fresh。完整run-all仍須先通過W10 preflight，T1定向豁免full不等於可跳W10。
-
-額外兩個薄helper的責任：`m7-launch-export.init.gradle`只匯出啟動命令；`m7-ci-main-only.ps1`在正式server classpath啟動獨立真JVM並核三層隔離（mod list、classpath/argfile/DLI、exact PID class-load）。既有m6-ci-main-only只有Windows，不能在Ubuntu冒稱已驗；M7的GameTest從來不抵main-only。Fabric API的`FabricGameTestModInitializer`不是本專案testmod class，class-load oracle按type/source判定，不能只搜尋名稱片段TestMod。
+本輪只編碼與靜態自審、候選commit。全部測試（含compile）必歸事前凍結`t1-fix1-batch-plan.json/md`，controller核後一次執行：一次編譯→compiled freeze→兩spike JUnit一次→Windows M7 GT一次→預定離線controls一次→至多ordinary/after-checkpoint 77→0單pair。無獨立main-only遊戲JVM／Ubuntu／18／39／full／CI／push。任何非預期FAIL立即保原件並只安全收回相符owner，整批停，不fix/重試；PASS也停，交原唯一reviewer只讀。歷史integrity3/native2/main-only2不重置，當前沒有新PASS。
