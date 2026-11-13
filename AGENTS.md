@@ -119,7 +119,11 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 M7 T1 OPEN：新plan/spec驗證修訂一席C0/I0/M1已採用，只可原作者一輪整改＋一次定向後停回報。** 現行spec v1.1與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
+**2026-11-13 M7 T1 OPEN：有界fix1已FAIL_STOP，同席C0/I12 OPEN（10原+2新），報告凍結待使用者。禁止再fix/compile/runtime/CI/push。** 現行spec v1.1與plan路徑為`docs/superpowers/specs/2026-11-13-m7-return-home-design.md`、`docs/superpowers/plans/2026-11-13-m7-return-home.md`；SHA／原文見M7 note。玩法不變，production尚未改。
+- 同席fix1只讀審查已終局：I1/I3處理、I2/I4–I12仍PARTIAL/OPEN，新增F1/F2合計C0/I12open/新增M0。完整凍結t1-fix1-final-report.md/json及原task-1-fix1-review.md在本plan SDD；一次batch第6步停、根因UNKNOWN、7–10未跑。code pin b69397b未push，必要本機docs僅記結果。原作者/controller現在idle等使用者，不用原「清零直接續」展開fix2/18/39/full/T2/CI。
+- fix1已只跑一次65.197秒/outer1：source/compile/compiled-freeze/JUnit6/WindowsGT3過，第6offline M7_STARTUP_TIME非預期即停；7–10 native/artifact/workflow/end-freeze未跑，native根未建。raw2995檔與GT world保全、Java0/鎖釋放。保守Native/Startup原2→3，其他舊計數/FAIL不清；原唯一reviewer只讀增量，原作者idle，不重試/補修。root待完整結果後交使用者，詳note/t1-fix1-outcome.json。
+- fix1候選b69397b4c02085f549f445d763787f5b8e8408b9（17檔、production無diff、未push）與唯一batch清單已由controller核513source/copy hash、driver/固定nonce/fresh根。只啟一次10步定向，任何非預期FAIL立即停，PASS亦停；I7/I8已知未覆蓋維持open，不再補碼求clear。詳note/SDD t1-fix1-batch-plan.json與controller-approval。
+- 採用狀態docs已本機commit5785f684e9dc44e60b7ccc0bf79b3541fc8189c4（spec v1.1 SHA0A93B044…），未push。原作者fix1只在改碼/靜態自審，尚未compile/runtime；待候選與凍結batch清單核對後才執行唯一一次。
 - 採用候選4132fe5的同席審查`task-1-plan-amendment-review.md`（C457062A…），逐I表`task-1-scope-disposition.md`（A29404AA…）：9項全保留，I6/I8/I10僅Linux/Ubuntu/雙OS26-shard部分範圍移除，12項皆仍有OPEN實作義務，原核心C0/I12/M2不洗。
 - 使用者四裁示逐字記M7 note「使用者回覆T1 checkpoint」與SDD/user-t1-scope-ruling-20261113.md，來源本Codex使用者回覆、非Claude稿/技能。Windows T1 PoC18六cut×三門態；T2/T3留PoC；T4 Windows正式39本機/同SHA CI全過後退休PoC default full/CI、原件保留，T5–T8 PoC=0。Ubuntu僅JUnit/GT，不寫Linux owner、不跑native/main-only，Linux crash只由Windows外推。
 - 只原implementer一輪core整改，先本機候選與事前凍結batch命令清單交controller核，然後執行一次：兩spike JUnit、WindowsGT、至多一Windows普通門after-checkpoint單pair、事前具名離線控制；不含main-only真跑/Ubuntu/正式18/39/full/T2/CI/push/project clean/W10。本批任何非預期工具FAIL立即停、不fix/重試/續跑；PASS也停，原席只讀核結果，新增finding留OPEN。舊EVIDENCE-INTEGRITY3/Native2/main-only2等歷史計數/FAIL/UNKNOWN不重置；production不可改。
