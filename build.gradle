@@ -162,19 +162,6 @@ loom {
         }
         // M5 plan 決策 6：會配置或物化 Universe、或會留下 M5 record 的 GameTest（batch id 前綴 m5_universe）在獨立的 fresh 世界執行，
         // 不放在共用的 default run（它的 M4 boundary oracle 要求整個 suite 前後的 catalog 與 world keys 不變）。
-        m7HomeProbe {
-            server()
-            name 'M7 HOME Test-only Close Spike'
-            source sourceSets.testmod
-            def nonce=providers.gradleProperty('m7ProbeNonce').getOrElse('disabled')
-            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M7 nonce 格式不符')
-            runDir "run/m7-home-${nonce}"
-            vmArg '-Dquantumchamber.test.m7Home=true'
-            ['nonce','chain','phase','root','head','startupNonce'].each { key ->
-                def property='m7' + (key == 'nonce' ? 'ProbeNonce' : key.capitalize())
-                if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m7home.${key}=${providers.gradleProperty(property).get()}"
-            }
-        }
         gameTestM7 {
             server()
             name 'M7 HOME Spike GameTest'

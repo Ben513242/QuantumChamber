@@ -705,16 +705,23 @@ W10 的 producer pin 以 PowerShell 擷取 `git diff` 輸出算 `runnerPatchSha2
 
 兩案仍各自唯一batch `m2_native_offline`／`m2_pin_capacity`，沒有JVM隔離或新增runner接線；default完整166案仍含兩案。以既有 `gates.ps1 -Mode GameTest -Label <fresh>` 配合process-local `JAVA_TOOL_OPTIONS=-Dquantumchamber.gametest.onlyBatches=<batch>` 可跑單案，逗號連接兩batch可核合併exact XML。`-Batch` 參數只支援M6／M4normal，對本兩案會在launch前拒絕，不能當功能RED。環境只改本process：保存原值、拒重複onlyBatches、append所需選項、finally精確還原，不改OS／setx；後續full／CI不帶subset並核default166與兩案皆在當次XML。offline保原斷言後同UUID真重連、正式返還與release/ack；pin-cap先在原等待界線內等待全Space admission，再核overflow全窗口只含自己，保256合法／257拒、物品真返還與原timeout。`M2_CAPACITY_CLEAN` 僅證當次自有space／租約／journal清除、release已ack；附總liveSpaces／protectedSlots便於核對，不冒full最大slot或已證4096根因。失敗只清自己，原primary與cleanup錯保留，無法安全收尾即停。本機單案與合併targeted已通過；admission與prepare共用原10秒deadline後再核2/2。兩個testmod故意失敗控制保留原錯並完成自身清理，原FAIL不改判；獨立審查／CI與T14完整出口仍待。
 
-## M7 T1 fix1 現行有界接線（候選、尚未驗）
+## M7 T1：M6同等薄接線（候選，尚未驗）
 
-2026-11-13裁示：Windows PoC為ordinary/sealed/passable×before-close、after-door、after-checkpoint、after-temp-force、after-publish、after-remove，共18列36phase。Ubuntu只兩spike JUnit（真volume/no-clobber/大小）及正式拒絕GameTest；不含Linux owner/native/main-only程式或成功列。Linux crash/reopen只由Windows推論，沒有把移除項標PASS。
+T1只保兩平台的M7BudgetSpikeTest（合法NBT大小/同bytes bounded raw及decode）與M7PublishSpikeTest（真volume no-clobber硬連結）、真GameTest入口/平台拒絕及M7 CI。T1 native PoC、18列、T2/T3守門/退休額外CI、measurement/shard/aggregate、日期/consumer/ZIP seal與新M7 main-only工具已移除。舊Git、ignored失敗根/原件與判定保留；沒有空矩陣、skip或chains=0成功。
 
-`m7-inventory.json`、Java POC_CUTS／CUTS／DOORS、runner、source/XML及CI共同核Windows結構。T4正式39列78phase仍全量；T4本機＋同SHA CI逐列通過並留digest/原件後，以獨立純接線提交退休PoC default full/CI，退休CI成功才進T5；T2/T3仍跑PoC，T5–T8不重跑。歷史FAIL及具名唯讀原件保留。
+固定M6來源見SDD/t1-m6-equivalence-baseline.md/json：m6-universe-probe.ps1、probe-common.ps1、m6-ci-gametest.ps1對b26b90c/已綠CI43373504422不改。新入口只載gates與M6 GT具名純oracle；Windows遊戲執行沿既有gates/原handle、CIM PID/start/name/nonce token與probe-common身份規則（既有<1ms精度差），不新增argv parser/不可變class/argfile框架。Ubuntu只跑JUnit/GT，沒有新Linuxowner/native/main-only。既有全部M6 required jobs/main-only/斷言/門檻不變。
 
-入口：`gates.ps1 -Mode M7GameTest`將當輪gate root傳給M7 runner；`m7-ci-gametest.ps1 -Platform Windows|Ubuntu`啟動唯一nonce GameTest runDir，保存XML/JUnit/完整log/runtime receipt與恰一release/一sources JAR到safe root。`-VerifyOnly`讀同root原件重驗，不依賴後續可能被clean刪除的build。`m7-home-probe.ps1 -Only <chain>|-AllEnabled -SelfTest`及`-VerifySummary <summary> -ExpectedHead <SHA>`只限Windows；`m7-ci-main-only.ps1`亦在非Windows啟動前拒絕。
+```powershell
+pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -ExpectedHead <完整SHA> -GameNonce <32位hex唯一nonce> -OutputRoot .superpowers/m7-current
+pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -VerifyOnly -SelfTest -ExpectedHead <完整SHA> -OutputRoot .superpowers/m7-current
+```
 
-Windows native source先固定，編譯後再固定完整classes/resources/JAR成員與raw bytes/hash；source/compiled新增、刪除及內容漂移都FAIL。每JVM前的實際argfile與DLI複製封存，實際-Dfabric.dli.config改指該copy，不容每phase另換baseline；各phase及batch末重核。Windows exact owner共用m7-contract.ps1，以原handle、CIM PID/start、CommandLineToArgvW exact argv／exe／nonce／root核對後才收回，未知身分保留報錯，不掃名廣殺。所有logs、startup、owner、receipt、region/dat/tmp與預定selftests均需綁定；artifact本體zip的digest、manifest及Windows跨shard unique root/nonce/JVM一起核，不能空disk或漏selftest放行。
+首次命令一次呼叫兩個JUnit suite與唯一nonce GameTest及兩JAR，fresh root既有就拒絕、不移除世界。OutputRoot先GetFullPath／非reparse／ignored／fresh檢查，所以真CI的相對路徑與本機絕對路徑同樣可用。JUnit與GT的當次XML/log、JAR與SHA/平台/時間保存在同root raw/inputs.json；失敗也先保全已有原件，缺失/過時寫FAIL，不借build殘留PASS。release/sources分角色並沿M6遞迴掃nested JAR，僅保留既有production ModPresenceProbe例外。
 
-所有M7原件在唯一`.superpowers`／`run` root，既有世界不刪不覆寫。任何project clean前必先逐檔保全與hash驗；本fix1禁止project clean，跨真clean存續仍待驗。CI使用include-hidden-files上傳safe raw；Windows main-only的非空exact-PID production class-load raw也在safe evidence中。兩平台都區分release/sources角色並遞迴掃nested JAR。
+VerifyOnly逐檔重讀hash與exact集合，驗codeSHA、真平台、zero skip、actual mod list/pacing，不能當新runtime。SelfTest只改當輪唯一複本：正例不DOM save原XML、不重寫原inputs，drop/skip/wrong-scope/wrong-head/hash各核精確錯因，第一個非預期就停，結尾再重讀原證據。gates -Mode M7GameTest與run-all只接這條路徑，不再含native/main-only影子gate；run-all最後重驗同root summary。
 
-本輪只編碼與靜態自審、候選commit。全部測試（含compile）必歸事前凍結`t1-fix1-batch-plan.json/md`，controller核後一次執行：一次編譯→compiled freeze→兩spike JUnit一次→Windows M7 GT一次→預定離線controls一次→至多ordinary/after-checkpoint 77→0單pair。無獨立main-only遊戲JVM／Ubuntu／18／39／full／CI／push。任何非預期FAIL立即保原件並只安全收回相符owner，整批停，不fix/重試；PASS也停，交原唯一reviewer只讀。歷史integrity3/native2/main-only2不重置，當前沒有新PASS。
+真正CI step fixture仍走ci-rule-check.ps1；M7正例複製同一原XML/inputs/summary bytes，反例只改副本與該副本hash；每例立即核exit、verdict與具名錯因。CI執行新T1 Windows/Ubuntu各4 JUnit/3 GT及封裝/readonly/selftest，原build/windows-native/m6-native全部照跑。本機不假跑Ubuntu。
+
+本輪先一輪純靜態收斂與candidate commit，凍結t1-m6-convergence-batch-plan.md/json，controller核後僅一次窄JUnit+GT+CI正負/readonly自測。禁止native pair/18/39、額外main-only/全class或argfile快照/clean/W10/full/CI/push。首非預期FAIL立即停不fix/retry/續；PASS後也回原同席核新scope C/I0，controller才正常push追同SHA新T1雙平台與全部舊required，CI FAIL不rerun。本輪即使closed仍不開T2。
+
+I2正式reserve錯與32slot反證移T2，不再採T1舊上界；I7超M6殘留不擋、不默認塞T4。T4正式Windows39/78phase維持原十三cut與三門態；日期TODO按使用者提供的Claude重現：object[]多載問題需明確string[]或既有M6方式，再驗3/6/9位秒及錯格式。本輪不重演日期，不把cast當已驗。所有歷史FAIL/UNKNOWN及Evidence3/Native保守3/main-only2等計數不重置。

@@ -14,12 +14,13 @@
 #   -Gradle        gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
 # M3 probe 的 evidence owner 由 testmod ProbeEvidenceOwner 固定為 <repo>/.superpowers/sdd/2026-09-21-m4-candidate-doors，不受 -EvidenceRoot 影響。
 param(
-    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','M4NormalGameTest','M5GameTest','Windows','M3','M6Compile','M6JUnit','M6GameTest','M7GameTest')][string]$Mode,
+    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','M4NormalGameTest','M5GameTest','Windows','M3','M6Compile','M6JUnit','M6GameTest','M7GameTest','M7Runtime')][string]$Mode,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string]$Label='run',
     [ValidateSet('','universe','transfer')][string]$Only='',
     [string]$EvidenceRoot='',
     [string]$TestClass='',
     [string]$Batch='',
+    [string]$M7Nonce='',
     [string]$Gradle=''
 )
 $ErrorActionPreference='Stop'
@@ -125,7 +126,7 @@ function Server-Files([string]$root) {
 }
 function Copy-Build([string]$dest) {
     New-Item -ItemType Directory -Path $dest | Out-Null
-    foreach($name in @('test-results','reports','gametest-results.xml','gametest-legacy-results.xml','gametest-m4-normal-results.xml','gametest-m5-results.xml','gametest-m6-results.xml','libs')) {
+    foreach($name in @('test-results','reports','gametest-results.xml','gametest-legacy-results.xml','gametest-m4-normal-results.xml','gametest-m5-results.xml','gametest-m6-results.xml','gametest-m7-results.xml','libs')) {
         $source=Join-Path $repo "build/$name"
         if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination $dest -Recurse}
     }
@@ -133,7 +134,11 @@ function Copy-Build([string]$dest) {
 function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[string]$stopMode='',[int]$timeout=600,[ValidateSet('minecraft','junit','compile-only')][string]$runtimeLogMode='minecraft',[ValidateRange(1,3600)][int]$idleSeconds=90) {
     # 只有明確不啟動 Minecraft 的 JUnit／編譯 invocation 可以豁免當次日誌；不可拿它略過任何 run task。
     if($runtimeLogMode -cne 'minecraft' -and @($tasks | Where-Object {($_ -split ':')[-1] -cmatch '^run'}).Count){throw '日誌不適用模式不可包含 run task'}
-    $m6Mode=$Mode -in @('M6Compile','M6JUnit','M6GameTest')
+    $m6Mode=$Mode -in @('M6Compile','M6JUnit','M6GameTest','M7Runtime')
+    $m7Handles=@{}
+    if($Mode -ceq 'M7Runtime'){
+        $ownerTokens=$null;$ownerErrors=$null;$ownerAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'probe-common.ps1'),[ref]$ownerTokens,[ref]$ownerErrors);$ownerDef=@($ownerAst.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-OwnedIdentity'},$false));if($ownerErrors.Count -or $ownerDef.Count -ne 1){throw 'M7_OWNER_HELPER'};Invoke-Expression $ownerDef[0].Extent.Text
+    }
     $idleTimeout=if($m6Mode){$idleSeconds}else{0}
     New-Item -ItemType Directory -Path $evidence -Force | Out-Null
     $taskArgs=@('--no-daemon','--console=plain','--max-workers=2','-I',(Join-Path $PSScriptRoot 'runtime.init.gradle'))+$tasks
@@ -189,6 +194,7 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
                     if(-not $known.ContainsKey($key)) {
                         $native=Get-Process -Id $java.ProcessId -ErrorAction SilentlyContinue
                         if($native){$known[$key]=[ordered]@{pid=$java.ProcessId;parentPid=$java.ParentProcessId;commandLine=$java.CommandLine;startTime=([DateTimeOffset]$native.StartTime).ToString('o');startTimeUtc=([DateTimeOffset]$native.StartTime).ToUniversalTime().ToString('o')};Save-Json (Join-Path $evidence 'processes.json') @($known.Values)}
+                        if($Mode -ceq 'M7Runtime' -and $native -and $java.CommandLine -cmatch ([regex]::Escape("-Dquantumchamber.m7game.nonce=$M7Nonce")+'(?=\s|$|")')){$null=$native.Handle;$m7Handles[$key]=@{process=$native;start=([DateTimeOffset]$native.StartTime).ToUniversalTime()}}
                         if($java.CommandLine){foreach($match in [regex]::Matches($java.CommandLine,'(?:@|\-Dfabric\.dli\.config=)(?:"([^"]+)"|([^\s]+))')) {
                             $path=if($match.Groups[1].Success){$match.Groups[1].Value}else{$match.Groups[2].Value}
                             $path=[regex]::Replace($path,'@@([0-9a-fA-F]{4})',{param($encoded)[char][Convert]::ToInt32($encoded.Groups[1].Value,16)})
@@ -225,6 +231,9 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
         }
     } catch {$failure=$_;throw}
     finally {
+        if($Mode -ceq 'M7Runtime'){
+            foreach($owned in $m7Handles.Values){if(-not $owned.process.HasExited){$checked=Get-OwnedIdentity $owned.process $owned.start 'java.exe' "-Dquantumchamber.m7game.nonce=$M7Nonce";Save-Json (Join-Path $evidence ("m7-owner-"+$owned.process.Id+".json")) $checked;if($checked.matched){$owned.process.Kill();if(-not $owned.process.WaitForExit(30000)){throw 'M7_OWNER_STOP_TIMEOUT'}}else{Save-Json (Join-Path $evidence 'm7-owner-unknown.json') @{pid=$owned.process.Id;status='UNKNOWN_NOT_KILLED'}}}}
+        }
         $outFile.Dispose();$errFile.Dispose()
         $identity=[ordered]@{exitCode=$exit;start=$start.ToUniversalTime().ToString('o');end=[DateTimeOffset]::UtcNow.ToString('o');command=$info.Arguments;launcherPid=$launcherPid;processes=@($known.Values);runtimeRoot=$runtimeRoot;doneSeen=($null-ne $done);stdinStop=$stopSent;nativeSaves=$debugCount;status=$(if($null -eq $failure -and $exit -eq 0){'EXIT_ZERO'}else{'FAIL'});error=$(if($failure){$failure.Exception.Message}else{$null})}
         $identity.runtimeLogMode=$runtimeLogMode
@@ -455,6 +464,12 @@ try {
         'M4NormalGameTest' {Fresh-Game $false 'normal'}
         'M5GameTest' {Fresh-Game $false 'm5'}
         'M7GameTest' { & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform $(if($IsWindows){'Windows'}else{'Ubuntu'}) -Gradle $Gradle -OutputRoot (Join-Path $gate 'm7'); if($LASTEXITCODE -ne 0){throw 'M7_GATE_FAILED'} }
+        'M7Runtime' {
+            if($M7Nonce -cnotmatch '^[0-9a-f]{32}$'){throw 'M7_NONCE'}
+            $runtime=Join-Path $repo "run/gametest-m7-$M7Nonce";Check-Path $runtime|Out-Null;if(Test-Path $runtime){throw 'M7_FRESH_ROOT_REQUIRED'}
+            try{$tasks=@('test','--tests','dev.quantumchamber.persistence.M7BudgetSpikeTest','--tests','dev.quantumchamber.persistence.M7PublishSpikeTest','runGameTestM7','remapJar','remapSourcesJar',"-Pm7GameNonce=$M7Nonce","-Pm7Head=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())",'--rerun-tasks');$exit=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $runtime '' 180)[-1];if($exit -ne 0){throw "M7_RUNTIME_EXIT $exit"}}
+            finally{Copy-Build (Join-Path $gate 'result-build')}
+        }
         'M6GameTest' {Fresh-Game $false 'm6'}
         'M6Compile' {
             $exit=@(Invoke-Gradle @('classes','clientClasses','testClasses','testmodClasses','--rerun-tasks') (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds') -timeout 180 -runtimeLogMode compile-only)[-1]

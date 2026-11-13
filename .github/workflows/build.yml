@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           $gradle = if ($IsWindows) { './gradlew.bat' } else { './gradlew' }
-          & $gradle build --console=plain
+          & $gradle classes testmodClasses testClasses remapJar remapSourcesJar --console=plain
           if ($LASTEXITCODE -ne 0) { throw 'M7_BUILD_FAILED' }
       - name: 執行 M7 獨立 GameTest
         shell: pwsh
@@ -43,11 +43,6 @@ jobs:
         run: |
           # m7_home：同一份不可覆寫原XML/JUnit/log/JAR，不借另一root。
           & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
-      - name: Windows M7 正式 classpath 獨立 main-only
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & ./scripts/verification/m7-ci-main-only.ps1 -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-main
       - name: 上傳 M7 定向證據
         if: always()
         uses: actions/upload-artifact@v4
@@ -56,97 +51,6 @@ jobs:
           include-hidden-files: true
           path: |
             .superpowers/m7-own/**
-            .superpowers/m7-main/**
-            run/m7-main-*/classload-*.log
-
-  m7-measurement:
-    needs: m7-validation
-    runs-on: windows-latest
-    timeout-minutes: 90
-    outputs:
-      matrix: ${{ steps.budget.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Windows先量一組
-        id: budget
-        shell: pwsh
-        run: |
-          $total=[Diagnostics.Stopwatch]::StartNew()
-          & ./scripts/verification/m7-home-probe.ps1 -Only spike-close-ordinary-after-checkpoint -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-measurement
-          $sample=Get-Content .superpowers/m7-measurement/summary.json -Raw|ConvertFrom-Json
-          $rows=[Math]::Floor((5400-600)/(2*$total.Elapsed.TotalSeconds))
-          if($rows -lt 1){throw 'M7_SHARD_BUDGET'}
-          $count=[int][Math]::Ceiling(18/[Math]::Min(18,$rows))
-          $include=@(0..($count-1)|ForEach-Object {@{shard=$_;count=$count}})
-          'matrix='+(@{include=$include}|ConvertTo-Json -Compress) >> $env:GITHUB_OUTPUT
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: m7-measurement-Windows
-          include-hidden-files: true
-          path: |
-            .superpowers/m7-measurement/**
-            .superpowers/m7-measurement.*
-
-  m7-native:
-    needs: m7-measurement
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.m7-measurement.outputs.matrix) }}
-    runs-on: windows-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Windows M7 PoC18 shard
-        timeout-minutes: 70
-        shell: pwsh
-        run: |
-          & ./scripts/verification/m7-home-probe.ps1 -AllEnabled -Shard ${{ matrix.shard }} -ShardCount ${{ matrix.count }} -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-native
-      - name: 唯讀反驗 Windows M7 shard
-        timeout-minutes: 15
-        shell: pwsh
-        run: |
-          & ./scripts/verification/m7-home-probe.ps1 -VerifySummary .superpowers/m7-native/summary.json -ExpectedHead $env:GITHUB_SHA
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: m7-native-Windows-${{ matrix.shard }}
-          include-hidden-files: true
-          path: |
-            .superpowers/m7-native.zip
-            .superpowers/m7-native.descriptor.json
-            .superpowers/m7-native.files.json
-
-  m7-aggregate:
-    needs: m7-native
-    runs-on: windows-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: m7-native-Windows-*
-          path: .superpowers/m7-downloads
-      - name: 同SHA核artifact本體與Windows18全集
-        shell: pwsh
-        run: |
-          & ./scripts/verification/m7-home-probe.ps1 -AggregateRoot .superpowers/m7-downloads -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-aggregate
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: m7-native-aggregate
-          include-hidden-files: true
-          path: .superpowers/m7-aggregate/**
 
   m6-native:
     runs-on: windows-latest

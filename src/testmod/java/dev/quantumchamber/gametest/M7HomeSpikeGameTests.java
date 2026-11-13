@@ -18,10 +18,9 @@ public final class M7HomeSpikeGameTests implements FabricGameTest {
         context.assertTrue(!com.sun.jna.Platform.isWindows(),"Ubuntu exact平台");formalPlatform(context,false);
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_portable",tickLimit=200)
-    public void m7_scope_keeps_testmod_and_close_fixture_exact(TestContext context) {
+    public void m7_scope_keeps_testmod_and_pacing(TestContext context) {
         context.assertTrue(Boolean.getBoolean("quantumchamber.test.m7Home"),"M7 旗標必須啟用");
         context.assertTrue(FabricLoader.getInstance().isModLoaded("quantumchamber-testmod"),"M7 runtime 必須包含 testmod");
-        context.assertTrue(M7CloseSpikePhases.fixture(true).getCompound("Home").getCompound("CloseIntent").getString("Kind").equals("CLOSE"),"CLOSE fixture");
         context.waitAndRun(25,context::complete);
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_portable",tickLimit=200)
@@ -42,8 +41,9 @@ public final class M7HomeSpikeGameTests implements FabricGameTest {
         var before=journal.records();var durable=journal.flushedRecords();var runtime=M4CandidateDoorGameTests.runtimeOwnership(fixture);
         var player=fixture.players.getFirst().player();var position=player.getPos();var world=player.getServerWorld();
         context.assertTrue(new ChamberActivationService().evaluateReadiness(context.getWorld(),fixture.controller()).accepted(),"正式A入口前所有來源/cohort條件已成立");
+        var capture=windows?null:new LogCapture("quantumchamber");
         fixture.power();
-        if(!windows){context.waitAndRun(60,()->{try{fixture.assertNoSession();context.assertEquals(before,journal.records(),"拒絕current零增量");context.assertEquals(durable,journal.flushedRecords(),"拒絕durable零增量");context.assertEquals(runtime,M4CandidateDoorGameTests.runtimeOwnership(fixture),"拒絕幾何/lease/票/鎖零增量");context.assertTrue(player.getServerWorld()==world&&player.getPos().equals(position),"拒絕不移動玩家");context.complete();}finally{fixture.close();}});return;}
+        if(!windows){context.waitAndRun(60,()->{try{context.assertTrue(capture.matching(org.apache.logging.log4j.Level.WARN,"玩家原生 checkpoint 能力預檢未通過","checkpoint 尚未驗證非 Windows 平台，保守拒絕").size()==1,"真正式入口到達checkpoint平台拒絕，非較早前置拒絕");fixture.assertNoSession();context.assertEquals(before,journal.records(),"拒絕current零增量");context.assertEquals(durable,journal.flushedRecords(),"拒絕durable零增量");context.assertEquals(runtime,M4CandidateDoorGameTests.runtimeOwnership(fixture),"拒絕幾何/lease/票/鎖零增量");context.assertTrue(player.getServerWorld()==world&&player.getPos().equals(position),"拒絕不移動玩家");context.complete();}finally{capture.close();fixture.close();}});return;}
         awaitWindows(context,fixture,3);
     }
     private static void awaitWindows(TestContext context,M2CorridorGameTests.NativeEntry fixture,int tick){
