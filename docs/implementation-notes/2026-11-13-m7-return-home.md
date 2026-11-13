@@ -1,6 +1,50 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 尚未撰寫；在它們經獨立審查採用之前，本檔的「範圍裁示」是 M7 範圍唯一的使用者決策來源；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 已經第三輪獨立審查清零採用，plan 開始撰寫；尚未實作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## Codex 接手（2026-11-13，規格已採用，計畫撰寫中）
+
+- 工作樹與分支已核對：`.worktrees/m7-return-home`／`codex/m7-return-home`，接手時 HEAD `30c0c627d7fb3f205d3a329152d62e6d04cdc773`，工作樹乾淨。
+- Step0 同 SHA CI run `43359327038` 已由 `gh run view -R Ben513242/QuantumChamber` 讀回：`build`、`windows-native`、`m6-native` 全部 success。
+- 目前採用 binding spec v1.0，SHA-256 `9054C4D75480D18178FD6A6420EBEF7A4ABABE4A55A95E5B4090581CC6F77932`，與清零 v0.3 契約相同、只更新採用標頭。第一個規格文件 commit 包含 spec、本 note 與 AGENTS；本 commit CI 尚未執行，不能採計 Step0 CI 代替。plan 正撰寫，尚未實作。
+- binding spec v0.1 初稿 `docs/superpowers/specs/2026-11-13-m7-return-home-design.md` 共316行，SHA-256 `F1087A4A7551D5E0491BB77AF21ADC75811CCED84AA2D04C9D1FF306285ECA15`；第一輪獨立審查 Critical 1／Important 6／Minor 1，尚未採用，已交原作者修訂。plan 與 production 實作尚未開始。本輪沒有執行 Gradle、run-all 或人工驗收，也尚未重建 W10 producer。
+- 短期派工與審查證據使用 `.superpowers/sdd/2026-11-13-m7-return-home/`；正式可重跑工具仍須放 tracked `scripts/verification/`，不 force-add SDD 空間。
+
+### binding spec 第一輪獨立審查（2026-11-13）
+
+- 結果：Critical 1／Important 6／Minor 1，禁止進入 plan；本輪沒有 runtime gate。
+- 報告：`.superpowers/sdd/2026-11-13-m7-return-home/spec-review-1.md`，SHA-256 `96062DAC8AD533D2CD7270249966B603EE6AD2EDFFD909C947AE54ED5A6432B5`。
+- 已核實的阻擋：固定 HOME 與入口返還門重疊；選後停用事件與停止 latch 的合法矩陣不足；終局後 B 普通開門的 crash 恢復不足；終身4096筆歷史上限及實際 NBT 預算不足；非同步選門重驗不足；UNKNOWN 載入逾時不應當作已選旅程終局；終局原因與持久證據需要共用 strict 矩陣。
+- 處置中：交同一作者修訂，保留原審查結果；歷史收據改採可持續、按 SID 獨立有界存放的設計，不把全存檔回程次數永久封頂。修稿仍須獨立複審清零，不是實作完成。
+- 修稿 v0.2 已交回：361行，SHA-256 `04653A840E9086A7AD8B903054B56D30A83D0D8DC7910029CC0EF081947B99F5`；處置表 `spec-fix-1.md`，原獨立 reviewer 正在定向複審。作者稱已處理不等於 finding 已關閉；未開始 plan、production 或 runtime gate。
+- 第二輪獨立複審 `spec-review-2.md`：Critical 0／Important 2／Minor 1。第一輪 C1、I2、I4–I6、M1 已關閉；I1 尚欠停用已落盤而 stop 未落盤的開服復啟圍欄，I3 尚欠未選門 remap 新舊租約聯集的容量計量。Minor 是補回 B/B 競爭、普通玩家忙時拆 A 與 native／Crossed／playerdata 跨 JVM 窗口。已交同作者窄修 v0.3；仍禁止進 plan，未執行 runtime gate。
+- 第三輪獨立複審 `spec-review-3.md`：Critical 0／Important 0／Minor 0，SHA-256 `F6213389B4FD3C796E19644AB83AA0B68C4FBE1D80A111D0E1BB884BE90B1CA0`。審查稿 v0.3 共369行，SHA-256 `463FAA723F6E15915B34378774E298D52C84BB3AFC09EF44EC980807B988D1F2`。I1／I3／漏測均關閉，採用為 binding spec v1.0；只更新規格標頭的採用註記，契約不變。依使用者「審查清零就直接往下做（建議）」開始 plan，不再等核可；未執行 runtime gate。
+
+### 新增玩法裁示：選定後 A 被停用或拆除（2026-11-13）
+
+- Codex 提問：「M7 已規定選定回家門後，A 斷電不影響這趟；但尚未規定『選門後，A 原艙被管理員停用或拆除』的結果。這種情況要如何處理？第一項會保留回家目的地與收據，玩家留在 B，且不重建 A。」
+- 使用者選：「停止回程並保留選擇（建議）」；未選「仍照原座標傳回 A」。
+- 適用結果：不把單純斷電的快照規則擴張成忽略停用或失根；停止尚未完成的回程、保留選擇，不重建 A。「保留選擇」只指保留收據作紀錄，不是掛著等待；具體終局依下方追加裁示。已跨過的人不回拉、不重建、不寫入 A，使用者在本次追加裁示再次確認。
+
+### 追加玩法裁示：停止回程的終局與 A 保護（2026-11-13）
+
+來源：使用者貼入本對話的「巡檢回饋與使用者新增裁示」，以下照錄題目、選項與說明。
+
+1. 題目：「選定回家門後 A 被停用或拆除「停止回程」，之後這趟旅程怎麼收尾？」
+   - 使用者選：「這趟結束，艙恢復可用（建議）」。
+   - 說明原文：「B 的門照一般方式打開，「同時只能一趟」的佔用解除。收據保留作紀錄，不重抽、不改寫。A 恢復之後，要重新喝藥、再出發一次。」
+   - 未選：「掛著等 A 恢復」。
+2. 題目：「有旅程從 B 出發時，A 原艙要不要維持保護（不能被拆）？」
+   - 使用者選：「維持保護到這趟收尾（建議）」。
+   - 說明原文：「和現在「供電中或返還完成前保留保護」的做法一致。A 斷電仍不影響這趟，但收尾前 A 不會變成可拆。這樣「選門後 A 被拆」只剩管理員用指令等例外。停用開關仍可切換，切了就照剛才的裁示停止回程。」
+   - 未選：「不特別保護」。
+
+本追加裁示釐清前一節：「停止」是這一趟的終局，終局後解除同 Chamber 全域佔用；收據保留、不重抽、不改寫，不把原 session 掛著等 A 恢復。A 恢復後須另開新 session；上方選項說明的「重新喝藥」經下一題釐清為可沿用未到期藥效。只有停用或拆除會依此停止；選定後單純斷電不影響這趟。已跨過的人不回拉，不重建、不寫入 A。
+
+3. Codex 釐清題目：「你補充的「A 恢復之後，要重新喝藥」，是否表示原本藥效還在，也必須額外喝一瓶？既有規則會保留剩餘藥效；兩個選項都會結束舊旅程、解除佔用，並要求另開新旅程。」
+   - 使用者選：「可沿用未到期藥效（建議）」。
+   - 未選：「停止後必須重新喝一瓶」。
+   - 因此不清除剩餘 QuantumState、不要求額外喝一瓶、不新增飲藥次數或 playerdata 門檻；新旅程沿既有全員有效藥效規則，仍須新 session，不復活舊收據。
 
 ## Step0（2026-11-13，Claude，只改文件）
 
@@ -136,6 +180,16 @@
 - 「最後才產出一份「給 Codex 新對話的派工提示詞」（見第 6 節）。討論完成前不要先寫。」
 - 「流程：binding spec → 獨立審查 → plan → 審查 → Subagent-Driven Development 實作。production 改動走完整 gate；只改測試、腳本或文件時，照 B+C 走一席審查、定向驗證與 CI；」
 - 「授權邊界：正常 push 可以；main 合併、tag、人工代操作、worktree 退役各自要另問使用者。」
+
+Codex 接手時，使用者的流程選項裁示（2026-11-13）：
+
+- 「審查清零就直接往下做（建議）」：binding spec 與 plan 各經獨立審查，Critical／Important 清零後，直接接續 plan／Subagent-Driven Development 實作，不另等整份設計或計畫核可。只有 M7 note 未涵蓋、需要使用者決定的玩法問題才停下詢問。
+
+Codex 接手時的派工提示詞（Claude 起草、使用者轉貼，2026-11-13）另載下列要求；它們不是另一次選項裁示：
+
+- production 改動完整門檻是 RED／GREEN、mutation、focused、完整 run-all、同 SHA CI；只改測試、腳本或文件時一席審查、定向驗證與 CI，免 mutation 與本機完整回歸。M6 B+C 的其他條款不沿用。
+- 每次 commit、push 或 gate 終局同步本檔與 AGENTS 接手入口；舊 FAIL 與失敗 root 保留原判，修改後使用新 nonce，不自行放寬驗收容許值。
+- 正常 push 可以但不 force；main 合併、tag、人工代操作（方式已選 Claude，開始前仍問）、worktree 退役、PR、LICENSE 各自另問使用者。
 
 依此，M7 的 binding spec、plan 與實作交給 Codex 新對話；Claude 只做 Step0 並產出派工提示詞。
 

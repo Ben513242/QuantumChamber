@@ -119,7 +119,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-13 M7（正規回程）已開工：使用者已逐題裁示範圍，Step0 文件就是本 commit，待同 SHA CI。下一步由 Codex 寫 binding spec。** 範圍裁示原文、與建議稿的差異、不做的事，以及 `.worktrees` 刪除結果，見 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)。
+**2026-11-13 M7 binding spec 第三輪獨立複審 C0／I0／M0，v1.0 已採用，開始撰寫 plan，尚未 production。** 規格 `docs/superpowers/specs/2026-11-13-m7-return-home-design.md` 契約等同已審 v0.3；歷輪 finding 與 SHA 見 note。依「審查清零就直接往下做」接續 plan，計畫也須獨立審查清零才實作。Step0 `30c0c62` 同 SHA CI `43359327038` 三 job success 已讀回；本輪未跑 runtime gate。停止回程即終局解鎖、A 保護到收尾、可沿用未到期藥效，以及各條款的原文與出處，見 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)。
+- 本次規格文件 commit 的同 SHA CI 待執行；Step0 CI 只證明接手基線，不能代替本 commit。plan 撰寫與規格文件 CI 可獨立進行，production 尚未開始。
 - 工作樹 `.worktrees/m7-return-home`，分支 `codex/m7-return-home`，基線 main `2255027`（CI 43223550800 三 job 綠）。
 - 範圍摘要（以 M7 note 原文為準）：
   - 到 B 時同座標出現的投影艙可以啟動，和 A 原艙算同一座艙，A 是它的家。不做「在 B 新蓋的艙」。
