@@ -1,6 +1,6 @@
 # M7薄接線：只跑JUnit/GT，沿用M6純oracle與既有Windows gates owner。
 param([ValidateSet('Windows','Ubuntu')][string]$Platform=$(if($IsWindows){'Windows'}else{'Ubuntu'}),
-      [switch]$VerifyOnly,[switch]$SelfTest,[string]$OutputRoot='', [string]$Gradle='', [string]$ExpectedHead='', [string]$GameNonce='')
+      [switch]$VerifyOnly,[switch]$SelfTest,[switch]$PassThru,[string]$OutputRoot='', [string]$Gradle='', [string]$ExpectedHead='', [string]$GameNonce='')
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $head=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim();if(-not $ExpectedHead){$ExpectedHead=$head}
@@ -21,6 +21,24 @@ $expectedGame=@($inventory.portable.gametest)+@($inventory.($Platform.ToLowerInv
 $expectedJUnit=@($inventory.portable.junit)+@($inventory.($Platform.ToLowerInvariant()).junit)
 function Exact-M7([string[]]$Expected,[string[]]$Actual,[string]$Code){
     if(-not $Expected.Count -or $Expected.Count -ne $Actual.Count -or @($Actual|Sort-Object -Unique).Count -ne $Actual.Count -or @(Compare-Object ($Expected|Sort-Object) ($Actual|Sort-Object) -CaseSensitive).Count){throw $Code}
+}
+# live發布必須重讀真正HEAD；歷史VerifyOnly不走此守門。
+function Assert-M7LiveHead([string]$Pin){
+    $observed=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
+    if($LASTEXITCODE -ne 0 -or $observed -cne $Pin){throw 'M7_HEAD_CHANGED'}
+}
+function Assert-M7SavedSummary($Saved,$Proof){
+    foreach($field in @('schema','status','head','platform','actualPlatform','scope','inputsSha256')){
+        if($Saved.PSObject.Properties.Name -cnotcontains $field -or $Saved.$field -cne $Proof[$field]){throw 'M7_SAVED_SUMMARY'}
+    }
+    Exact-M7 @($Proof.junitCases) @($Saved.junitCases) 'M7_SAVED_JUNIT_CASES'
+    Exact-M7 @($Proof.gameCases) @($Saved.gameCases) 'M7_SAVED_GAME_CASES'
+    foreach($field in @('ticks','waited','tps','minTickMs')){if($Saved.pacing.PSObject.Properties.Name -cnotcontains $field -or $Saved.pacing.$field -ne $Proof.pacing[$field]){throw 'M7_SAVED_PACING'}}
+    if((@($Saved.loadedMods|Sort-Object)|ConvertTo-Json -Compress) -cne (@($Proof.loadedMods|Sort-Object)|ConvertTo-Json -Compress)){throw 'M7_SAVED_MODS'}
+    # 複本可搬位置；artifact身份按檔名＋raw重算hash/entries驗，最終消費者使用fresh proof的實際path。
+    $savedNames=@($Saved.artifacts|ForEach-Object {[IO.Path]::GetFileName($_.path)});$proofNames=@($Proof.artifacts|ForEach-Object {[IO.Path]::GetFileName($_.path)})
+    Exact-M7 $proofNames $savedNames 'M7_SAVED_ARTIFACT'
+    foreach($artifact in $Proof.artifacts){$match=@($Saved.artifacts|Where-Object {[IO.Path]::GetFileName($_.path) -ceq [IO.Path]::GetFileName($artifact.path)})[0];foreach($field in @('sha256','entries','testmodHits')){if($match.$field -cne $artifact[$field]){throw 'M7_SAVED_ARTIFACT'}}}
 }
 function Save-M7Inputs([DateTime]$Start,[string]$Runtime){
     $raw=Join-Path $OutputRoot 'raw';New-Item -ItemType Directory -Path $raw,(Join-Path $raw 'junit'),(Join-Path $raw 'artifacts'),(Join-Path $raw 'runtime') -Force|Out-Null
@@ -59,16 +77,22 @@ function Verify-M7([string]$Root){
 }
 function SelfTest-M7([string]$Root){
     $controls=Join-Path $Root ('selftest-'+[guid]::NewGuid().ToString('N'));New-Item -ItemType Directory $controls|Out-Null;$results=@()
-    foreach($case in @('positive','drop','skip','wrong-scope','wrong-head','hash')){
-        $copy=Join-Path $controls $case;New-Item -ItemType Directory $copy|Out-Null;Copy-Item -LiteralPath (Join-Path $Root 'raw') -Destination $copy -Recurse;Copy-Item -LiteralPath (Join-Path $Root 'inputs.json') -Destination $copy
+    foreach($case in @('positive','drop','skip','wrong-scope','wrong-head','hash','summary-game-cases','summary-junit-cases','summary-pacing','summary-artifact')){
+        $copy=Join-Path $controls $case;New-Item -ItemType Directory $copy|Out-Null;Copy-Item -LiteralPath (Join-Path $Root 'raw') -Destination $copy -Recurse;Copy-Item -LiteralPath (Join-Path $Root 'inputs.json') -Destination $copy;Copy-Item -LiteralPath (Join-Path $Root 'summary.json') -Destination $copy
         $manifest=Get-Content -LiteralPath (Join-Path $copy 'inputs.json') -Raw|ConvertFrom-Json -DateKind String
         if($case -cin @('drop','skip','wrong-scope')){$input=@($manifest.inputs|Where-Object {$_.kind -ceq 'gametest'})[0];$path=Join-Path $copy $input.relative;[xml]$xml=Get-Content -LiteralPath $path -Raw;$node=$xml.SelectSingleNode('//testcase');switch($case){'drop'{$null=$node.ParentNode.RemoveChild($node)};'skip'{$null=$node.AppendChild($xml.CreateElement('skipped'))};'wrong-scope'{$node.SetAttribute('name','m6universegametests.wrong_scope')}};$xml.Save($path);$input.sha256=(Get-FileHash $path).Hash}
         if($case -ceq 'wrong-head'){$manifest.head='0'*40};if($case -ceq 'hash'){$manifest.inputs[0].sha256='0'*64}
+        if($case.StartsWith('summary-',[StringComparison]::Ordinal)){
+            $changed=Get-Content -LiteralPath (Join-Path $copy 'summary.json') -Raw|ConvertFrom-Json
+            switch($case){'summary-game-cases'{$changed.gameCases=@()};'summary-junit-cases'{$changed.junitCases=@()};'summary-pacing'{$changed.pacing.waited=[long]$changed.pacing.waited+1};'summary-artifact'{$changed.artifacts[0].sha256='0'*64}}
+            Save-Json (Join-Path $copy 'summary.json') $changed
+        }
         # 正例維持原始inputs/XML bytes；只有負例重寫自己的metadata副本。
-        if($case -cne 'positive'){Save-Json (Join-Path $copy 'inputs.json') $manifest}
-        $expected=@{positive='';drop='M7_GAME_SET';skip='M7_GAME_NOT_PASS';'wrong-scope'='M7_GAME_SET';'wrong-head'='M7_INPUT_IDENTITY';hash='M7_INPUT_HASH'}[$case];$reason='';try{Verify-M7 $copy|Out-Null}catch{$reason=$_.Exception.Message}
+        if($case -cin @('drop','skip','wrong-scope','wrong-head','hash')){Save-Json (Join-Path $copy 'inputs.json') $manifest}
+        $expected=@{positive='';drop='M7_GAME_SET';skip='M7_GAME_NOT_PASS';'wrong-scope'='M7_GAME_SET';'wrong-head'='M7_INPUT_IDENTITY';hash='M7_INPUT_HASH';'summary-game-cases'='M7_SAVED_GAME_CASES';'summary-junit-cases'='M7_SAVED_JUNIT_CASES';'summary-pacing'='M7_SAVED_PACING';'summary-artifact'='M7_SAVED_ARTIFACT'}[$case];$reason='';try{$recomputed=Verify-M7 $copy;$candidate=Get-Content -LiteralPath (Join-Path $copy 'summary.json') -Raw|ConvertFrom-Json;Assert-M7SavedSummary $candidate $recomputed}catch{$reason=$_.Exception.Message}
         if($reason -cne $expected){throw "M7_SELFTEST $case expected=$expected got=$reason"};$results+=@{case=$case;expected=$expected;status=$(if($expected){'KILLED'}else{'PASS'})}
     }
+    $reason='';try{Assert-M7LiveHead ('0'*40)}catch{$reason=$_.Exception.Message};if($reason -cne 'M7_HEAD_CHANGED'){throw 'M7_SELFTEST live-head-mismatch'};$results+=@{case='live-head-mismatch';expected='M7_HEAD_CHANGED';status='KILLED'}
     Save-Json (Join-Path $controls 'result.json') ([ordered]@{fixture=$true;head=$ExpectedHead;platform=$Platform;cases=$results})
     Verify-M7 $Root|Out-Null
 }
@@ -85,12 +109,14 @@ if($launched){
     }catch{$failure=$_}
     finally{Save-M7Inputs $start $runtime}
     if($failure){Save-Json (Join-Path $OutputRoot 'failure.json') @{head=$ExpectedHead;platform=$Platform;status='FAIL';message=$failure.Exception.Message};throw $failure}
-    $proof=Verify-M7 $OutputRoot;Save-Json (Join-Path $OutputRoot 'summary.json') $proof
+    $proof=Verify-M7 $OutputRoot;Assert-M7LiveHead $ExpectedHead;Save-Json (Join-Path $OutputRoot 'summary.json') $proof
 }else{
     $saved=Get-Content -LiteralPath (Join-Path $OutputRoot 'summary.json') -Raw|ConvertFrom-Json
     $proof=Verify-M7 $OutputRoot
-    if($saved.head -cne $proof.head -or $saved.status -cne 'PASS' -or $saved.platform -cne $proof.platform -or $saved.inputsSha256 -cne $proof.inputsSha256){throw 'M7_SAVED_SUMMARY'}
+    Assert-M7SavedSummary $saved $proof
 }
 if($SelfTest){SelfTest-M7 $OutputRoot}
-Verify-M7 $OutputRoot|Out-Null
+$finalProof=Verify-M7 $OutputRoot
+if($launched){Assert-M7LiveHead $ExpectedHead}
 "M7_VERIFIED PASS platform=$Platform junit=$($expectedJUnit.Count) gametest=$($expectedGame.Count) launched=$launched HEAD=$ExpectedHead root=$OutputRoot"
+if($PassThru){[pscustomobject]$finalProof}

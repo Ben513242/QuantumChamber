@@ -534,13 +534,16 @@ Step 'summary' {
     }
     & (Join-Path $PSScriptRoot 'm6-universe-probe.ps1') -VerifySummary $nativeFile -ExpectedHead $head -SelfTest |
         Tee-Object -FilePath (Join-Path $runRoot 'm6-native-verify.log')
-    & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $head
+    $m7Fresh=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_home'})
+    if($m7Fresh.Count -ne 1 -or $m7Fresh[0].head -cne $head -or $m7Fresh[0].status -cne 'PASS'){throw 'M7_FINAL_PROOF'}
+    $m7LiveHead=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
+    if($LASTEXITCODE -ne 0 -or $m7LiveHead -cne $head -or $m7LiveHead -cne $startHead){throw 'M7_HEAD_CHANGED'}
     $summary=[ordered]@{status='PASS';head=$head;runRoot=$runRoot
         gameTest=[ordered]@{normal=$normalCases.Count;normalXmlSha256=Hash $normalXml;default=$defaultCases.Count;defaultPassed=$defaultCases.Count-$bad.Count;windows=$windowsCases;legacy=$legacyCases.Count;m5=$m5Cases.Count;m6=$m6Cases.Count;m6XmlSha256=Hash $m6Xml;m6Pacing=$m6Oracle.pacing;m6Cases=$identities;defaultXmlSha256=Hash $defaultXml;legacyXmlSha256=Hash $legacyXml;m5XmlSha256=Hash $m5Xml;perTestReceipts=[ordered]@{default=$fullReceipts;normal=$normalReceipts;legacy=$legacyReceipts};scope=$scopes;m5CatalogDeltas=@($m5Oracle.deltas);m5SuiteEnd=$m5Oracle.suiteEnd}
         junit=[ordered]@{total=$junitTotal;failures=$failures;errors=$errors;skipped=$junitSkipped;skippedCases=$skips;windowsCheckpointTests=$windowsTests}
         jars=$jars;mainOnly=[ordered]@{ciReceipt=(Join-Path $runRoot 'main-ci-receipt.json');ciReceiptSha256=Hash (Join-Path $runRoot 'main-ci-receipt.json');status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
         m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count}
-        m7Home=Read-Json (Join-Path $runRoot 'm7/summary.json')
+        m7Home=$m7Fresh[0]
         m6Native=[ordered]@{summary=$nativeFile;sha256=Hash $nativeFile;mode='PER_CHAIN';phaseCount=$native.phaseCount;chains=$native.chains;functionalAssertionsRemainRed=$true}
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;normal=$normal;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}
