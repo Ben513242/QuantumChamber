@@ -19,7 +19,7 @@ class M7HomeJournalTest {
         var two = M7BudgetSpikeTest.home(2).getList("SpaceLeases", 10);
         old.getList("SpaceLeases", 10).set(0, two.getCompound(1));
         var wrapped = M7BudgetSpikeTest.wrap(List.of(old, home));
-        Path file = directory.resolve("journal.dat");
+        Path file = directory.resolve("data/journal.dat");
         SessionJournalStore.write(file, wrapped);
         assertEquals(wrapped, SessionJournalStore.read(file));
         assertEquals(wrapped.getCompound("data"), SessionRecoveryState.load(file).writeNbt(new NbtCompound()));
@@ -53,7 +53,7 @@ class M7HomeJournalTest {
             collapsing.putString("State", "COLLAPSING");
             collapsing.getCompound("Home").putLong("CommittedAtGameTime", 23);
             var wrapped = M7BudgetSpikeTest.wrap(List.of(before));
-            SessionJournalStore.write(directory.resolve("fixed.dat"), wrapped);
+            SessionJournalStore.write(directory.resolve("data/fixed.dat"), wrapped);
             long used = M7BudgetSpikeTest.measure(wrapped);
             long latchCost = M7BudgetSpikeTest.measure(M7BudgetSpikeTest.wrap(List.of(latched)));
             long collapseCost = M7BudgetSpikeTest.measure(M7BudgetSpikeTest.wrap(List.of(collapsing)));
@@ -70,8 +70,8 @@ class M7HomeJournalTest {
             System.out.printf("I2 slot=%d current=%d latch=%d collapsing=%d reserve=%d%n",slots,used,latchCost,collapseCost,available);
             assertTrue(available >= Math.max(latchCost,collapseCost)-used);
             var padded = atLimit(before);
-            assertThrows(Exception.class, () -> SessionJournalStore.write(directory.resolve("fixed.dat"), padded));
-            assertEquals(wrapped, SessionJournalStore.read(directory.resolve("fixed.dat")));
+            assertThrows(Exception.class, () -> SessionJournalStore.write(directory.resolve("data/fixed.dat"), padded));
+            assertEquals(wrapped, SessionJournalStore.read(directory.resolve("data/fixed.dat")));
         }
     }
 
@@ -122,7 +122,7 @@ class M7HomeJournalTest {
             int room=Math.toIntExact(M7BudgetSpikeTest.LIMIT-M7BudgetSpikeTest.measure(mixed)
                     - HomeJournalBudget.remaining(actual));
             snapshot.putByteArray("Padding",new byte[room]);
-            var target=directory.resolve("shared-"+selected+".dat");
+            var target=directory.resolve("data/shared-"+selected+".dat");
             SessionJournalStore.write(target,mixed);
             var authority=SessionRecoveryState.load(target);
             authority.requireHealthy();
@@ -140,7 +140,7 @@ class M7HomeJournalTest {
 
     @Test void sameHandleAndBoundedTrackerRejectOversize() throws Exception {
         var good=M7BudgetSpikeTest.wrap(List.of(M7BudgetSpikeTest.home(64)));
-        var file=directory.resolve("snapshot.dat");
+        var file=directory.resolve("data/snapshot.dat");
         SessionJournalStore.write(file,good);
         var pinned=SessionJournalStore.readSnapshot(file);
         var invalid=atLimit(M7BudgetSpikeTest.home(1));

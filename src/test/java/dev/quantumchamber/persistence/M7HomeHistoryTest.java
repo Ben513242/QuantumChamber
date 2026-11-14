@@ -69,7 +69,7 @@ class M7HomeHistoryTest {
             for (var key : List.of("DataVersion","SchemaVersion","HomeRevision","TravelCapabilityVersion")) {
                 byte[] malformed=duplicateInt(value,key);
                 if(value==hot) {
-                    var p=save.resolve("bad-hot.dat");
+                    var p=save.resolve("data/bad-hot.dat");
                     Files.write(p,malformed);
                     assertThrows(java.io.IOException.class,() -> SessionJournalStore.read(p),key);
                 } else {
@@ -157,5 +157,72 @@ class M7HomeHistoryTest {
         assertFalse(state.terminateHome(store,() -> state.save(target.toFile(),null),frozen).removed());
         assertThrows(RuntimeException.class,() -> SessionRecoveryState.load(target).requireHealthy());
         assertArrayEquals(before,Files.readAllBytes(receipt)); assertArrayEquals(hot,Files.readAllBytes(target));
+    }
+    @Test void receiptRoundTripThroughShortNameOrLinkedSaveRoot() throws Exception {
+        var longRoot=Files.createDirectory(save.resolve("Return Home World With Long Name"));
+        Path alias;
+        if(com.sun.jna.Platform.isWindows()) {
+            char[] shortName=new char[32768];
+            int length=com.sun.jna.platform.win32.Kernel32.INSTANCE.GetShortPathName(longRoot.toString(),shortName,shortName.length);
+            assertTrue(length>0 && length<shortName.length,"GetShortPathName 必須取得完整路徑");
+            alias=Path.of(new String(shortName,0,length));
+            assertNotEquals(longRoot.getFileName(),alias.getFileName(),"fixture 必須使用真正不同的 8.3 短名");
+        } else {
+            alias=Files.createSymbolicLink(save.resolve("linked-world"),longRoot);
+        }
+        try {
+            assertTrue(Files.isSameFile(longRoot,alias));
+            requireRoundTrip(alias,longRoot);
+        } finally {
+            if(!com.sun.jna.Platform.isWindows()) Files.delete(alias);
+        }
+    }
+
+    @Test void receiptRoundTripThroughLinkedSaveAncestor() throws Exception {
+        var parent=Files.createDirectory(save.resolve("worlds"));
+        var world=Files.createDirectory(parent.resolve("home"));
+        var alias=save.resolve("linked-worlds");
+        directoryLink(alias,parent);
+        try {
+            var raw=alias.resolve("home");
+            assertNotEquals(world,raw);
+            assertTrue(Files.isSameFile(raw,world));
+            requireRoundTrip(raw,world);
+        } finally { Files.delete(alias); }
+    }
+
+    @Test void linkedDataInsideSaveRefusesPublicationAndLookup() throws Exception {
+        var world=Files.createDirectory(save.resolve("world"));
+        var outside=Files.createDirectory(save.resolve("external"));
+        var data=world.resolve("data"); directoryLink(data,outside);
+        try {
+            var frozen=closed(31); var store=new HomeReceiptStore(world);
+            assertThrows(java.io.IOException.class,()->store.requireAdmissible(frozen.sessionUuid()));
+            assertThrows(java.io.IOException.class,()->store.publishOrVerify(frozen));
+            assertThrows(java.io.IOException.class,()->store.lookup(frozen.sessionUuid()));
+            try(var entries=Files.list(outside)) { assertEquals(0,entries.count(),"不得在外部目標寫入任何資料"); }
+        } finally { Files.delete(data); }
+    }
+
+    private static void requireRoundTrip(Path raw,Path physical) throws Exception {
+        var frozen=closed(31);
+        var store=new HomeReceiptStore(raw);
+        store.requireAdmissible(frozen.sessionUuid());
+        store.publishOrVerify(frozen);
+        assertEquals(frozen,store.lookup(frozen.sessionUuid()).orElseThrow());
+        assertEquals(frozen,new HomeReceiptStore(physical).lookup(frozen.sessionUuid()).orElseThrow());
+    }
+
+    private static void directoryLink(Path link,Path target) throws Exception {
+        if(com.sun.jna.Platform.isWindows()) {
+            var process=new ProcessBuilder("cmd.exe","/d","/c","mklink","/J",link.toString(),target.toString())
+                    .redirectErrorStream(true).start();
+            var output=process.getInputStream().readAllBytes();
+            assertEquals(0,process.waitFor(),()->"無法建立 fixture junction："+new String(output));
+            assertTrue((com.sun.jna.platform.win32.Kernel32.INSTANCE.GetFileAttributes(link.toString()) & 0x400)!=0);
+        } else {
+            Files.createSymbolicLink(link,target);
+            assertTrue(Files.isSymbolicLink(link));
+        }
     }
 }

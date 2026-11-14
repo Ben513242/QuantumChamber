@@ -11,18 +11,19 @@ import static dev.quantumchamber.persistence.JournalNbt.*;
 /** 只按指定 SID 查詢的不可變回程歷史。 */
 public final class HomeReceiptStore {
     private final Path save;
-    public HomeReceiptStore(Path save) {
-        this.save = save.toAbsolutePath().normalize();
+    public HomeReceiptStore(Path save) throws IOException {
+        // 呼叫者提供的世界根可經過短名或連結。只以這個已解析的存檔根作為收據邊界。
+        this.save = save.toRealPath();
     }
     private Path directory(boolean create) throws IOException {
         Path target=save.resolve("data").resolve("quantumchamber_home_receipts");
-        Path cursor=target.getRoot();
-        for(Path component:target) {
+        Path cursor=save;
+        for(Path component:save.relativize(target)) {
             cursor=cursor.resolve(component);
             BasicFileAttributes attrs;
             try { attrs=Files.readAttributes(cursor,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS); }
             catch(NoSuchFileException absent) {
-                if(!create || !cursor.startsWith(save) || cursor.equals(save)) throw absent;
+                if(!create) throw absent;
                 try { Files.createDirectory(cursor); } catch(FileAlreadyExistsException raced) { }
                 attrs=Files.readAttributes(cursor,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS);
             }

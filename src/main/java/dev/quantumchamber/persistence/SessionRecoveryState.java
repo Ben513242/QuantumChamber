@@ -750,7 +750,10 @@ public final class SessionRecoveryState extends PersistentState {
     /** start 前 ownership 預檢：只看 {@link #occupies}；未確認移除的 flushed record 仍佔用。 */
     public CommitResult admitHome(MinecraftServer server, HomeSessionRecord next) {
         requireServerThread(server);
-        return admitHome(new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)), () -> flush(server),next);
+        HomeReceiptStore store;
+        try { store=new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)); }
+        catch(IOException failure) { return CommitResult.of(CommitResult.Status.REJECTED,new UncheckedIOException(failure)); }
+        return admitHome(store, () -> flush(server),next);
     }
     CommitResult admitHome(HomeReceiptStore receipts, Runnable flush, HomeSessionRecord next) {
         requireMutationThread(); requireHealthy();
@@ -784,7 +787,10 @@ public final class SessionRecoveryState extends PersistentState {
     /** 所有玩家返還、原生清理與門 checkpoint 已由呼叫端確認後，才要求移除熱列。 */
     public TerminalResult terminateHome(MinecraftServer server,HomeSessionRecord expected) {
         requireServerThread(server);
-        return terminateHome(new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)),() -> flush(server),expected);
+        HomeReceiptStore store;
+        try { store=new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)); }
+        catch(IOException failure) { return TerminalResult.of(TerminalResult.Status.REJECTED,new UncheckedIOException(failure)); }
+        return terminateHome(store,() -> flush(server),expected);
     }
     TerminalResult terminateHome(HomeReceiptStore store,Runnable flush,HomeSessionRecord expected) {
         requireMutationThread(); requireHealthy(); var sid=expected.sessionUuid();
