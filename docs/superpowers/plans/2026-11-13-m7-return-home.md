@@ -135,7 +135,7 @@
 
 2026-11-14 fix3候選0a36323已Windows focused128/M7 26/4、真FS9/9與兩owner mutation；controller已核原件，原席N3已C0/I0/M1（I07已解，M03留診斷殘留）。非Windows真對應待新UbuntuCI，不預勾跨平台驗證或最末閉合項。
 
-N3後新pin完整full仍待；AccessDenied full額度1/1不可刷新，舊CI不rerun。
+N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC895B…），新SHA首次CI仍待，T2閉合未勾；AccessDenied full額度1/1不可刷新，舊CI不rerun。
 
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 

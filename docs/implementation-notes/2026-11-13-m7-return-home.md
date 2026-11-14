@@ -43,6 +43,11 @@
 
 現行技術邊界與流程：
 
+- fix3 production 0a36323e469f190f432c19d16975d92742c7544c 的首次完整full已自然PASS：11:50:32 ENDALL0，驗證HEAD5df701afae0ad16a8ecca4bc0eaf35e7abfbae96，原PID22708/同一handle actualExit0、exec outer0、exit.txt0。summary SHA DFAC895B0BA63932CFF5CC84F7A44D43A86D12228AA2B9AF1F6185E02A081A7B，root run-all-9f9fd955e2aa42eba3409786d3c4c9a2；controller t2-fix3-full-controller-readback.json親核head/summary/原退出/九raw/M7XML，root另親核。
+- JUnit1161 failure/error0、2個既有NonWindows checkpoint平台skip（M7無skip）；M7Windows26JUnit/4GT、default166/normal13/legacy1/M560/M635、main-only/隔離、recovery25/collapse69/M6native9/27各按既有scope完成。post13 runtimeOwners0/225鎖/pins hash exact/非reparse，worktree clean/runtime diff空，report SHA144AB3022BE6DAE13D68E5652675C74CCF0D2AF4A3BE6A6BA1BB8AF085F3E815。
+- 下一步必要truth docs後正常push新實質pin的新SHA首次5requiredCI。原CI43540208676自然FAIL不rerun，Ubuntu真symlink三案/26JUnit3GT待新CI，Win26/4；T2仍OPEN/T3未啟。M03列殘留，不新增本機回放/Minor修正。AccessDenied quota1/1耗盡不刷新、driver舊工具2/site1/所有FAIL保。
+
+
 - 原唯一席N3正式通過：spec符合／qualityApproved，C0/I0/M1，I07 ADDRESSED。N0=5→N1=1→N2=0→N3=0，沒有刷新輪數或帶過Important；scope審0與sourceN3採用分清。唯一殘留T2-M03為Windows測試helper未先排除GetFileAttributes=-1，因junction另有cmd成功與sameFile驗證/真mutation，屬非阻塞診斷缺口，留wholebranch不另開fix4。
 - 現在production固定0a36323e，N3 source全清；postcheck12 fresh核164鎖可獨占／runtimeOwners0／producer固定pins/hash/非reparse。必要truth docs後直接新pin完整run-all，沿已工作M6同一process handle/HasExited/ExitCode、stdout-stderr分檔與actual child65001；不再跑focused或N2/N3，不改source/HEAD在途內容。
 - 此新codepin的完整full不是重置重跑額度：AccessDenied full quota1/1仍已用完，若同簽章再現停報，不能自行再跑。fullDriver既有工具2次/site1/原CI所有FAIL保留。full自然ENDALL0＋actual ExitCode0＋summary才採；成功後正常push新SHA首次5requiredCI，舊CI43540208676不rerun，全部真success才T2closed→T3。
