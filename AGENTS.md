@@ -119,6 +119,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-14現行：T3 fix1 N1 C0/I0/M0，N0 Important6→N1 0。** sourceaa1d354e、已驗7558b0e；Win29JUnit/9GT/11controls/guard2+12與九變異原件（8原driverKILLED＋expiry原FAIL/同席語意KILLED）已核。現在fresh W10前置後完整full/新SHA首次五CI，尚未T3closed；全綠才自動T4。fixture3/3任一新非預期即停、AccessDenied1/1、fullDriver歷史2及mutation兩事件全保，不盲重跑/舊CIrerun。下方N0與STOP是歷史，最新以本段及M7 note/N1 report為準。
+
 **2026-11-14最新真user裁示：允許T3從fresh N0恢復後續完整門檻。** 原題與選項原文見M7 note「T3 保原判，從 fresh N0 恢復」／SDD user-t3-resume-ruling-20261114.md；保候選a506、原fixture3/3及所有FAIL，同fixture再任一非預期即停。已齊focused/mutations不盲重跑；fresh獨立N0 C/I0→fresh W10前置＋完整full→正常push新SHA首次五requiredCI→T3closed並自動T4。AccessDenied1/1與driver歷史2不刷新，舊CI4354不rerun；main/tag/人工開始/退役仍未授。下段STOP為恢復前歷史，不再作未授N0的hold。
 - T3 N0 C0/I6/M1（總6）後原作者fix1候選aa1d354e已凍結；RED六目標/GREEN9GT與九mutation還原已核（8原driverKILLED＋1原driverFAIL/semanticKILLED待N1），truthdocs後最終29JUnit/9GT＋guard2+12 focused，N1清零才full。expiry marker-count driver事件與T2 site-count歷史並列，不是fixture第四次；原fixture3/3任何再非預期即停，AccessDenied1/1/fullDriver歷史2不洗。
 

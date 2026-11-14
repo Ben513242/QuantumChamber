@@ -46,6 +46,13 @@
 - N0 C/I0才fresh核已存在W10 producer pins/owner/locks/非reparse、actual child65001，沿M6 handle／ExitCode／stdout與stderr分檔跑新pin完整full；自然ENDALL0＋實際exit0＋summary原件全採，才正常feature push／遠端讀回／新SHA首次五required CI。全綠才T3closed五欄並直接freshT4；沒有舊CI4354 rerun、盲docs重推、main/tag/人工開始/退役授權。
 - 恢復前actual HEAD8d933e175bf8c7b49e33d7411d74b3e6b7e9ab14，tracked clean/ahead4；src/scripts/build/workflow對sourcea506差異空。所有舊STOP索引不覆寫，作歷史原件。
 
+## T3 fix1 N1 清零，待完整回歸／CI（2026-11-14）
+
+- production sourceaa1d354ec4e8de0b8bfee5e553f83f3378431618；已驗HEAD7558b0e3557e17489165ae321a448c059b198cb5，Windows29JUnit/9GT/11controls、原guard2+12全部符合，十rawhash與livebytes已核。完整證據t3-fix1-evidence.json與task-3-report.md。
+- 原席N1 task-3-fix1-review.md SHA B1858E1EB954E86553B52A93619F314B42993804330F86569B1AECBEA9226E3A：spec通過／quality核准，C0/I0/M0；原I01～I06/M01全ADDRESSED，無新增退化。round表N0=6→N1=0，下降成立，不以C/I0冒稱taskclosed。
+- 九變異原XML/livebytes全符；expiry語意KILLED獲同席核兩合法SID呼叫／原assert，原driver UNEXPECTED/killed=false/exit1仍保留。T2 site-count1／本次marker-count1實際入口歷史、原fixture3/3與再非預期即停、AccessDenied1/1、fullDriver歷史2皆不刷新。
+- 現進新候選完整full前置：只核既有W10，不重建／重套；確認固定pins/hash/非reparse/owner/鎖及child65001，沿M6同一handle/HasExited/ExitCode與分檔stdoutstderr。固定source/HEAD直到自然終局，任一新FAIL保原件分類／停報，不盲重跑。全summary＋自然ENDALL0／actualExit0才普通push／遠端讀回／新SHA首次五requiredCI；全綠才T3closed並freshT4。full／CI目前尚未執行。
+
 ## T3 N0：六項正式缺口，原作者 fix1（2026-11-14）
 
 - 本次明確恢復後fresh reviewer N0（SDD task-3-review.md，SHA B94B0B7C…A7583）已終局：spec未通過／quality需修，C0/I6/M1。原審查BASE8a612441至35e0f40，sourcea506不混；未起runtime。

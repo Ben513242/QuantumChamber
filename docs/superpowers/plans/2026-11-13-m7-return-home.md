@@ -171,6 +171,8 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 
 ### Task 3: 核對 B／A、占用與有界 A 票
 
+**N1清零（2026-11-14）**：sourceaa1d354e／已驗7558b0e，N0=6→N1 C0/I0/M0，I01～I06/M01全ADDRESSED；原driverFAIL及全舊計數保。現進freshW10前置／固定pin完整full／新SHA首次五CI，尚未closed／T4。
+
 **fix1候選（2026-11-14）**：sourceaa1d354e，六目標RED／GREEN9GT／九direct mutation livebytes還原已核；expiry原driverFAIL與semanticKILLED待N1分層保留，詳note。最後必要focused後同席N1，C/I0才full/CI，原fixture3/3不洗。
 
 **N0終局／fix1（2026-11-14）**：C0/I6/M1（Important總6），原作者fix1處理正式I01～I06；report task-3-review.md與M7 note，FIX_BASE35e0f40。N1含新項總數，C/I0才full；原fixture3/3與再任一非預期即停不變。
