@@ -133,6 +133,8 @@
 - [ ] rg其餘新production逐層祖先檢查同型並列窄處置；RED/直接owner mutation/bytes還原/必要focused，凍結新codepin、同席N3 C/I0後完整run-all、正常push新SHA首次全部required CI。原CI43540208676／所有FAIL不變，不rerun舊CI或只換docs重推。
 - [ ] AccessDenied full單次額度1/1已用完，不因新pin重置；完整producer／UTF8／owner/locks前置及既有止損照舊，source正確性修正不是豁免安全或驗收門檻。
 
+2026-11-14 fix3候選0a36323已Windows focused128/M7 26/4、真FS9/9與兩owner mutation；controller已核原件，原席N3待。非Windows真對應待新UbuntuCI，不預勾跨平台驗證或最末閉合項。
+
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 
 **產出**　`sealed interface JournalSession` 共同提供 `UUID sessionUuid()/chamberUuid()`、`List<Participant> participants()`、`List<SpaceLease> spaceLeases()`、`SessionState state()`。舊 record 與新 `HomeSessionRecord` 實作；新列提供 `ChamberOriginAuthority rootAnchor()`、`HomeSessionRecord.EntryEndpoint entryEndpoint()`、`HomeSessionRecord.Home home()`。
