@@ -1,6 +1,6 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3 正在實作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3 現因fixture第三次非預期失敗止損暫停。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
 ## 使用者新裁示：T2 起連續推進與新止損（2026-11-13）
 
@@ -29,7 +29,15 @@
 - 殘留T2-M03僅測試Win32 attrs失敗值診斷，非阻塞，交wholebranch；不加fix4。原CI43540208676/原AccessDenied/所有FAIL/UNKNOWN全留，full quota1/1耗盡不刷新，舊run未rerun。
 - 閉合狀態只本機docs commit，不為回填CI再push。現在依原user連續授權直接Task3新implementer＋獨立review，scope/spec/plan不重開審批；T3 BASE為8a6124416108621f895fa8e9fd57d1b39efdbcea，fresh作者已實作，詳下節。main/tag/人工開始/PR/LICENSE/退役仍未授。
 
-## T3 執行中：端點權威、唯一占用與有界原艙票（2026-11-14）
+## T3 止損暫停：同一權威測試 fixture 三次非預期失敗（2026-11-14）
+
+- 現在T3 OPEN／STOP；production `a50613830004d083b2fe39e3f1edf38c712a013b`，定向驗證HEAD `ee2437e7137ed18162f609c1ad2e0748a7d1fdd3`。先前進度只併兩件，作者補核漏列事件後，同M7HomeAuthority／runGameTestM7 fixture依原user第三次規則及root保守分組累計3/3；不得用後續成功、nonce或docs改判／清數。這是流程暫停，不是T3結案。
+- 三原事件皆HEAD8a612441＋當時dirty、actualexit1，同具名 `only_exact_complete_projection_resolves`：665f9df0…空A UUID（XML SHA3AFD4B84A5BD5AB34987416CF8E26F1E1B81D3C915A760DE8B6FF0245DA9BF24）；3ec4d9fe…已確認COMPLETE辨識assert失敗（880B8CD574E4B878F8952D6C6A751BAC16E01A8FE9F538EFEEF63936FE9A0FD3）；6ae35c35…A/B本地presence雙assert失敗（229863AC1C7F7A9C83CE4BBC887DCCD1AE41789F2E336A1A145499847F82E97E）。前者為fixture未正式A登記；後兩者原因依修前後對照推論為初始預載範圍不足／400tick後B站卸載，原XML未印對應值，不冒稱原XML已證唯一根因。完整命令、stage、dirty、原XML/log見SDD t3-fixture-stop.json；subject階段與修前後語意見t3-fixture-cause-readonly.md。三根未保存當時完整Java bytes，最終line僅修後對照，不能當歷史source hash；未重演，也未以修後PASS證唯一根因。
+- 停報前已啟的9968920… official runner工具session49513終局exit_code0（沒有獨立outer exit檔），29 M7JUnit／8GT／11controls；guard root2007060…的Gradle exit.txt實錄0、原dependency2／protection12全部PASS。controller只讀核10 raw hashes與37個M7 testcase零failure/error/skip、11controls正1／負10符合，五個a506 owner mutations目標assert KILLED及live bytes/SHA還原。這些結果保留，但不抵銷3/3。
+- 獨立N0／完整run-all／本候選CI／push均尚未啟動，Ubuntu新集合未實跑。無T4；不啟新runtime/source整改/review/full/push。既有AccessDeniedquota1/1、full driver歷史2及T2等舊FAIL/UNKNOWN全部保留。
+- 必要只讀postcheck（SDD t3-stop-postcheck.json）：三原FAILworld與996的world共四把session.lock皆可獨占；無遊戲runtime owner，僅現存GradleDaemon PID17700。不殺Java、不移刪或改世界；tracked真狀態只本機提交，不push觸CI。root收短stop索引後依user止損交回，不能憑原連續授權自行恢復。
+
+## T3 止損前進度快照：端點權威、唯一占用與有界原艙票（2026-11-14）
 
 - 原user連續授權下，fresh作者 `/root/m7_t2_onward/t3_implementer`（gpt-6-astra/high）以8a612441為BASE實作；controller保留單一狀態writer，未重做T1/T2。普通B guard仍至T7才開。
 - 初RED root t3-red-665f9df0…的跨world同XZ coverage真assert expected26/actual25，以及 provisional首票前占用assert失敗成立；同root COMPLETE案僅fixture空A UUID例外，不採功能RED，保原件／fixture事件1。正式A attemptArm登記後新root t3-red-38e8a9cb…兩項精準GT RED待最終report原件核。

@@ -119,6 +119,10 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-14最新：T3因同一M7HomeAuthority fixture第三次非預期失敗（3/3）STOP，等使用者止損後續裁示。** sourcea5061383／定向驗證HEADee2437e；三原FAIL665／3ec／6ae保留，996已在途定向自然0與五mutation還原不抵計數。N0/full/本候選CI/push未啟，禁止新runtime/source整改/review/full/push或T4；只讀必要原件／鎖／truthdocs收尾可。四相關world鎖已獨占、無遊戲owner，只有GradleDaemon；詳M7 note「T3 止損暫停」與SDD t3-fixture-stop.json。
+
+以下為T3止損前的進度快照；現行HOLD以上段為準。
+
 **2026-11-14現行：T2 CLOSED，production0a36323e／本機full5df701af／成功CI-docs9358368e分清；CI43554024617 attempt1實際5required全success，接續T3新implementer。** Win26JUnit/4GT、Ubuntu26JUnit/3GT與真FS三案、九raw/11controls、舊Windows166/13/1/60/35/main-only、M6native9/27/479原件已核，詳M7 note/T2-CLOSEOUT。M03測試診斷Minor交wholebranch；原CI4354與AccessDenied等FAIL/UNKNOWN全保，quota1/1不刷新。此閉合docs只本機不重push造CIloop；Task3按已審plan連續做，不問已授scope，不在main實作，B guard至T7仍封。人工/main/tag/PR/LICENSE/退役仍未授。
 - T3目前source候選a5061383（BASE8a612441），該pin五owner mutations已報KILLED／還原，truthdocs同步後最後正式focused／N0仍待；getWorldChunk的固定版本javap核為getNow非同步等待。候選證據齊先獨立N0清零才完整full／同SHA五CI，不提前閉合；詳M7 note「T3 執行中」。
 - **full driver目前2/3**：長cwd267、短root outer未返回是同一實際full driver兩次非預期工具失敗，原因各保，不因新wrapper名/簽章/docs重置；新候選第三次即停報。可選hash/人工source解碼另列操作事件，不能冒稱遊戲失敗。
