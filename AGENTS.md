@@ -119,6 +119,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-14最新：真user「準備收尾交接」，T3 OPEN，本輪不新fix/runtime/full/push/T4。** 先讀 `docs/handoffs/2026-11-14-m7-t3-handoff.md`，再M7 note現行節／S最新STATUS與progress。sourceaa1／N1 C0/I0/M0保原，full0e8/rootcfc/holder6b自然exit1，:test1164/2fail/2既有平台skip，GT根本未啟；兩缺口待修，舊10:50runtime log不可冒作本輪AccessDenied。原fixture3/3／再任一非預期即停、AccessDenied1/1、fullDriver歷史2、mutation兩事件與全FAIL保。handoff事實窄審最終docs C0/I0/M0（非N2）後僅local docs commit，不push/CI（user收尾且codegateFAIL，非CI豁免/已過）。下一棒收到續作指示可按既有M7 scope處理fix2，不重問玩法／正常push，但完整production門檻及各另授邊界不變。下段「現在進full」均是此次handoff前歷史。
+
 **2026-11-14現行：T3 fix1 N1 C0/I0/M0，N0 Important6→N1 0。** sourceaa1d354e、已驗7558b0e；Win29JUnit/9GT/11controls/guard2+12與九變異原件（8原driverKILLED＋expiry原FAIL/同席語意KILLED）已核。現在fresh W10前置後完整full/新SHA首次五CI，尚未T3closed；全綠才自動T4。fixture3/3任一新非預期即停、AccessDenied1/1、fullDriver歷史2及mutation兩事件全保，不盲重跑/舊CIrerun。下方N0與STOP是歷史，最新以本段及M7 note/N1 report為準。
 
 **2026-11-14最新真user裁示：允許T3從fresh N0恢復後續完整門檻。** 原題與選項原文見M7 note「T3 保原判，從 fresh N0 恢復」／SDD user-t3-resume-ruling-20261114.md；保候選a506、原fixture3/3及所有FAIL，同fixture再任一非預期即停。已齊focused/mutations不盲重跑；fresh獨立N0 C/I0→fresh W10前置＋完整full→正常push新SHA首次五requiredCI→T3closed並自動T4。AccessDenied1/1與driver歷史2不刷新，舊CI4354不rerun；main/tag/人工開始/退役仍未授。下段STOP為恢復前歷史，不再作未授N0的hold。

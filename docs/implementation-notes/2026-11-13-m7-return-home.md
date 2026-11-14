@@ -1,6 +1,17 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3 曾因fixture第三次非預期失敗止損，使用者現另明確授權從fresh N0恢復完整門檻。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；使用者現要求收尾交接，本輪暫停新工作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 最新：使用者要求收尾交接；T3 full兩JUnit FAIL未修（2026-11-14）
+
+真user本輪原文「準備收尾交接」（primary root轉述，S/user-handoff-steering-20261114.md）；本輪停止新fix/runtime/full/push/T4，沒有取消整個既授M7範圍。精確交接：`docs/handoffs/2026-11-14-m7-t3-handoff.md`，接手先讀此檔，不沿下面歷史「現在進full」文字自行恢復。
+
+- T1/T2仍closed；T3 sourceaa1d354e／N1 C0/I0/M0及已驗7558b0e原判保留，但full HEAD0e8b9c1/rootcfc16d21…/holder6b571243…自然exit1，Gradle:test1164=1160pass/2fail/2existing平台skip，無ENDALL/summary、defaultGT未啟。98freshJUnit及manifest保全；terminal SHA A0A3B336…90BE3B。
+- 兩FAIL：ChamberPowerCoordinatorTest舊enum loop把新BUSY錯期待normalizesOwnerless=true（XMLC55DD4E0…CD4C0EB），production拒BUSY符合A不改門，待核契約後最小同步expectation；HomeRootTickets140/176兩新log缺既有CollapseService.LOG_MARKER（XMLC0CBCCB8…A6637D8），待加既有marker，scanner不改。沒有fix2，不把它們算fixture第四次或fullDriver第三。10:50舊runtime latest內AccessDenied不屬本輪。
+- source/HEAD在draft前clean/ahead8、production對src/scripts/build/workflow無差。原件/author報告、source因果、計數、原user恢復題/答案與續作順序全部列handoff。owner/locks fresh只讀postcheck254把可exclusive、scope內javaProcesses/runtimeOwners皆空；該proof不含較早CIM所見Daemon PID，兩來源不混；原defaultworld不存在，freshEvidence保留無鎖，未kill／刪world。
+- 原fixture3/3、任何新同fixture非預期即停、AccessDenied1/1、fullDriver歷史2、mutation-site及marker-count舊事件/semanticKILLED分層與N0=6→N1=0全保。N2/full後續/UbuntuT3/首次CI/T4～8未啟。原reviewer只核handoff事實／鏈結／授權，不是N2/code/full新通過。
+- 原席交接事實窄審最終docs C0/I0/M0（S/t3-handoff-facts-review.md，SHA244D515F…670C37F），H-M01觀測來源歸屬已修／增量核；不是N2 source或full／CI通過。
+- 交接docs只本機commit，不push/CI：依user收尾且code gate當前FAIL，避免只換docs盲觸已知失敗CI；不是CI豁免／CI通過。正常push原授權保留，main/tag/PR/LICENSE/人工開始/退役仍另授。下一棒收到續作指示再依原scope處理兩JUnit、同席C/I0後完整門檻。
 
 ## 使用者新裁示：T2 起連續推進與新止損（2026-11-13）
 
