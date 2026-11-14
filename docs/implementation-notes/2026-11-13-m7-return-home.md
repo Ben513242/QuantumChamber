@@ -47,7 +47,7 @@
 - 構造時對save根 `toRealPath()` 一次，存取時只檢查canonical save以內的 `data`、`quantumchamber_home_receipts` 及收據檔。**save以上junction／symlink／8.3短名允許且不檢查**；save內任何reparse仍拒。不是刪掉內部安全gate，也不是新建handle-based FS／alias框架。
 - Windows真 `GetShortPathName`＋ancestor junction的save輸入須具名RED後publish／lookup成功；save內data junction仍拒，直接owner mutation證守門。其他OS用真實對應契約和精確集合，不能skip冒PASS／新增Linux程序管理。fixture採正式save/data布局但保原始alias正向輸入；rg其餘新增production同型祖先檢查。
 - 使用者提供的Claude artifact定位及本機PROGRA~1復現是外部已提供證據，controller本輪沒有執行該復現。原CI14個直接stack／2個上層斷言及未保存的predicate分項仍照原件，不回填當時觀察；新user已明確定義正確保存邊界，正式整合缺口T2-I07進fix3。
-- 先原唯一席按本段及spec§5.3/test matrix/plan新版窄確認C/I0，再原author fix3 production完整門檻；新codepin focused／mutation／完整run-all／同席N3／新SHA首次CI。不是重跑CI43540208676，也不只換docs盲推；其他remote jobs自然終局，不取消。源碼目前仍f3，尚未實作fix3。
+- 原唯一席已按本段及spec§5.3/test matrix/plan新版窄確認：scope C0/I0/M1、Approved（Minor門檻列舉順序本次同步）。此為新版方案確認，不是source I07已修，也不採舊上層拒絕報告；現在原author開始fix3 production完整門檻；新codepin focused／mutation齊後先同席N3 C/I0，再完整run-all／新SHA首次CI。不是重跑CI43540208676，也不只換docs盲推；其他remote jobs自然終局，不取消。源碼目前仍f3，尚未實作fix3。
 - AccessDenied完整full重跑額度**1/1已用完**，不能因新pin重置；full driver歷史工具2次與原mutation-site1／原FAIL／UNKNOWN全保，止損不洗。main/tag/PR/LICENSE/人工/退役仍未授；技術窄修不再另問user核可。
 
 ## 使用者 async 裁示：T2 原 pin 單次完整重跑（2026-11-14）

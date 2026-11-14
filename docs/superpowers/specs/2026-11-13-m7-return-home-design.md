@@ -1,8 +1,8 @@
-# M7 正規回程：binding spec（v1.3，save邊界技術澄清待窄確認）
+# M7 正規回程：binding spec（v1.3，save邊界依新user澄清已窄確認）
 
 日期：2026-11-13。基準工作樹：`codex/m7-return-home`，從 main `2255027` 開出。
 狀態：v1.0玩法/資料契約已第三輪C0/I0/M0採用，v1.1驗證平台勘誤亦曾採用。v1.2僅為使用者新裁示的T1 M6同等驗證收斂修訂，原同席C0/I0/M1後採用；玩法不改，本文不是實作/測試/人工/整合結果。
-v1.3狀態：2026-11-14真user巡檢明確canonical save邊界；僅本技術澄清/測試矩陣待原同席窄確認，不重開其他已採用玩法或資料契約。來源原文見M7 note最上方「fix3只守canonical save內」。本文不代表fix3已實作/驗證。
+v1.3狀態：2026-11-14真user巡檢明確canonical save邊界；僅本技術澄清/測試矩陣已原同席窄確認C0/I0/M1（門檻順序註記由文件同步），不重開其他已採用玩法或資料契約。來源原文見M7 note最上方「fix3只守canonical save內」。本文不代表fix3已實作/驗證。
 範圍唯一來源：[M7 note](../../implementation-notes/2026-11-13-m7-return-home.md) 的使用者裁示。
 未明列改變的 M2／M4／M5／M6 契約維持；建議稿不是另一份 binding spec。
 
