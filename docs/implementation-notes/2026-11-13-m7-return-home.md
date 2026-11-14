@@ -22,6 +22,13 @@
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
+## T2 CLOSED；接續T3（2026-11-14）
+
+- T2 production `0a36323e469f190f432c19d16975d92742c7544c`，source N3 C0/I0/M1、本機full HEAD5df701af自然ENDALL0/actualExit0，成功CI/docs HEAD `9358368eab7893c14422e0a62276d09c815d32ab`。CI43554024617 attempt1/eventpush實際5required全completed/success，root已獨立核terminal身份；T2現closed，不代表M7整體完成。
+- 兩OS M7原件已真核：Win26JUnit/4GT、Ubuntu26JUnit/3GT，三FS案例無fail/error/skip（Ubuntu真symlink）、各九rawhash/11controls。Windows舊原XML166/13/1/60/35與main-only PASS/head935；M6-native原summary9鏈27phase及原log479反例全部符合既有scope。所有原件索引在本SDD T2-CLOSEOUT.md/json及ci-43554024617/。
+- 殘留T2-M03僅測試Win32 attrs失敗值診斷，非阻塞，交wholebranch；不加fix4。原CI43540208676/原AccessDenied/所有FAIL/UNKNOWN全留，full quota1/1耗盡不刷新，舊run未rerun。
+- 閉合狀態只本機docs commit，不為回填CI再push。現在依原user連續授權直接Task3新implementer＋獨立review，scope/spec/plan不重開審批；T3尚待正式派工BASE。main/tag/人工開始/PR/LICENSE/退役仍未授。
+
 ## 使用者新巡檢裁示：fix3只守canonical save內（2026-11-14）
 
 來源：本 Codex 使用者新訊息，由root完整存於SDD `user-t2-ci-path-ruling-from-root-20261114.md`。以下逐字照錄Markdown跳脫；實際FS路徑字元以CI原件為準，不把原文中的跳脫直接當測試輸入。
@@ -42,6 +49,10 @@
 > 4. 原 FAIL 與 CI 原件保留；新 code pin 走 focused、完整 run-all、同 SHA CI。完整回歸的 AccessDenied 重跑額度已用完，依原規則處理。
 
 現行技術邊界與流程：
+
+- fix3正常feature push與遠端exact讀回9358368eab7893c14422e0a62276d09c815d32ab已完成；source0a／本機full5df／CI-docs935分清，非force/main/tag。新SHA首次CI43554024617 attempt1/eventpush，實際5required jobs全in_progress，initial原JSON在ci-43554024617/。舊CI43540208676仍原FAIL、未rerun；無CI成功或T2closed先行聲明。
+- CI在途truth只同步workingtree docs與ignored ledger，不再commit/push觸發第二CI。controller單一路徑保存原件；新Win需26JUnit/4GT，Ubuntu需26JUnit/3GT與symlink三例真實跑，5jobs全success才閉合及直接T3。任何FAIL保原件先報，不盲目rerun/換docs重推。
+
 
 - fix3 production 0a36323e469f190f432c19d16975d92742c7544c 的首次完整full已自然PASS：11:50:32 ENDALL0，驗證HEAD5df701afae0ad16a8ecca4bc0eaf35e7abfbae96，原PID22708/同一handle actualExit0、exec outer0、exit.txt0。summary SHA DFAC895B0BA63932CFF5CC84F7A44D43A86D12228AA2B9AF1F6185E02A081A7B，root run-all-9f9fd955e2aa42eba3409786d3c4c9a2；controller t2-fix3-full-controller-readback.json親核head/summary/原退出/九raw/M7XML，root另親核。
 - JUnit1161 failure/error0、2個既有NonWindows checkpoint平台skip（M7無skip）；M7Windows26JUnit/4GT、default166/normal13/legacy1/M560/M635、main-only/隔離、recovery25/collapse69/M6native9/27各按既有scope完成。post13 runtimeOwners0/225鎖/pins hash exact/非reparse，worktree clean/runtime diff空，report SHA144AB3022BE6DAE13D68E5652675C74CCF0D2AF4A3BE6A6BA1BB8AF085F3E815。

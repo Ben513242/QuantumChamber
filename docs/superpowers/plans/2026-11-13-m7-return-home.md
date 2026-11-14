@@ -164,8 +164,10 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 
 - [x] 變異 production：raw walker 漏 Home 內層、把 tracker 換 unlimited、未選只保現有 lease、選後漏 CLOSE、舊 append 跳預算、replace 既存 SID、空 journal 降版，各由上述正式 reader/writer 測試 killed 並逐檔還原。focused 跑兩個新 JUnit、SessionJournalSchemaFiveTest／SessionRecoverySchema3Test 與 M7 全集合。
 
-- [ ] Controller 同步並逐檔 stage T2 清單，本機候選 `feat: 支援有界 schema6 與不可變回程收據`。先依 README 重建／核 W10，再跑乾淨 pin 的完整 run-all；獨立規格／品質 C/I 清零、記 docs truth、正常 push 並核同 SHA CI 才 closed。
+- [x] Controller 同步並逐檔 stage T2 清單，本機候選 `feat: 支援有界 schema6 與不可變回程收據`。先依 README 重建／核 W10，再跑乾淨 pin 的完整 run-all；獨立規格／品質 C/I 清零、記 docs truth、正常 push 並核同 SHA CI 才 closed。
 
+
+2026-11-14 T2 CLOSED：source0a/full5df/成功CI-docs935，CI43554024617 attempt1全部5required success；Win26/4、Ubuntu26/3與symlink真原件已核。fix3相關producer/owner/mutations/focused/full/newSHA首次CI均完成，原FAIL不改，M03交wholebranch。
 
 ### Task 3: 核對 B／A、占用與有界 A 票
 
