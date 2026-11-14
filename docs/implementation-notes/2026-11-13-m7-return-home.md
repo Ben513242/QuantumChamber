@@ -46,6 +46,21 @@
 - N0 C/I0才fresh核已存在W10 producer pins/owner/locks/非reparse、actual child65001，沿M6 handle／ExitCode／stdout與stderr分檔跑新pin完整full；自然ENDALL0＋實際exit0＋summary原件全採，才正常feature push／遠端讀回／新SHA首次五required CI。全綠才T3closed五欄並直接freshT4；沒有舊CI4354 rerun、盲docs重推、main/tag/人工開始/退役授權。
 - 恢復前actual HEAD8d933e175bf8c7b49e33d7411d74b3e6b7e9ab14，tracked clean/ahead4；src/scripts/build/workflow對sourcea506差異空。所有舊STOP索引不覆寫，作歷史原件。
 
+## T3 N0：六項正式缺口，原作者 fix1（2026-11-14）
+
+- 本次明確恢復後fresh reviewer N0（SDD task-3-review.md，SHA B94B0B7C…A7583）已終局：spec未通過／quality需修，C0/I6/M1。原審查BASE8a612441至35e0f40，sourcea506不混；未起runtime。
+- N0 Important6：I01 A撤銷遮蔽有效B、I02 catalog/lifecycle分類、I03 stop/CLOSE/expiry本地仍PASSAGE、I04未返還／lease的COLLAPSING過早可PREPARE、I05釋票例外中斷其他SID／event、I06第201 tick首次FULL與雙SID真native重疊ref的直接見證。controller核source/spec確認為binding正式正確性或T3明列GREEN，不是超M6工具框架。
+- 原作者已接fix1（FIX_BASE35e0f40），具名RED/GREEN、實改owner direct mutation/bytes還原、必要focused後交同席N1；總數含新Important，N0=6/N1待，任兩整改輪不下降止損仍有效。M01 callback生命週期Minor先殘留；若直接是I06/原cleanup的必要最小修改可同修並說明。
+- 原fixture3/3及所有FAIL保留，同fixture再任何非預期即立即停；修新fixture先靜態核A登記／載入／觀測來源／asyncfinally。full與CI仍在C/I清零後，不盲重跑舊證據，不刷新AccessDenied1/1或driver歷史2。
+
+## T3 fix1 候選與具名證據（2026-11-14，N1尚待）
+
+- FIX_BASE35e0f40；原sourcea506的六項目標RED為t3-fix1-red-ba9aabc5…，9GT兩個預定assertions，exit1，XML328965C20C4424EA0EC6274A944A2733F3EDB92EF6CFEEB4B5E2DCE2FA2F800F。聚合target標籤對應I01/I02/I03/I04及I06控制點，另一案I05_RELOAD_DROP_OTHER_OR_THROW；不混為fixture非預期。
+- 修後GREEN t3-fix1-green-2c3a58f88f934c42a33c499211f32ccf於35e＋dirty有actualexit0、9GT零failure/error/skip，XML SHA34B31189360DFF08D50B7FCA74584BD54F1F85E3688976D42ABB3CCBEFB6D0C1已controller讀核。source候選aa1d354ec4e8de0b8bfee5e553f83f3378431618（8檔）已凍結，九direct owner mutations自然終局並全部還原live bytes；八項原driver KILLED，expiry一項原driver FAIL/只讀semantic KILLED待同席N1，不能合寫九driver PASS。controller核九XML SHA與owner livebytes全符，後三continuation driver自然0；本次truthdocs後跑29JUnit/9GT＋原guard/protection focused，再N1，尚無full/closed。
+- I06新增見證使用既有Backend/testmod seam安排1–200 FULL不可見、第201讀既有原生FULL，不宣稱Minecraft worldgen首次完成；舊租約201仍拒、退避後同SID續行。原RED I06_EARLY_FULL是seam觀測標籤，不把已FULL A正常提前可讀當productionbug；雙SID共chunk原生ref計數沿既有backend。
+- mutation local-expired原根5807649e…原XML只有預定case，兩個合法SID各產I03_EXPIRED一次；原driver EndsWith單marker誤設而UNEXPECTED/killed=false，nativeExit1，XML AD2FCC6FE937B58316E4974832355B8EA3104AE334FA22B848C5CDCBF64D810D。原FAIL與result保留不改、不重跑，controller只讀semantic KILLED待N1核兩呼叫語意；exact兩marker最小修法僅續未跑三項。工具歷史表t3-fix1-mutation-driver-history.json並列T2 site-count1與本次marker-count1的實際driver／共用Gradle+XML流程，不依operator換名洗數，若同實際driver第三非預期即停。不是fixture第四次，也不是fullDriver第三。
+- 原fixture3/3與任何新同fixture非預期立即停、AccessDenied1/1／full driver歷史2全保。N0總Important6／N1含新項待，同席C/I0後才完整full與新SHA首次CI。
+
 ## T3 止損暫停：同一權威測試 fixture 三次非預期失敗（2026-11-14）
 
 - 現在T3 OPEN／STOP；production `a50613830004d083b2fe39e3f1edf38c712a013b`，定向驗證HEAD `ee2437e7137ed18162f609c1ad2e0748a7d1fdd3`。先前進度只併兩件，作者補核漏列事件後，同M7HomeAuthority／runGameTestM7 fixture依原user第三次規則及root保守分組累計3/3；不得用後續成功、nonce或docs改判／清數。這是流程暫停，不是T3結案。

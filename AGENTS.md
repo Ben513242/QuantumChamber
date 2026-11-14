@@ -120,6 +120,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 ## 目前接手入口
 
 **2026-11-14最新真user裁示：允許T3從fresh N0恢復後續完整門檻。** 原題與選項原文見M7 note「T3 保原判，從 fresh N0 恢復」／SDD user-t3-resume-ruling-20261114.md；保候選a506、原fixture3/3及所有FAIL，同fixture再任一非預期即停。已齊focused/mutations不盲重跑；fresh獨立N0 C/I0→fresh W10前置＋完整full→正常push新SHA首次五requiredCI→T3closed並自動T4。AccessDenied1/1與driver歷史2不刷新，舊CI4354不rerun；main/tag/人工開始/退役仍未授。下段STOP為恢復前歷史，不再作未授N0的hold。
+- T3 N0 C0/I6/M1（總6）後原作者fix1候選aa1d354e已凍結；RED六目標/GREEN9GT與九mutation還原已核（8原driverKILLED＋1原driverFAIL/semanticKILLED待N1），truthdocs後最終29JUnit/9GT＋guard2+12 focused，N1清零才full。expiry marker-count driver事件與T2 site-count歷史並列，不是fixture第四次；原fixture3/3任何再非預期即停，AccessDenied1/1/fullDriver歷史2不洗。
 
 **2026-11-14最新：T3因同一M7HomeAuthority fixture第三次非預期失敗（3/3）STOP，等使用者止損後續裁示。** sourcea5061383／定向驗證HEADee2437e；三原FAIL665／3ec／6ae保留，996已在途定向自然0與五mutation還原不抵計數。N0/full/本候選CI/push未啟，禁止新runtime/source整改/review/full/push或T4；只讀必要原件／鎖／truthdocs收尾可。四相關world鎖已獨占、無遊戲owner，只有GradleDaemon；詳M7 note「T3 止損暫停」與SDD t3-fixture-stop.json。
 

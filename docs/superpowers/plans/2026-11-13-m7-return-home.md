@@ -171,6 +171,10 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 
 ### Task 3: 核對 B／A、占用與有界 A 票
 
+**fix1候選（2026-11-14）**：sourceaa1d354e，六目標RED／GREEN9GT／九direct mutation livebytes還原已核；expiry原driverFAIL與semanticKILLED待N1分層保留，詳note。最後必要focused後同席N1，C/I0才full/CI，原fixture3/3不洗。
+
+**N0終局／fix1（2026-11-14）**：C0/I6/M1（Important總6），原作者fix1處理正式I01～I06；report task-3-review.md與M7 note，FIX_BASE35e0f40。N1含新項總數，C/I0才full；原fixture3/3與再任一非預期即停不變。
+
 **2026-11-14恢復裁示**：真user選「允許 N0 後續完整門檻（建議）」；原題/條件見M7 note與SDD user-t3-resume-ruling-20261114.md。從sourcea506既有證據freshN0，C/I0才完整full/新SHA首次五CI；保原fixture3/3、任何新同fixture非預期即停、AccessDenied1/1不刷新。下段STOP是歷史，不自動要求重跑已齊focused/mutations。
 
 **2026-11-14 STOP（未結案）**：同M7HomeAuthority／runGameTestM7 fixture三次非預期（665空A UUID／3ec初載範圍／6ae400tick卸載）3/3，依user止損＋root分組停報；sourcea5061383、定向HEADee2437e凍結，已在途996自然PASS不抵銷。N0/full/CI/push與下一task全部HOLD，僅只讀必要收尾／本機truthdocs；詳M7 note及SDD t3-fixture-stop.json，不自行恢復。
