@@ -1,6 +1,6 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3 現因fixture第三次非預期失敗止損暫停。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3 曾因fixture第三次非預期失敗止損，使用者現另明確授權從fresh N0恢復完整門檻。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
 ## 使用者新裁示：T2 起連續推進與新止損（2026-11-13）
 
@@ -28,6 +28,23 @@
 - 兩OS M7原件已真核：Win26JUnit/4GT、Ubuntu26JUnit/3GT，三FS案例無fail/error/skip（Ubuntu真symlink）、各九rawhash/11controls。Windows舊原XML166/13/1/60/35與main-only PASS/head935；M6-native原summary9鏈27phase及原log479反例全部符合既有scope。所有原件索引在本SDD T2-CLOSEOUT.md/json及ci-43554024617/。
 - 殘留T2-M03僅測試Win32 attrs失敗值診斷，非阻塞，交wholebranch；不加fix4。原CI43540208676/原AccessDenied/所有FAIL/UNKNOWN全留，full quota1/1耗盡不刷新，舊run未rerun。
 - 閉合狀態只本機docs commit，不為回填CI再push。現在依原user連續授權直接Task3新implementer＋獨立review，scope/spec/plan不重開審批；T3 BASE為8a6124416108621f895fa8e9fd57d1b39efdbcea，fresh作者已實作，詳下節。main/tag/人工開始/PR/LICENSE/退役仍未授。
+
+## 使用者 async 裁示：T3 保原判，從 fresh N0 恢復（2026-11-14）
+
+來源：主chat使用者async回覆，primary root核實轉交；原文另存SDD `user-t3-resume-ruling-20261114.md`，不是controller自行突破止損。
+
+原題：
+
+> T3 因同 fixture 3/3 非預期失敗已止損。是否保留原判，另授權候選 a5061383 從 fresh N0 恢復，C/I 清零後續完整回歸與新 SHA 首次 CI？既有證據不盲重跑；同 fixture 再非預期即停，AccessDenied 額度不刷新。
+
+使用者所選原文：
+
+> 允許 N0 後續完整門檻（建議）
+
+- 原STOP／同fixture3/3與全部原FAIL保留，不撤銷也不重分組洗數；同M7HomeAuthority fixture任何新非預期失敗立即再停，不等另三次。AccessDenied完整回歸重跑額度1/1耗盡不刷新，full driver歷史2及其他舊計數保留。
+- 恢復點是現候選sourcea5061383、STOPtruthdocs8d933e1、已驗HEAD ee2437e：先核實git/原件無漂移，fresh獨立N0審BASE8a612441起的完整候選。已齊29 M7JUnit／8GT／11controls／guard2+12／五direct mutations不盲重跑。若實質修正，回原作者具名RED/GREEN／direct mutation／focused與同席增量review；原兩輪Important總數含新項不下降止損仍生效。
+- N0 C/I0才fresh核已存在W10 producer pins/owner/locks/非reparse、actual child65001，沿M6 handle／ExitCode／stdout與stderr分檔跑新pin完整full；自然ENDALL0＋實際exit0＋summary原件全採，才正常feature push／遠端讀回／新SHA首次五required CI。全綠才T3closed五欄並直接freshT4；沒有舊CI4354 rerun、盲docs重推、main/tag/人工開始/退役授權。
+- 恢復前actual HEAD8d933e175bf8c7b49e33d7411d74b3e6b7e9ab14，tracked clean/ahead4；src/scripts/build/workflow對sourcea506差異空。所有舊STOP索引不覆寫，作歷史原件。
 
 ## T3 止損暫停：同一權威測試 fixture 三次非預期失敗（2026-11-14）
 
