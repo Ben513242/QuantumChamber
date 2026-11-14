@@ -120,6 +120,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 ## 目前接手入口
 
 **2026-11-14現行：T2 CLOSED，production0a36323e／本機full5df701af／成功CI-docs9358368e分清；CI43554024617 attempt1實際5required全success，接續T3新implementer。** Win26JUnit/4GT、Ubuntu26JUnit/3GT與真FS三案、九raw/11controls、舊Windows166/13/1/60/35/main-only、M6native9/27/479原件已核，詳M7 note/T2-CLOSEOUT。M03測試診斷Minor交wholebranch；原CI4354與AccessDenied等FAIL/UNKNOWN全保，quota1/1不刷新。此閉合docs只本機不重push造CIloop；Task3按已審plan連續做，不問已授scope，不在main實作，B guard至T7仍封。人工/main/tag/PR/LICENSE/退役仍未授。
+- T3目前source候選a5061383（BASE8a612441），該pin五owner mutations已報KILLED／還原，truthdocs同步後最後正式focused／N0仍待；getWorldChunk的固定版本javap核為getNow非同步等待。候選證據齊先獨立N0清零才完整full／同SHA五CI，不提前閉合；詳M7 note「T3 執行中」。
 - **full driver目前2/3**：長cwd267、短root outer未返回是同一實際full driver兩次非預期工具失敗，原因各保，不因新wrapper名/簽章/docs重置；新候選第三次即停報。可選hash/人工source解碼另列操作事件，不能冒稱遊戲失敗。
 - 新止損：同 task 同範圍 N0/N1/N2… Important 總數含新項，任一兩整改輪窗口未下降即停；同穩定 problem ID 驗證工具連續第三次非預期 FAIL 即停，不再疊修。expected RED／negative／mutation 正確拒絕分列；舊 FAIL／UNKNOWN／Evidence3／NativeStartup3／main-only2 保留。
 - T1 source67／CI57 的 CI43418385083 attempt1 五 job 真 success 原判不變，不重做 T1／PoC。既有 W10 producer 只核不重建／重套；production full 前照 README 核實並 UTF-8。人工代操作開始、main／tag／PR／LICENSE／退役仍未授。

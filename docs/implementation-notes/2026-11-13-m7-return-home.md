@@ -1,6 +1,6 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，production T2 正在實作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3 正在實作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
 ## 使用者新裁示：T2 起連續推進與新止損（2026-11-13）
 
@@ -27,7 +27,16 @@
 - T2 production `0a36323e469f190f432c19d16975d92742c7544c`，source N3 C0/I0/M1、本機full HEAD5df701af自然ENDALL0/actualExit0，成功CI/docs HEAD `9358368eab7893c14422e0a62276d09c815d32ab`。CI43554024617 attempt1/eventpush實際5required全completed/success，root已獨立核terminal身份；T2現closed，不代表M7整體完成。
 - 兩OS M7原件已真核：Win26JUnit/4GT、Ubuntu26JUnit/3GT，三FS案例無fail/error/skip（Ubuntu真symlink）、各九rawhash/11controls。Windows舊原XML166/13/1/60/35與main-only PASS/head935；M6-native原summary9鏈27phase及原log479反例全部符合既有scope。所有原件索引在本SDD T2-CLOSEOUT.md/json及ci-43554024617/。
 - 殘留T2-M03僅測試Win32 attrs失敗值診斷，非阻塞，交wholebranch；不加fix4。原CI43540208676/原AccessDenied/所有FAIL/UNKNOWN全留，full quota1/1耗盡不刷新，舊run未rerun。
-- 閉合狀態只本機docs commit，不為回填CI再push。現在依原user連續授權直接Task3新implementer＋獨立review，scope/spec/plan不重開審批；T3尚待正式派工BASE。main/tag/人工開始/PR/LICENSE/退役仍未授。
+- 閉合狀態只本機docs commit，不為回填CI再push。現在依原user連續授權直接Task3新implementer＋獨立review，scope/spec/plan不重開審批；T3 BASE為8a6124416108621f895fa8e9fd57d1b39efdbcea，fresh作者已實作，詳下節。main/tag/人工開始/PR/LICENSE/退役仍未授。
+
+## T3 執行中：端點權威、唯一占用與有界原艙票（2026-11-14）
+
+- 原user連續授權下，fresh作者 `/root/m7_t2_onward/t3_implementer`（gpt-6-astra/high）以8a612441為BASE實作；controller保留單一狀態writer，未重做T1/T2。普通B guard仍至T7才開。
+- 初RED root t3-red-665f9df0…的跨world同XZ coverage真assert expected26/actual25，以及 provisional首票前占用assert失敗成立；同root COMPLETE案僅fixture空A UUID例外，不採功能RED，保原件／fixture事件1。正式A attemptArm登記後新root t3-red-38e8a9cb…兩項精準GT RED待最終report原件核。
+- production候選已凍結為a50613830004d083b2fe39e3f1edf38c712a013b（22檔）；作者報該pin五個直接owner mutations各命中指定assertion、KILLED／bytes SHA還原，driver exit0。最後同內容focused root50516afb…已有29 M7JUnit／原guard及protection兩班／8GT exit0；下一步在本次truthdocs HEAD跑正式runner＋focused，再交N0，尚非taskclosed。追加400tick後B測站自然卸載的fixture FAIL原件保留，改為玩家回來時自然載入站點，沒有當目標RED。
+- 原艙FULL輪詢使用HomeRootTickets的getWorldChunk。固定Minecraft1.21/Yarn build9 javap原件為SDD t3-nonblocking-getWorldChunk.txt、holder.txt；controller已只讀確認cache或getOrNull→getUncheckedOrNull→CompletableFuture.getNow，沒有同步等待chunk；jar身分與精確source交最終report及獨立review核。
+- 必要增量接線：gates.ps1／m7-ci-gametest.ps1／ci-rule-check.ps1以受控inventory執行新增corridor JUnit／GT並核exact，保原T2及M6集合／閾值。ChamberPowerCoordinator／SuperpositionSession／SessionRecoveryState接線由作者逐項列對應原T3契約，與新增testmod backend fixture同交原task reviewer。
+- 門檻順序採候選＋具名RED/GREEN＋直接owner mutation＋focused齊→fresh獨立N0（spec+quality）C/I0→固定pin完整full→正常push／同SHA五required CI真全綠。full在途凍結source/HEAD；AccessDenied1/1與full driver歷史2、舊FAIL/UNKNOWN不刷新。
 
 ## 使用者新巡檢裁示：fix3只守canonical save內（2026-11-14）
 

@@ -176,6 +176,8 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 
 **修改**　`P/chamber/{ChamberCollapsePort,ChamberSessionGateway,ChamberSessions}.java`、`P/collapse/{CollapseAuthorities,ProjectionProtectionIndex,PassageTransferPolicy}.java`、`P/corridor/{CorridorPageManager,SlotAllocator}.java`、`P/superposition/SuperpositionSessionManager.java`、`src/testmod/resources/fabric.mod.json`、`S/m7-inventory.json`。
 
+**執行接線補記（2026-11-14）**　新corridor JUnit／GT由受控inventory驅動正式runner／exact驗證，故gates.ps1、m7-ci-gametest.ps1、ci-rule-check.ps1同task最小同步；ChamberPowerCoordinator、SuperpositionSession、SessionRecoveryState及testmod原生票fixture按本task權威／占用／共用coverage契約必要接線，由同一task reviewer核。順序為RED/GREEN／mutation／focused齊→獨立C/I0→固定pin完整full→同SHA五required CI，全門檻不減。
+
 **消費**　T2 全體 current/flushed 與 `HomeSessionRecord.EntryEndpoint`；既有 projection ledger、catalog、Universe lifecycle、registry、ChamberFrame、`PassageTransferPolicy.preloadChunks(ChamberFrame)`。
 
 **產出**　`HomeEndpointAuthority.resolveEntry(ServerWorld,ChamberControllerBlockEntity): Optional<EntryEndpoint>`、`checkRoot(MinecraftServer,ChamberOriginAuthority,boolean requirePower): RootStatus`（READY／UNKNOWN／LOW／DISABLED／INVALID_STRUCTURE／DESTROYED／IDENTITY_MISMATCH）；另產出 `inspectEntry(MinecraftServer,EntryEndpoint): EntryStatus`，值為 VALID／UNKNOWN／ENTRY_AUTHORITY_INVALID／AUTHORITY_CORRUPT／AUTHORITY_UNREADABLE，供 T4/T6 區分缺載、拒絕、永久與可重試封存。
