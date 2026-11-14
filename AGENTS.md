@@ -119,7 +119,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-14現行：T2 fix3 production候選0a36323e469f190f432c19d16975d92742c7544c已凍結，Windows focused128／M7 26JUnit/4GT/11SelfTest與兩owner mutation已核，待原席N3。** 真user邊界：constructor save.toRealPath一次，只守save內，save以上junction/symlink/8dot3允許不查，內部data junction拒；真Windows三案例已RED/GREEN，非Windows分支待新UbuntuCI真跑。specv1.3/scope已新原席C0I0核准；I07 source修復仍待N3/full/新SHA首次CI，舊CI43540208676自然3success2fail原件留、不rerun。AccessDenied quota1/1已用完不因新pin刷新；舊上層拒絕推論不採，workspace/probe安全不改。source/HEAD在途不動，T3未啟。
+**2026-11-14現行：T2 N3 C0/I0/M1，I07已解，production0a36323e固定；接新pin完整full／新SHA首次CI，仍未closed/未T3。** 真user邊界已落實：save constructor realPath一次、save以上link/alias允許不查、內部data/receipt/leaf守門；真Windows三FS與mutation/focused128原席已核。M03僅測試診斷Minor留殘留，不另fix4。fresh post12 runtimeOwners0/164鎖/pins exact，必要docs後按已授直接full/actual child65001/真handleExitCode；AccessDenied full quota1/1已耗盡，任何同簽章停，newpin不刷新。成功才正常push/新SHA5CI，舊CI43540208676原FAIL不rerun，main/tag/人工等仍未授。
 - **full driver目前2/3**：長cwd267、短root outer未返回是同一實際full driver兩次非預期工具失敗，原因各保，不因新wrapper名/簽章/docs重置；新候選第三次即停報。可選hash/人工source解碼另列操作事件，不能冒稱遊戲失敗。
 - 新止損：同 task 同範圍 N0/N1/N2… Important 總數含新項，任一兩整改輪窗口未下降即停；同穩定 problem ID 驗證工具連續第三次非預期 FAIL 即停，不再疊修。expected RED／negative／mutation 正確拒絕分列；舊 FAIL／UNKNOWN／Evidence3／NativeStartup3／main-only2 保留。
 - T1 source67／CI57 的 CI43418385083 attempt1 五 job 真 success 原判不變，不重做 T1／PoC。既有 W10 producer 只核不重建／重套；production full 前照 README 核實並 UTF-8。人工代操作開始、main／tag／PR／LICENSE／退役仍未授。

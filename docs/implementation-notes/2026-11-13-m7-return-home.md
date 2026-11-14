@@ -43,7 +43,12 @@
 
 現行技術邊界與流程：
 
-- fix3 production新candidate `0a36323e469f190f432c19d16975d92742c7544c`（5檔）已凍結，實作按新user只守canonical save內；N3待原席，不能先稱I07已清。五類focused 13/9/52/13/41共128，Windows M7 26JUnit/4GT與11SelfTest自然0；controller `t2-fix3-focused-controller-readback.json`已核實際XML/hash/九raw/pin。非Windows symlink分支只完成實作／靜態，待新SHA Ubuntu CI，不冒稱本機Linux已驗。
+- 原唯一席N3正式通過：spec符合／qualityApproved，C0/I0/M1，I07 ADDRESSED。N0=5→N1=1→N2=0→N3=0，沒有刷新輪數或帶過Important；scope審0與sourceN3採用分清。唯一殘留T2-M03為Windows測試helper未先排除GetFileAttributes=-1，因junction另有cmd成功與sameFile驗證/真mutation，屬非阻塞診斷缺口，留wholebranch不另開fix4。
+- 現在production固定0a36323e，N3 source全清；postcheck12 fresh核164鎖可獨占／runtimeOwners0／producer固定pins/hash/非reparse。必要truth docs後直接新pin完整run-all，沿已工作M6同一process handle/HasExited/ExitCode、stdout-stderr分檔與actual child65001；不再跑focused或N2/N3，不改source/HEAD在途內容。
+- 此新codepin的完整full不是重置重跑額度：AccessDenied full quota1/1仍已用完，若同簽章再現停報，不能自行再跑。fullDriver既有工具2次/site1/原CI所有FAIL保留。full自然ENDALL0＋actual ExitCode0＋summary才採；成功後正常push新SHA首次5requiredCI，舊CI43540208676不rerun，全部真success才T2closed→T3。
+
+
+- fix3 production新candidate `0a36323e469f190f432c19d16975d92742c7544c`（5檔）已凍結，實作按新user只守canonical save內；該candidate原件由下述N3採用，source I07已清但完整full/新CI仍待。五類focused 13/9/52/13/41共128，Windows M7 26JUnit/4GT與11SelfTest自然0；controller `t2-fix3-focused-controller-readback.json`已核實際XML/hash/九raw/pin。非Windows symlink分支只完成實作／靜態，待新SHA Ubuntu CI，不冒稱本機Linux已驗。
 - 三真Windows FS具名RED原9案恰兩個正例FAIL，真GetShortPathName取得JUNIT4~1及真linked-worlds junction祖先傳入owner被舊行30拒；內部data-junction負例原本即PASS。修後GREEN9/9；兩直接owner mutation（撤canonical→兩正例FAIL；撤內部guard→data-junction拒絕assert FAIL）由controller核原XML/hash、保存原/變異Java bytes、還原SHA/currentOwner一致。post盤點正式clean檔 t2-fix3-post-production-path-inventory-clean.txt（先前mutation在途版僅歷史，不採）。
 - 作者report SHA `9E6FA6CE8E17FAB5D6E99F34FD5BCA350B173721780FF7F7F1B853D549480AC1`，before-full副本保原。仍須同席N3 C/I0→新pin完整full→新SHA首次5requiredCI；不重跑舊CI43540208676，AccessDenied full quota1/1不刷新，所有原FAIL不改。
 
