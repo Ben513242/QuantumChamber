@@ -22,6 +22,34 @@
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
+## 使用者新巡檢裁示：fix3只守canonical save內（2026-11-14）
+
+來源：本 Codex 使用者新訊息，由root完整存於SDD `user-t2-ci-path-ruling-from-root-20261114.md`。以下逐字照錄Markdown跳脫；實際FS路徑字元以CI原件為準，不把原文中的跳脫直接當測試輸入。
+
+> 巡檢回饋（11-14）：CI 43540208676 的 Windows 失敗已由 Claude 從 artifact 定位，是確定的 production 缺陷，不是偶發，不要重跑 CI。
+>
+> 根因
+> - 兩個失敗 job 的 JUnit XML 都是：IOException「收據目錄不符合存檔實體路徑：C:\Users\RUNNER\~1」。
+> - HomeReceiptStore.directory()（:17-30）從磁碟根逐層要求非 reparse，且 toRealPath().equals(cursor)。GitHub runner 的 TEMP 是 8.3 短檔名 RUNNER\~1，toRealPath 展開成長檔名，比對失敗。本機路徑沒有短檔名，所以本機 full 抓不到。
+> - 本機重現：Paths.get("C:\\\PROGRA\~1").toRealPath().equals(...) 為 false。
+> - 玩家影響：存檔上層只要有 junction、符號連結或短檔名，回程收據就一律 fail closed。
+> - spec §165 只要求收據的檔案與目錄是 canonical、非 reparse，而且在指定 save 內，沒有要求 save 以上的每一層。
+>
+> 修法方向（T2 fix round，production 完整門檻）
+> 1. 建構時把 save 根 toRealPath 一次；之後只檢查 save 以內的 data、quantumchamber_home_receipts 和收據檔，save 以上不檢查。save 內任何一層是 reparse 仍要拒絕。
+> 2. 具名 RED：Windows 上用短檔名（GetShortPathName）和 junction 祖先構成 save 路徑，發佈與查詢要成功；save 內的 data 是 junction 時仍要拒絕。並以 mutation 證明守門有效。
+> 3. grep 其他新的 production 程式有沒有同樣「逐層檢查祖先」的寫法。
+> 4. 原 FAIL 與 CI 原件保留；新 code pin 走 focused、完整 run-all、同 SHA CI。完整回歸的 AccessDenied 重跑額度已用完，依原規則處理。
+
+現行技術邊界與流程：
+
+- 以上是真user新binding，**取代**root及原席先前「先驗save以上原始祖先鏈非reparse」的技術推論。舊 `t2-ci-windows-path-readonly-analysis.md`／`t2-ci-path-contract-review.md` 保原判為歷史，不能採為新版清零；其原始bytes保留，不用新用語倒寫舊結論。
+- 構造時對save根 `toRealPath()` 一次，存取時只檢查canonical save以內的 `data`、`quantumchamber_home_receipts` 及收據檔。**save以上junction／symlink／8.3短名允許且不檢查**；save內任何reparse仍拒。不是刪掉內部安全gate，也不是新建handle-based FS／alias框架。
+- Windows真 `GetShortPathName`＋ancestor junction的save輸入須具名RED後publish／lookup成功；save內data junction仍拒，直接owner mutation證守門。其他OS用真實對應契約和精確集合，不能skip冒PASS／新增Linux程序管理。fixture採正式save/data布局但保原始alias正向輸入；rg其餘新增production同型祖先檢查。
+- 使用者提供的Claude artifact定位及本機PROGRA~1復現是外部已提供證據，controller本輪沒有執行該復現。原CI14個直接stack／2個上層斷言及未保存的predicate分項仍照原件，不回填當時觀察；新user已明確定義正確保存邊界，正式整合缺口T2-I07進fix3。
+- 先原唯一席按本段及spec§5.3/test matrix/plan新版窄確認C/I0，再原author fix3 production完整門檻；新codepin focused／mutation／完整run-all／同席N3／新SHA首次CI。不是重跑CI43540208676，也不只換docs盲推；其他remote jobs自然終局，不取消。源碼目前仍f3，尚未實作fix3。
+- AccessDenied完整full重跑額度**1/1已用完**，不能因新pin重置；full driver歷史工具2次與原mutation-site1／原FAIL／UNKNOWN全保，止損不洗。main/tag/PR/LICENSE/人工/退役仍未授；技術窄修不再另問user核可。
+
 ## 使用者 async 裁示：T2 原 pin 單次完整重跑（2026-11-14）
 
 來源：本 Codex 使用者對 root async 題目的明確回覆；原文另存 SDD `user-t2-full-once-ruling-20261114.md`。題目原文：
@@ -38,8 +66,11 @@
 - 成功才必要docs truth／正常feature push／遠端讀回／追同SHA全部5 required CI真終局；不授CI rerun或CI失敗換docs重推。真全綠才T2closed，依既有連續授權進T3。source仍不得修改；main/tag/PR/LICENSE/人工開始/退役仍未授。
 - 原stop-index保runtime AccessDenied原FAIL1，單次重跑已用1/1；原報告8b42…已保獨立before-authorized-retry副本，原XML/log/world不動。
 
-## T2 本機完整重跑PASS；待普通push／同SHA遠端CI（2026-11-14）
+## T2 本機full PASS且已push56fcbdb；同SHA CI43540208676待終局（2026-11-14）
 
+- 已依條件正常feature push：`56fcbdb70ed3affcb0943ca9ee48db0106787765`，origin `codex/m7-return-home` 從57ca71a快轉，非force/main/tag；ls-remote exact同SHA，proof `t2-push-readback.json`。production仍f3，本機完整full驗證HEAD9bd與pushed docs pin56分清，runtime內容diff空。
+- 已出現真同SHA [CI43540208676](https://github.com/Ben513242/QuantumChamber/actions/runs/43540208676)，attempt1/eventpush，實際5 required jobs（M7 Windows、M7 Ubuntu、build、windows-native、m6-native）in_progress，initial JSON在本SDD/ci-43540208676/。目前未CI全綠，不得closed/啟T3；只讀watch與保原件，不rerun、不為CI改docs重推。
+- 這筆push/CI在途真相先同步workingtree docs與ledger，**不另commit/push製造第二CI**；終局後必要local closure docs由下一正常task提交帶上。
 - **唯一授權重跑已PASS，used1/1。** production `f3a79ec182653492fcbe5a41313cbf1e41c2a4e8`、驗證HEAD `9bd1959d16a0c708095ee002bc9780e11e071540`，09:16:27自然 `END ALL exit=0`，原holder PID38032同一handle實際ExitCode0、exec outer0、exit.txt0。summary SHA `7A40006A3CC6C2A03E6E0D8D1AECAA0D59E7373AFD51B3C8F1F508FF03B6C9DB`，run-all `2335932e4e614a8ea5c51ccae3e365bd`；controller `t2-authorized-retry-full-controller-readback.json`已親核head/退出/summary與M7九raw/XML。
 - 本輪default166/normal13/legacy1/M560/M635、M7 Windows23JUnit/4GT零nonPass，完整JUnit1158、failure/error0，2個既有NonWindowsPlayerCheckpointStore平台案在Windows條件skip（M7無skip）；main-only、M3、recovery25、collapse69、M6 native9鏈27phase（2diagnostic/25functional）、本機CI規則按既有scope完成。不將預定halt77稱全正常停服，也不把本機Ubuntu規則模擬稱真正Ubuntu CI。
 - 前次失敗的同名projection overlap案本輪通過，M5原XML60/60、零fail/skip，SHA `B70A22C3…`；原b893 FAIL/E0FBB212…/08625635…及當時world末態全部保留不改。重跑成功不證OS拒絕的底層根因，亦未修M5production/OS/oracle。fullDriver舊工具事件2次仍保，沒有第三工具失敗；本次waiver用盡，不含CI rerun。

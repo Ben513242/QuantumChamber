@@ -5,7 +5,7 @@
 **目標（Goal）**　合法 COMPLETE 投影 B 的參與者走固定回家門，先回 B，再經 B 的膜以原座標回 A。旅程終局可安全解除同艙占用。
 **架構（Architecture）**　將既有 checked journal 擴充為能同存舊列與 HOME 列的單一權威。沿用走廊、回收、票額、原生移動與 chunk checkpoint，分別核對 Entry=B 與 Root=A。每 SID 的終局收據保留歷史，活躍列負責完成 B 的最後門狀態。
 **技術基線（Tech Stack）**　Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Loom 1.7.4、Java 21、Gradle 8.8、PowerShell 7。
-**對應規格（Spec）**　[v1.2 T1 M6同等驗證勘誤已採用](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `F38E7670B46C82872B37B4C90786676348904ADFF4DA6C6A9A2EBC1EFF95C73D`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
+**對應規格（Spec）**　[v1.3 save邊界技術澄清待窄確認](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `428A5F6D10EC985F71E00D7C5DB06F1EF5B2FB16F55FC6DA33F9F13E27AAE1F2`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
 
 ## 2026-11-13 現行續行授權與止損
 
@@ -122,6 +122,16 @@
 2026-11-14 N2原席C0/I0/M1（N0=5→N1=1→N2=0），source f3a79ec；M02舊時態已同步。可接修後完整full/同SHA全CI，仍未closed，最末項未預勾。
 
 2026-11-14授權單次重跑已自然ENDALL0＋actual ExitCode0（fullHEAD9bd/sourcef3，used1/1，summary7A40006A…），N2 C/I0；原FAIL保留。待正常push與同SHA5requiredCI真全綠，最後Controller閉合項仍未勾、T2未closed。
+
+#### 2026-11-14 fix3：依真user新保存邊界修production
+
+此段優先於root／原席先前「先驗save以上原鏈非reparse」推論；原文見note新巡檢節／SDD user-t2-ci-path-ruling-from-root-20261114.md。原N2=0歷史保留，CI新整合缺口I07待fix3，不能把舊scope審當新版清零。
+
+- [ ] 原同席窄確認spec§5.3／V01與本fix3清單忠實於user新方向C/I0，不重開其他玩法；之後原author做production fix3。
+- [ ] 最小改 `P/persistence/HomeReceiptStore.java` 構造時save.toRealPath一次，只守save內data/receiptDir/leaf；必要正式caller受控IO路徑隨同小改，save以上junction/symlink/短名不拒、不檢查，內部reparse/containment/strict/exact/no-clobber全保。
+- [ ] 具名Windows真GetShortPathName原始短名及ancestor junction成功publish/lookup，data junction拒；其他OS真實對應正負案例／exact集合，無M7skip假PASS；修 `J/persistence/{M7HomeHistoryTest,M7HomeJournalTest}.java` 正式save/data布局，新增最小必要具名path測試及 `S/m7-inventory.json`，不建FS/alias框架。
+- [ ] rg其餘新production逐層祖先檢查同型並列窄處置；RED/直接owner mutation/bytes還原/必要focused，凍結新codepin、同席N3 C/I0後完整run-all、正常push新SHA首次全部required CI。原CI43540208676／所有FAIL不變，不rerun舊CI或只換docs重推。
+- [ ] AccessDenied full單次額度1/1已用完，不因新pin重置；完整producer／UTF8／owner/locks前置及既有止損照舊，source正確性修正不是豁免安全或驗收門檻。
 
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 

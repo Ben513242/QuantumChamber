@@ -1,7 +1,8 @@
-# M7 正規回程：binding spec（v1.2，T1 M6同等驗證勘誤已採用）
+# M7 正規回程：binding spec（v1.3，save邊界技術澄清待窄確認）
 
 日期：2026-11-13。基準工作樹：`codex/m7-return-home`，從 main `2255027` 開出。
 狀態：v1.0玩法/資料契約已第三輪C0/I0/M0採用，v1.1驗證平台勘誤亦曾採用。v1.2僅為使用者新裁示的T1 M6同等驗證收斂修訂，原同席C0/I0/M1後採用；玩法不改，本文不是實作/測試/人工/整合結果。
+v1.3狀態：2026-11-14真user巡檢明確canonical save邊界；僅本技術澄清/測試矩陣待原同席窄確認，不重開其他已採用玩法或資料契約。來源原文見M7 note最上方「fix3只守canonical save內」。本文不代表fix3已實作/驗證。
 範圍唯一來源：[M7 note](../../implementation-notes/2026-11-13-m7-return-home.md) 的使用者裁示。
 未明列改變的 M2／M4／M5／M6 契約維持；建議稿不是另一份 binding spec。
 
@@ -163,6 +164,8 @@ Root、Entry、SID、Chamber、semantics、travel capability與 participant sour
 
 - 檔案固定`<save>/data/quantumchamber_home_receipts/<canonical-lowercase-SID>.dat`，只按已知SID exact lookup，不全目錄掃描、不載入全部歷史、不設世界終身次數上限。單檔沿§5.1同bytes／16MiB／raw strict契約。
 - admission對新候選SID查同名檔，存在即拒絕重用，不靠全歷史索引。檔案／目錄須為已驗canonical非reparse且在指定save內；不是可由client提供的任意路徑。
+- **canonical save邊界（2026-11-14真user澄清）**：`HomeReceiptStore`構造時對傳入save根呼叫`toRealPath()`一次，以所得canonical save作保存邊界。save以上祖先可有junction／symbolic link／Windows 8.3短名，**不檢查save以上祖先**；不能以尚未展開的合法拼寫與realPath字面不同拒絕。之後只檢查該save內的`data`、`quantumchamber_home_receipts`及收據檔，任何save內reparse（含junction／symlink）仍拒；固定子路徑、containment、普通目錄／檔案、同handle strict bytes、完整wrapper exact、原子不覆寫均不變。此保存邊界不改worktree／probe的既有路徑安全規則。
+- 正向具名證據須在Windows用真`GetShortPathName`和ancestor junction構成原始save路徑，經正式owner發佈及查詢成功；負向是save內`data`為junction仍拒且不寫出save，並以直接owner mutation證守門。其他OS以真實對應的ancestor symlink成功／save內link拒絕等契約與精確集合驗證，不以skip充PASS，不建立新FS/alias或Linux程序管理框架。
 - receipt wrapper沿既有`DataVersion:int`＋`data:compound`；data恰為`{SchemaVersion:int=1, SessionUuid:UUID, CloseIntent:compound, Session:compound}`，未知版本／多缺鍵／錯type／原始重鍵均拒絕。
 - CLOSE恰為`{Kind:string="CLOSE", CloseRevision:int=1, CloseReason:string, ClosedAtGameTime:long≥0, DoorGoal:string, Evidence:compound}`。reason、合法來源state、證據、時序與DoorGoal完全依§9.2共同矩陣，不可各writer另猜。
 - receipt.Session是凍結active整列**僅把Home.CloseIntent正規化為NONE**的canonical快照；外層CloseIntent保留CLOSE，避免遞迴／自hash。SID／Root／Entry／Selection／Crossed／原timing全保留；全Returned且空lease。
@@ -320,7 +323,7 @@ provisional檢查 → checked ARMING → checked SUPERPOSITION
 
 | ID | 自動驗收（每列至少一項精確斷言） |
 | --- | --- |
-| V01 | schema1–5fixtures不變；schema6／receipt exact keys／type／raw重鍵／未知版拒絕、同bytes provenance與16MiB臨界NBT；合法25人大快照、接近16MiB時舊session成長＋HOME remap新舊lease並存不低估／不侵占close餘額，所有共用writer皆驗，舊build拒6。 |
+| V01 | save上層合法短名／junction／symlink可用、Windows真GetShortPathName／ancestor junction發佈查詢成功、save內data junction／reparse拒且mutation守門；schema1–5fixtures不變；schema6／receipt exact keys／type／raw重鍵／未知版拒絕、同bytes provenance與16MiB臨界NBT；合法25人大快照、接近16MiB時舊session成長＋HOME remap新舊lease並存不低估／不侵占close餘額，所有共用writer皆驗，舊build拒6。 |
 | V02 | COMPLETE＋live B才能啟動；PENDING／foreign／偽BE UUID／錯U／錯frame／ledger遺失／退化各拒絕，B不註冊Origin。 |
 | V03 | A未載入→UNKNOWN→FULL後判ON／OFF／disabled／missing；選後OFF仍回A；201tick才FULL保同SID續行，READY不加時；同tick關啟、未返完／DORMANT無runtime停用、partial Crossed與stop重啟保latch。跨JVM使registry disabled已存而HOME stop未存，先嘗試enable再觸發B，原SID仍不能續行；普通LOW不latch。 |
 | V04 | B取消、牛奶、cohort任一Buff失效、離線與重啟返還皆回exact B；HOME才到A，舊SOURCE fast path不變。 |
