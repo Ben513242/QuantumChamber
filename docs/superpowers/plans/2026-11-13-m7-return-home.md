@@ -121,6 +121,8 @@
 
 2026-11-14 N2原席C0/I0/M1（N0=5→N1=1→N2=0），source f3a79ec；M02舊時態已同步。可接修後完整full/同SHA全CI，仍未closed，最末項未預勾。
 
+2026-11-14授權單次重跑已自然ENDALL0＋actual ExitCode0（fullHEAD9bd/sourcef3，used1/1，summary7A40006A…），N2 C/I0；原FAIL保留。待正常push與同SHA5requiredCI真全綠，最後Controller閉合項仍未勾、T2未closed。
+
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 
 **產出**　`sealed interface JournalSession` 共同提供 `UUID sessionUuid()/chamberUuid()`、`List<Participant> participants()`、`List<SpaceLease> spaceLeases()`、`SessionState state()`。舊 record 與新 `HomeSessionRecord` 實作；新列提供 `ChamberOriginAuthority rootAnchor()`、`HomeSessionRecord.EntryEndpoint entryEndpoint()`、`HomeSessionRecord.Home home()`。
@@ -132,23 +134,24 @@
 
 - [x] RED：`mixedRowsAndEmptyJournalKeepSix`、`legacyAppendCannotSpendUnselectedRemapAndCloseReserve`、`duplicateRawKeysAndHistoryMismatchFailClosed`；現行版拒合法 schema6／沒有 HOME 寫入路徑，先保存具名失敗。
 
-- [ ] schema1–5 留舊 exact 流程；schema6 envelope 僅 SchemaVersion/Records，無 RecordVersion 必恰舊12欄且有 context，有則必 int 2＋精確 §5.2 新列。新列 travel=1、semantics=LATERAL_BUFF_MAINTAINED、restore byte=0；root/entry 同 chamber、位置／facing 相同。讀寫全欄 types、enum、time 溢位、UUID、空 list held type、有限值／±0、1..25 人及快照不可變。不得混裝 legacy return-only；schema3 升版舊 Collapse 空；已升6即使清空仍為6。
+- [x] schema1–5 留舊 exact 流程；schema6 envelope 僅 SchemaVersion/Records，無 RecordVersion 必恰舊12欄且有 context，有則必 int 2＋精確 §5.2 新列。新列 travel=1、semantics=LATERAL_BUFF_MAINTAINED、restore byte=0；root/entry 同 chamber、位置／facing 相同。讀寫全欄 types、enum、time 溢位、UUID、空 list held type、有限值／±0、1..25 人及快照不可變。不得混裝 legacy return-only；schema3 升版舊 Collapse 空；已升6即使清空仍為6。
 
-- [ ] 將 current／flushed、quarantine、pending、未知寫入收斂與 ownership 以同一資料源管理；舊型別 accessor 可提供相容檢視，全體讀者依 task 接線：本 task 接資料層玩家占用、reservation/collision、write/save/init；T3 接全域 busy；T4 接 startup fence；T5 接 startup space/recovery；T6 接 collapse。全數接妥前封住一般 activation。首次 checked ARMING 僅在既有 M5 instance authority 初始化且無未確認寫入。schema6 pending／readback 驗完整 wrapper、active 及 CLOSE。
+- [x] 將 current／flushed、quarantine、pending、未知寫入收斂與 ownership 以同一資料源管理；舊型別 accessor 可提供相容檢視，全體讀者依 task 接線：本 task 接資料層玩家占用、reservation/collision、write/save/init；T3 接全域 busy；T4 接 startup fence；T5 接 startup space/recovery；T6 接 collapse。全數接妥前封住一般 activation。首次 checked ARMING 僅在既有 M5 instance authority 初始化且無未確認寫入。schema6 pending／readback 驗完整 wrapper、active 及 CLOSE。
 
 - [x] 移入I2正式設計反證：`fixed_lease_reserve_covers_root_latch_and_collapsing`，以合法MEASURED+32 lease保留租約時寫ROOT_INVALID_STRUCTURE或進COLLAPSING，預留不可是0；同驗其他固定集合/共享舊append保HOME完成餘額。舊XML50397→50397/reserve0與原FAIL留歷史，須正式production owner修正及mutation證明，不靠T1範圍分類假關。
 
-- [ ] 由正式schema6與可達狀態證明公式計算 `HomeJournalBudget.requireReserved(NbtCompound wrapped): void`，以正式編碼及相同 tracker 核每個 writer 變更前的可容納性、成功後的 exact readback。舊 append、put、remap、upgrade、共享 writer 不得侵占；preselected phase 保 64、selected 按凍結集合，獨立最壞 receipt 也核。越界維持原 journal／mapping，不能因拒增長取消原隊伍。checked ARMING 前同時核 SID 的合法單檔上界與發布能力，拒絕不得改動既有 journal 或租約。
+- [x] 由正式schema6與可達狀態證明公式計算 `HomeJournalBudget.requireReserved(NbtCompound wrapped): void`，以正式編碼及相同 tracker 核每個 writer 變更前的可容納性、成功後的 exact readback。舊 append、put、remap、upgrade、共享 writer 不得侵占；preselected phase 保 64、selected 按凍結集合，獨立最壞 receipt 也核。越界維持原 journal／mapping，不能因拒增長取消原隊伍。checked ARMING 前同時核 SID 的合法單檔上界與發布能力，拒絕不得改動既有 journal 或租約。
 
-- [ ] DONE 條件採 spec §9.1 單步狀態／進度矩陣與 ownership，§9.2 各原因的 state／Evidence／時序／DoorGoal 成對嚴驗；old sameAuthority／occupies 原義。恢復或未知的邊用 spec 指定 CAS，禁止跨 state 夾改核心身分、合併變更或 CLOSE 後續移動。
+- [x] DONE 條件採 spec §9.1 單步狀態／進度矩陣與 ownership，§9.2 各原因的 state／Evidence／時序／DoorGoal 成對嚴驗；old sameAuthority／occupies 原義。恢復或未知的邊用 spec 指定 CAS，禁止跨 state 夾改核心身分、合併變更或 CLOSE 後續移動。
 
-- [ ] 使用 T1 發布機制，save canonical/非 reparse，按 lowercase SID 單檔精查；`DataVersion,data{SchemaVersion=1,SessionUuid,CloseIntent,Session}`，Session 僅內 CLOSE 正規化 NONE。active/receipt 同 SID 僅容許 exact 凍結 CLOSE。既存錯配／損壞保持原件；無能力即拒新 HOME，不掃目錄，失敗 temp 留證。
+- [x] 使用 T1 發布機制，save canonical/非 reparse，按 lowercase SID 單檔精查；`DataVersion,data{SchemaVersion=1,SessionUuid,CloseIntent,Session}`，Session 僅內 CLOSE 正規化 NONE。active/receipt 同 SID 僅容許 exact 凍結 CLOSE。既存錯配／損壞保持原件；無能力即拒新 HOME，不掃目錄，失敗 temp 留證。
 
 - [x] GREEN：所有舊 schema fixtures 及 25 人／64 slot 值、硬連結競爭、預算邊界、parse path 切換皆實跑；以基線 `2255027` 的真正舊 reader 或隔離 classpath 讀固定 schema6 bytes，須拒絕。README 說明首次 HOME 升6 後舊 build 不可降版；備份資料不能被測試改寫。
 
 - [x] 變異 production：raw walker 漏 Home 內層、把 tracker 換 unlimited、未選只保現有 lease、選後漏 CLOSE、舊 append 跳預算、replace 既存 SID、空 journal 降版，各由上述正式 reader/writer 測試 killed 並逐檔還原。focused 跑兩個新 JUnit、SessionJournalSchemaFiveTest／SessionRecoverySchema3Test 與 M7 全集合。
 
 - [ ] Controller 同步並逐檔 stage T2 清單，本機候選 `feat: 支援有界 schema6 與不可變回程收據`。先依 README 重建／核 W10，再跑乾淨 pin 的完整 run-all；獨立規格／品質 C/I 清零、記 docs truth、正常 push 並核同 SHA CI 才 closed。
+
 
 ### Task 3: 核對 B／A、占用與有界 A 票
 

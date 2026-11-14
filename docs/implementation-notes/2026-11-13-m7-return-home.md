@@ -32,13 +32,21 @@
 
 > 允許原 pin 完整重跑一次（建議）
 
-- 現行授權解除本項runtime HOLD：source `f3a79ec182653492fcbe5a41313cbf1e41c2a4e8` 不改碼／測試／script／build／workflow，保全部原FAIL/UNKNOWN，僅新nonce短預設root**完整run-all一次**。retryUsed目前0/1，實際啟動才記1；必要truth docs可本機commit，docs SHA不重置同code額度。下方未授/HOLD文字是裁示前歷史，不覆蓋本段。
+- 現行授權解除本項runtime HOLD：source `f3a79ec182653492fcbe5a41313cbf1e41c2a4e8` 不改碼／測試／script／build／workflow，保全部原FAIL/UNKNOWN，僅新nonce短預設root**完整run-all一次**。授權記錄時retryUsed為0/1；實際於2026-11-14T00:04:52.5937338Z啟動後已記1/1；必要truth docs可本機commit，docs SHA不重置同code額度。下方未授/HOLD文字是裁示前歷史，不覆蓋本段。
 - 跑前fresh核HEAD/dirty與f3 runtime內容無差、W10既有producer身份/pins/非reparse/owner/locks及actual child65001；沿已工作M6 process handle/HasExited/ExitCode、stdout/stderr分實檔，不改gate/threshold、不造新framework、不重做T1/N2/focused。
 - 自然ENDALL0＋actual process ExitCode0＋全summary才採。同AccessDenied再現立即停；同fullDriver第三非預期工具FAIL立即停（歷史2/3），其他FAIL保原件先報/分類，禁止盲重跑。
 - 成功才必要docs truth／正常feature push／遠端讀回／追同SHA全部5 required CI真終局；不授CI rerun或CI失敗換docs重推。真全綠才T2closed，依既有連續授權進T3。source仍不得修改；main/tag/PR/LICENSE/人工開始/退役仍未授。
-- 原stop-index保runtime AccessDenied原FAIL1，重跑目前used0/1；原報告8b42…已保獨立before-authorized-retry副本，原XML/log/world不動。
+- 原stop-index保runtime AccessDenied原FAIL1，單次重跑已用1/1；原報告8b42…已保獨立before-authorized-retry副本，原XML/log/world不動。
 
-## T2 full遇AccessDenied已停；單次新nonce重跑待使用者裁示（2026-11-14）
+## T2 本機完整重跑PASS；待普通push／同SHA遠端CI（2026-11-14）
+
+- **唯一授權重跑已PASS，used1/1。** production `f3a79ec182653492fcbe5a41313cbf1e41c2a4e8`、驗證HEAD `9bd1959d16a0c708095ee002bc9780e11e071540`，09:16:27自然 `END ALL exit=0`，原holder PID38032同一handle實際ExitCode0、exec outer0、exit.txt0。summary SHA `7A40006A3CC6C2A03E6E0D8D1AECAA0D59E7373AFD51B3C8F1F508FF03B6C9DB`，run-all `2335932e4e614a8ea5c51ccae3e365bd`；controller `t2-authorized-retry-full-controller-readback.json`已親核head/退出/summary與M7九raw/XML。
+- 本輪default166/normal13/legacy1/M560/M635、M7 Windows23JUnit/4GT零nonPass，完整JUnit1158、failure/error0，2個既有NonWindowsPlayerCheckpointStore平台案在Windows條件skip（M7無skip）；main-only、M3、recovery25、collapse69、M6 native9鏈27phase（2diagnostic/25functional）、本機CI規則按既有scope完成。不將預定halt77稱全正常停服，也不把本機Ubuntu規則模擬稱真正Ubuntu CI。
+- 前次失敗的同名projection overlap案本輪通過，M5原XML60/60、零fail/skip，SHA `B70A22C3…`；原b893 FAIL/E0FBB212…/08625635…及當時world末態全部保留不改。重跑成功不證OS拒絕的底層根因，亦未修M5production/OS/oracle。fullDriver舊工具事件2次仍保，沒有第三工具失敗；本次waiver用盡，不含CI rerun。
+- postcheck11：run內/producer163把session.lock可獨占、runtimeOwners0、producer固定pins/hash/非reparse exact；worktree clean，對f3 source/tests/scripts/build/gradle/workflow差異空。原作者報告已追加本輪，SHA `C13AA61C75FD87ACD2604C6B99259F66B67C96D8BC9D9CC092C9AF282D76894E`。
+- 現在只做必要truth docs與正常feature push/遠端SHA讀回，再追同SHA全部5 required CI。**CI尚未執行／核實，T2仍OPEN，未啟T3。** 不另做本機測試/重跑N2；source仍f3，新的docs SHA不是新production pin，也不重置任何額度。CI FAIL保原件停報，不rerun或換docs重推。
+
+以下為各次歷史原件／停點，不能用其中舊現在式覆蓋上方最新授權full結果：
 
 - 修後完整full已自然FAIL：source `f3a79ec182653492fcbe5a41313cbf1e41c2a4e8`、HEAD `cd91b9407d101bc98f7f1f29b8947d0d7a07ad8a`，run-all `b893e94501cd4233800161b4f6965a9a`。預檢/W10/full-default/normal/legacy通過，M5 GT60案恰1FAIL，具名 `prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection`，只允已確認projection結果卻得到WRITE_FAILED。後續M6/M7/full summary/CI未執行，沒有ENDALL。
 - 00:27:30原log同case BEGIN後，CheckedNbtFile:70→CollapseAuthorities.writeAtomic/checkedWrite/writeProjection發生 `quantumchamber_projections.dat.<nonce>.tmp -> quantumchamber_projections.dat` Windows AccessDenied；checked保未確認／200tick退避，非F4a注入。XML SHA `E0FBB212A401F47CEF35F23A34432F5DC42494782B1F5D71C28DD0D30ED18C4E`、latest.log `08625635AAB611F00A6443F87951BBEC03D324694D0B2747838EE8F0014A6B1C`。四個直接writer／ledger／測試owner對main2255027的Git blob未變；誰持檔／OS拒絕原因未定，不稱已證偶發。
