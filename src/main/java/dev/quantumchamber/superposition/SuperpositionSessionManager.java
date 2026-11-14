@@ -26,6 +26,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         final UUID sid;
         final int claimedAt;
         boolean valid = true;
+        boolean warned;
         Provisional(UUID sid,int claimedAt) { this.sid = sid; this.claimedAt=claimedAt; }
     }
     private final Map<UUID,Owner> sessions=new LinkedHashMap<>();
@@ -105,7 +106,10 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                         case SUPERPOSITION, MEASURED -> Presence.ACTIVE;
                         case RETURNING -> Presence.RETURNING;
                         case COLLAPSING, SEALED -> Presence.COLLAPSE;
-                        case PASSAGE_READY -> Presence.PASSAGE;
+                        case PASSAGE_READY -> h.home().stopReason().isPresent()
+                                || h.home().closeIntent() instanceof HomeSessionRecord.Close
+                                || owner.getOverworld().getTime()>=h.home().passageExpiresAtGameTime()
+                                ? Presence.COLLAPSE : Presence.PASSAGE;
                     };
                 }
                 return globalChamberBusy(owner,id.get()) ? Presence.BUSY : Presence.NONE;
@@ -382,7 +386,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(lastTick==owner.getTicks()) return;
         lastTick=owner.getTicks();
         for (var entry:List.copyOf(sessions.entrySet())) if(entry.getValue() instanceof Provisional p && (!p.valid || owner.getTicks()-p.claimedAt>=200))
-            cancelProvisional(owner,entry.getKey(),p.sid);
+            cancelForEvent(owner,entry.getKey(),p);
         for(var runtime : activeSessions()) {
             if(CorridorPageManager.forServer(owner).operationInProgress(runtime.initial.sessionUuid())) continue;
             var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
@@ -665,10 +669,20 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         source.getChunkManager().addTicket(SOURCE_TICKET,chunk,2,record.sessionUuid());
         tickets.put(record.sessionUuid(),new SourceTicket(source,chunk,record));
     }
+    private void cancelForEvent(MinecraftServer owner,UUID chamber,Provisional token) {
+        try { cancelProvisional(owner,chamber,token.sid); }
+        catch(RuntimeException failure) {
+            // root ticket owner 保留原生 refs，該 SID 下次再試；不得中斷其他暫占。
+            if (!token.warned) {
+                token.warned=true;
+                org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("暫占取消待重試：SID={}",token.sid,failure);
+            }
+        }
+    }
     private void cancelAllProvisional(MinecraftServer owner) {
         if (owner!=server) return;
         for (var entry:List.copyOf(sessions.entrySet())) if(entry.getValue() instanceof Provisional p)
-            cancelProvisional(owner,entry.getKey(),p.sid);
+            cancelForEvent(owner,entry.getKey(),p);
     }
     private void stopping(MinecraftServer owner) {
         // 前置 authority attach 失敗時仍會收到 STOPPING；此時沒有本 manager 的資源。

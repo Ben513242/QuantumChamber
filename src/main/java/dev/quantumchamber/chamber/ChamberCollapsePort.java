@@ -59,7 +59,7 @@ public final class ChamberCollapsePort {
         /** 這一格是否受投影保護（{@link ChamberProtectionService#mayMutate} 在非 vanilla 的 world key 時拒絕未授權的變更）。 */
         boolean protectedCell(MinecraftServer server, RegistryKey<World> worldKey, BlockPos pos);
 
-        /** 只有已核對兩端登記與實例的投影才可辨識其原艙。 */
+        /** 只核已確認的 B 與其實例；原艙已撤銷時，既有旅程仍需完成 B 的門 checkpoint。 */
         default java.util.Optional<UUID> entryChamber(ServerWorld world, ChamberControllerBlockEntity controller) {
             return java.util.Optional.empty();
         }

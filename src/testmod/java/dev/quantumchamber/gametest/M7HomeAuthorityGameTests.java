@@ -16,6 +16,88 @@ import net.minecraft.test.GameTest;
 import net.minecraft.test.TestContext;
 
 public final class M7HomeAuthorityGameTests implements FabricGameTest {
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_remove_fault",tickLimit=100)
+    public void removal_fault_isolated_for_two_native_owners(TestContext c) {
+        var first=new M2CorridorGameTests.NativeEntry(c,1);
+        M2CorridorGameTests.NativeEntry second;
+        try { second=new M2CorridorGameTests.NativeEntry(c,1,net.minecraft.util.math.Direction.NORTH,true,new net.minecraft.util.math.BlockPos(0,12,0)); }
+        catch (RuntimeException | Error failure) { first.close(); throw failure; }
+        var manager=(dev.quantumchamber.superposition.SuperpositionSessionManager)ChamberSessions.gateway();
+        var sid1=UUID.randomUUID();
+        var sid2=UUID.randomUUID();
+        try {
+            var a=first.controller();
+            var b=(ChamberControllerBlockEntity)c.getWorld().getBlockEntity(second.frame.controllerPos());
+            var arm=new ChamberActivationService();
+            c.assertTrue(arm.attemptArm(c.getWorld(),a).accepted() && arm.attemptArm(c.getWorld(),b).accepted(),"兩座不同高度的原艙都經正式登記");
+            var rootA=new ChamberOriginAuthority(a.chamberUuid(),c.getWorld().getRegistryKey().getValue(),DimensionRole.OVERWORLD,
+                    first.frame.controllerPos(),first.frame.outwardFacing(),ChamberInstanceKind.ORIGIN);
+            var rootB=new ChamberOriginAuthority(b.chamberUuid(),c.getWorld().getRegistryKey().getValue(),DimensionRole.OVERWORLD,
+                    second.frame.controllerPos(),second.frame.outwardFacing(),ChamberInstanceKind.ORIGIN);
+            c.assertTrue(manager.claimProvisional(first.server,a.chamberUuid(),sid1) && manager.claimProvisional(first.server,b.chamberUuid(),sid2),"兩 SID 各自暫占");
+            var keep=HomeTicketFaultFixture.failFirstRemoval(first.server,sid1,rootA);
+            var other=HomeRootTickets.acquire(first.server,sid2,rootB,HomeRootTickets.Purpose.START_CHECK).orElseThrow();
+            var cells=HomeTicketFaultFixture.positions(c.getWorld(),sid1);
+            c.assertTrue(!cells.isEmpty() && cells.equals(HomeTicketFaultFixture.positions(c.getWorld(),sid2)),"兩 SID 真正共持相同原生區塊");
+            other.close();
+            c.assertTrue(cells.equals(HomeTicketFaultFixture.positions(c.getWorld(),sid1)) && HomeTicketFaultFixture.count(c.getWorld(),sid2)==0,
+                    "只移除自己的原生 refs");
+            var again=HomeRootTickets.acquire(first.server,sid2,rootB,HomeRootTickets.Purpose.START_CHECK).orElseThrow();
+            boolean propagated=false;
+            try { HomeTicketFaultFixture.reloadTickets(first.server); }
+            catch(IllegalStateException failure) {
+                if (!"M7_REMOVE_ONCE".equals(failure.getMessage())) throw failure;
+                propagated=true;
+            }
+            boolean unsafe=propagated || HomeTicketFaultFixture.count(c.getWorld(),sid2)!=0;
+            if (unsafe) {
+                // RED 從已知故障收回兩個 SID，再回報精確斷言。
+                manager.cancelProvisional(first.server,a.chamberUuid(),sid1);
+                manager.cancelProvisional(first.server,b.chamberUuid(),sid2);
+            }
+            c.assertTrue(!unsafe,"I05_RELOAD_DROP_OTHER_OR_THROW");
+            c.waitAndRun(2,()->{
+                try {
+                    c.assertTrue(!keep.full() && !again.full() && HomeTicketFaultFixture.count(c.getWorld(),sid1)==0
+                            && HomeTicketFaultFixture.count(c.getWorld(),sid2)==0,"I05_RETRY_RETAINS_AND_CLEARS");
+                    c.complete();
+                } finally { first.close(); second.close(); }
+            });
+        } catch(RuntimeException | Error failure) {
+            if(first.controller().chamberUuid()!=null) manager.cancelProvisional(first.server,first.controller().chamberUuid(),sid1);
+            var b=(ChamberControllerBlockEntity)c.getWorld().getBlockEntity(second.frame.controllerPos());
+            if(b!=null && b.chamberUuid()!=null) manager.cancelProvisional(first.server,b.chamberUuid(),sid2);
+            first.close(); second.close(); throw failure;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void checkAuthorityFailures(MinecraftServer server,ServerWorld world,ChamberControllerBlockEntity b,
+            EntryEndpoint entry,List<String> findings) {
+        var registry=ChamberRegistryState.get(server).registry();
+        var rows=(java.util.Map<UUID,ChamberRecord>)M4CandidateTestAccess.get(registry,"records");
+        var original=rows.remove(entry.chamberUuid());
+        try {
+            var root=new ChamberOriginAuthority(entry.chamberUuid(),net.minecraft.world.World.OVERWORLD.getValue(),
+                    DimensionRole.OVERWORLD,entry.controllerPos(),entry.facing(),ChamberInstanceKind.ORIGIN);
+            if (HomeEndpointAuthority.resolveEntry(world,b).isPresent()
+                    || HomeEndpointAuthority.inspectEntry(server,entry)!=HomeEndpointAuthority.EntryStatus.VALID
+                    || HomeEndpointAuthority.checkRoot(server,root,false)!=HomeEndpointAuthority.RootStatus.DESTROYED) findings.add("I01_REVOKED");
+        } finally { rows.put(entry.chamberUuid(),original); }
+        var catalog=UniverseRegistryState.get(server);
+        var previous=M4CandidateTestAccess.get(catalog,"loadError");
+        try {
+            M4CandidateTestAccess.set(catalog,"loadError","M7_CATALOG_CORRUPT");
+            if(HomeEndpointAuthority.inspectEntry(server,entry)!=HomeEndpointAuthority.EntryStatus.AUTHORITY_CORRUPT) findings.add("I02_CORRUPT");
+        } finally { M4CandidateTestAccess.set(catalog,"loadError",previous); }
+        var ctx=((java.util.Map<?,?>)M4CandidateTestAccess.get(UniverseLifecycleService.class,"CONTEXTS")).get(server);
+        var ready=M4CandidateTestAccess.get(ctx,"ready");
+        try {
+            M4CandidateTestAccess.set(ctx,"ready",false);
+            if(HomeEndpointAuthority.inspectEntry(server,entry)!=HomeEndpointAuthority.EntryStatus.UNKNOWN) findings.add("I02_NOT_READY");
+        } finally { M4CandidateTestAccess.set(ctx,"ready",ready); }
+    }
+
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_ticket",tickLimit=300)
     public void partial_acquire_and_late_callback_release_native_tickets(TestContext context) {
         var f=new M2CorridorGameTests.NativeEntry(context,1);
@@ -45,7 +127,8 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
         }
     }
 
-    private static void checkDurableOwnership(TestContext c,M2CorridorGameTests.NativeEntry f,EntryEndpoint entry) throws Exception {
+    private static void checkDurableOwnership(TestContext c,M2CorridorGameTests.NativeEntry f,EntryEndpoint entry,
+            List<String> findings,boolean checkLate) {
         var server=f.server;
         var gate=(dev.quantumchamber.superposition.SuperpositionSessionManager)ChamberSessions.gateway();
         var journal=SessionRecoveryState.get(server);
@@ -75,25 +158,62 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
         var measured=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(person),List.of(lease),SessionState.MEASURED,selected);
         c.assertTrue(journal.commitHomeRestore(server,active,measured).committed(),"正式選擇");
         var returned=new SessionRecoveryRecord.Participant(actor,net.minecraft.util.math.Vec3d.ZERO,net.minecraft.util.math.Vec3d.ZERO,0,0,person.quantumStateSnapshot(),true);
-        var settled=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(returned),List.of(lease),SessionState.MEASURED,selected);
-        c.assertTrue(journal.commitHomeRollForward(server,measured,settled).committed(),"返還參與者");
-        var dormant=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(returned),List.of(),SessionState.MEASURED,selected);
-        c.assertTrue(journal.commitHomeRollForward(server,settled,dormant).committed(),"釋放空間");
-        c.assertTrue(!gate.claimProvisional(server,entry.chamberUuid(),UUID.randomUUID()),"無空間 DORMANT 仍占艙");
         var prepared=new Home(selection,time,-1,-1,List.of(),List.of(),Optional.empty(),-1,new None(),Optional.empty());
         var collapse=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(returned),List.of(),SessionState.COLLAPSING,prepared);
-        c.assertTrue(journal.commitHomeRestore(server,dormant,collapse).committed(),"正式準備");
-        var ticket=HomeRootTickets.acquire(server,sid,root,HomeRootTickets.Purpose.HOME_PREPARE_PASSAGE).orElseThrow();
-        c.waitAndRun(201,()->{
-            c.assertTrue(!ticket.full() && HomeTicketFaultFixture.count(c.getWorld(),sid)==0,"PREPARE 最多 200 ticks");
-            c.assertTrue(HomeRootTickets.acquire(server,sid,root,HomeRootTickets.Purpose.HOME_PREPARE_PASSAGE).isEmpty(),"退避中不得逐 tick 重新領票");
-            c.assertTrue(collapse.equals(journal.allFlushedSessions().get(sid)),"技術等待保留原 SID、HOME 與空白停止原因");
-            c.waitAndRun(201,()->finishDurableOwnership(c,f,collapse,HomeRootTickets.acquire(server,sid,root,
-                    HomeRootTickets.Purpose.HOME_PREPARE_PASSAGE).orElseThrow()));
+        if (!checkLate) {
+            var settled=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(returned),List.of(lease),SessionState.MEASURED,selected);
+            c.assertTrue(journal.commitHomeRollForward(server,measured,settled).committed(),"正式返還");
+            var dormant=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(returned),List.of(),SessionState.MEASURED,selected);
+            c.assertTrue(journal.commitHomeRollForward(server,settled,dormant).committed(),"正式進入 DORMANT");
+            c.assertTrue(!gate.claimProvisional(server,entry.chamberUuid(),UUID.randomUUID()),"無空間 DORMANT 仍占艙");
+            c.assertTrue(journal.commitHomeRestore(server,dormant,collapse).committed(),"正式開始準備");
+            finishDurableOwnership(c,f,collapse,HomeRootTickets.acquire(server,sid,root,HomeRootTickets.Purpose.HOME_PREPARE_PASSAGE).orElseThrow(),findings,false);
+            return;
+        }
+        var early=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(person),List.of(lease),SessionState.COLLAPSING,prepared);
+        c.assertTrue(journal.commitHomeRestore(server,measured,early).committed(),"正式進入尚待返還的 COLLAPSING");
+        var tooEarly=HomeRootTickets.acquire(server,sid,root,HomeRootTickets.Purpose.HOME_PREPARE_PASSAGE);
+        if (tooEarly.isPresent() || HomeTicketFaultFixture.count(c.getWorld(),sid)!=0) findings.add("I04_UNRETURNED");
+        tooEarly.ifPresent(HomeRootTickets.Lease::close);
+        var settled=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(returned),List.of(lease),SessionState.COLLAPSING,prepared);
+        c.assertTrue(journal.commitHomeRollForward(server,early,settled).committed(),"返還參與者");
+        var withLease=HomeRootTickets.acquire(server,sid,root,HomeRootTickets.Purpose.HOME_PREPARE_PASSAGE);
+        if (withLease.isPresent() || HomeTicketFaultFixture.count(c.getWorld(),sid)!=0) findings.add("I04_LEASE_HELD");
+        withLease.ifPresent(HomeRootTickets.Lease::close);
+        c.assertTrue(journal.commitHomeRollForward(server,settled,collapse).committed(),"正式完成返還及空間清理");
+        var delay=new HomeTicketFaultFixture.DelayedFull(server);
+        var ticket=delay.acquire(sid,root);
+        var pos=new net.minecraft.util.math.ChunkPos(root.controllerPos());
+        int[] missing={0};
+        long firstTick=c.getTick();
+        java.util.function.IntConsumer poll=ordinal -> {
+            if (!ticket.full()) missing[0]++;
+            if (ordinal==200 && (missing[0]!=200 || delay.lastMissing!=200 || delay.polls<200)) findings.add("I06_EARLY_FULL");
+        };
+        poll.accept(1);
+        for(int ordinal=2;ordinal<=200;ordinal++) {
+            final int count=ordinal;
+            c.runAtTick(firstTick+ordinal-1,()->{
+                try { poll.accept(count); }
+                catch (RuntimeException | Error failure) { f.close(); throw failure; }
+            });
+        }
+        c.runAtTick(firstTick+200,()->{
+            try {
+                boolean first=delay.full(c.getWorld(),pos);
+                if (!first || delay.firstFull!=201 || ticket.full() || HomeTicketFaultFixture.count(c.getWorld(),sid)!=0)
+                    findings.add("I06_LATE_CALLBACK");
+                c.assertTrue(HomeRootTickets.acquire(server,sid,root,HomeRootTickets.Purpose.HOME_PREPARE_PASSAGE).isEmpty(),"退避中不得逐 tick 重新領票");
+                c.assertTrue(collapse.equals(journal.allFlushedSessions().get(sid)),"技術等待保留原 SID、HOME 與空白停止原因");
+                c.waitAndRun(201,()->{
+                    try { finishDurableOwnership(c,f,collapse,delay.acquire(sid,root),findings,true); }
+                    finally { f.close(); }
+                });
+            } catch (RuntimeException | Error problem) { f.close(); throw problem; }
         });
     }
 
-    private static void finishDurableOwnership(TestContext c,M2CorridorGameTests.NativeEntry f,HomeSessionRecord collapse,HomeRootTickets.Lease ticket) {
+    private static void finishDurableOwnership(TestContext c,M2CorridorGameTests.NativeEntry f,HomeSessionRecord collapse,HomeRootTickets.Lease ticket,List<String> findings,boolean checkStop) {
         var server=f.server;
         var sid=collapse.sessionUuid();
         var entry=collapse.entryEndpoint();
@@ -104,6 +224,7 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
         var actor=returned.playerUuid();
         var gate=(dev.quantumchamber.superposition.SuperpositionSessionManager)ChamberSessions.gateway();
         var journal=SessionRecoveryState.get(server);
+        c.assertTrue(ticket.full(),"原 SID 於退避期後重新取得 FULL");
         var sealedHome=new Home(selection,time,-1,-1,List.of(),List.of(),Optional.empty(),-1,new None(),Optional.of(Seal.AUTHORITY_UNREADABLE));
         var sealed=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(returned),List.of(),SessionState.SEALED,sealedHome);
         c.assertTrue(journal.commitHomeRollForward(server,collapse,sealed).committed(),"正式封存");
@@ -122,18 +243,43 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
         var aPresence=gate.localPresence(c.getWorld(),root.controllerPos());
         c.assertTrue(bPresence==ChamberSessionGateway.Presence.PASSAGE && aPresence==ChamberSessionGateway.Presence.BUSY,
                 "B 的通道不能在 A 開門："+bPresence+"/"+aPresence);
-        var ended=ready.withClose(new Close(CloseReason.PARTICIPANT_CLOSED,time,DoorGoal.CLOSE_IF_CLEAR_ELSE_OPEN,new ParticipantClosed(actor,Phase.PASSAGE,time)));
-        c.assertTrue(journal.commitHomeRollForward(server,ready,ended).committed(),"正式 CLOSE");
+        var properties=server.getSaveProperties().getMainWorldProperties();
+        long savedTime=properties.getTime();
+        try {
+            properties.setTime(opened.passageExpiresAtGameTime());
+            if (gate.localPresence(world,entry.controllerPos())==ChamberSessionGateway.Presence.PASSAGE
+                    || !gate.globalChamberBusy(server,entry.chamberUuid())) findings.add("I03_EXPIRED");
+        } finally { properties.setTime(savedTime); }
+        HomeSessionRecord ended;
+        if (checkStop) {
+            var stoppedHome=new Home(selection,time,time,time+1200,List.of(),List.of(),Optional.of(RootReason.ROOT_DISABLED),time,new None(),Optional.empty());
+            var stopped=new HomeSessionRecord(sid,entry.chamberUuid(),root,entry,List.of(returned),List.of(),SessionState.PASSAGE_READY,stoppedHome);
+            c.assertTrue(journal.commitHomeRollForward(server,ready,stopped).committed(),"正式停止");
+            if(gate.localPresence(world,entry.controllerPos())==ChamberSessionGateway.Presence.PASSAGE
+                    || !gate.globalChamberBusy(server,entry.chamberUuid())) findings.add("I03_STOP");
+            ended=stopped.withClose(new Close(CloseReason.ROOT_DISABLED,time,DoorGoal.OPEN,new RootStop(RootReason.ROOT_DISABLED,time)));
+            c.assertTrue(journal.commitHomeRollForward(server,stopped,ended).committed(),"正式停止後結案");
+        } else {
+            ended=ready.withClose(new Close(CloseReason.PARTICIPANT_CLOSED,time,DoorGoal.CLOSE_IF_CLEAR_ELSE_OPEN,
+                    new ParticipantClosed(actor,Phase.PASSAGE,time)));
+            c.assertTrue(journal.commitHomeRollForward(server,ready,ended).committed(),"正式參與者結案");
+        }
+        if(gate.localPresence(world,entry.controllerPos())==ChamberSessionGateway.Presence.PASSAGE
+                || !gate.globalChamberBusy(server,entry.chamberUuid())) findings.add("I03_CLOSE");
         c.assertTrue(!gate.claimProvisional(server,entry.chamberUuid(),UUID.randomUUID()),"CLOSE 持續占艙");
         try { new HomeReceiptStore(server.getSavePath(net.minecraft.util.WorldSavePath.ROOT)).publishOrVerify(ended); }
         catch(java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
         c.assertTrue(journal.terminateHome(server,ended).removed() && !gate.globalChamberBusy(server,entry.chamberUuid()),"checked 移除解鎖，歷史不重建占用");
-        c.complete();
+        if (checkStop) {
+            c.assertTrue(findings.isEmpty(),"HOME_FIX1_TARGETS "+findings);
+            c.complete();
+        }
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_authority",tickLimit=1500)
     public void only_exact_complete_projection_resolves(TestContext context) throws Exception {
-        try (var fixture = new M2CorridorGameTests.NativeEntry(context, 1)) {
+        var fixture=new M2CorridorGameTests.NativeEntry(context,1);
+        try {
             var a = fixture.controller();
             context.assertTrue(new ChamberActivationService().attemptArm(context.getWorld(),a).accepted(), "正式 A 登記");
             var frame = new ChamberFrame(a.getPos(), a.getCachedState().get(ChamberControllerBlock.FACING));
@@ -164,8 +310,11 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
             b.setChamberUuid(UUID.randomUUID());
             context.assertTrue(HomeEndpointAuthority.resolveEntry(world,b).isEmpty(),"異艙 UUID 拒絕");
             b.setChamberUuid(null);
-            checkDurableOwnership(context,fixture,endpoint);
-        }
+            var findings=new java.util.ArrayList<String>();
+            checkAuthorityFailures(fixture.server,world,b,endpoint,findings);
+            checkDurableOwnership(context,fixture,endpoint,findings,false);
+            checkDurableOwnership(context,fixture,endpoint,findings,true);
+        } catch(Exception | Error problem) { fixture.close(); throw problem; }
     }
 
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_authority",tickLimit=200)

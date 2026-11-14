@@ -20,6 +20,13 @@ public final class HomeEndpointAuthority {
     private HomeEndpointAuthority() {}
 
     public static Optional<EntryEndpoint> resolveEntry(ServerWorld world, ChamberControllerBlockEntity controller) {
+        return existingEntry(world,controller).filter(endpoint -> registeredRoot(world.getServer(),
+                new ChamberOriginAuthority(endpoint.chamberUuid(),World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,
+                        endpoint.controllerPos(),endpoint.facing(),ChamberInstanceKind.ORIGIN)));
+    }
+
+    /** 既有旅程的 B 可在 A 消失後獨立驗證，供終局處理最後一扇門。 */
+    static Optional<EntryEndpoint> existingEntry(ServerWorld world, ChamberControllerBlockEntity controller) {
         var server = world.getServer();
         if (!server.isOnThread() || server.getWorld(world.getRegistryKey()) != world || controller.getWorld() != world
                 || controller.isRemoved() || controller.instanceKind() != ChamberInstanceKind.PROJECTION) return Optional.empty();
@@ -43,8 +50,7 @@ public final class HomeEndpointAuthority {
             if (degradation.isPresent()) return degradation.get() == SealedReason.AUTHORITY_CORRUPT
                     ? EntryStatus.AUTHORITY_CORRUPT : EntryStatus.AUTHORITY_UNREADABLE;
             var authority = CollapseAuthorities.get(server);
-            if (authority.unconfirmed(CollapseAuthorities.Authority.PROJECTION_LEDGER)
-                    || authority.unconfirmed(CollapseAuthorities.Authority.CATALOG)) return EntryStatus.AUTHORITY_UNREADABLE;
+            if (authority.unconfirmed(CollapseAuthorities.Authority.PROJECTION_LEDGER)) return EntryStatus.AUTHORITY_UNREADABLE;
             var key = RegistryKey.of(RegistryKeys.WORLD,endpoint.worldKey());
             var expected = new ProjectionLedger.Entry(endpoint.chamberUuid(),endpoint.universeId(),DimensionRole.OVERWORLD,
                     endpoint.controllerPos(),endpoint.facing(),ProjectionLedger.Entry.Status.COMPLETE);
@@ -59,13 +65,9 @@ public final class HomeEndpointAuthority {
             var descriptor = record.definition().worlds().get(DimensionRole.OVERWORLD);
             if (descriptor == null || !descriptor.worldKey().equals(key)) return EntryStatus.ENTRY_AUTHORITY_INVALID;
             var world = server.getWorld(key);
-            if (world == null) return EntryStatus.UNKNOWN;
+            if (world == null || !UniverseLifecycleService.ready(server)) return EntryStatus.UNKNOWN;
             if (UniverseLifecycleService.resolveActive(server,endpoint.universeId()).orElse(null) != world)
                 return EntryStatus.ENTRY_AUTHORITY_INVALID;
-            var root = new ChamberOriginAuthority(endpoint.chamberUuid(),World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,
-                    endpoint.controllerPos(),endpoint.facing(),ChamberInstanceKind.ORIGIN);
-            var registered = registered(server,root);
-            if (registered == null || registered.destroyed() || !matches(registered,root)) return EntryStatus.ENTRY_AUTHORITY_INVALID;
             var frame = new ChamberFrame(endpoint.controllerPos(),endpoint.facing());
             if (!PassageTransferPolicy.homeChunks(frame).stream().allMatch(c -> world.getChunkManager().getWorldChunk(c.x,c.z) != null))
                 return EntryStatus.UNKNOWN;

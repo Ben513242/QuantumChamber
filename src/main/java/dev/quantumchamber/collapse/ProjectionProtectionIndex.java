@@ -106,7 +106,7 @@ public final class ProjectionProtectionIndex {
         ChamberCollapsePort.installProjections(new ChamberCollapsePort.Projections() {
             @Override public Optional<UUID> entryChamber(net.minecraft.server.world.ServerWorld world,
                     dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
-                return HomeEndpointAuthority.resolveEntry(world,controller).map(entry -> entry.chamberUuid());
+                return HomeEndpointAuthority.existingEntry(world,controller).map(entry -> entry.chamberUuid());
             }
             @Override public boolean protectedCell(MinecraftServer server, RegistryKey<World> worldKey, BlockPos pos) {
                 return ProjectionProtectionIndex.protectedCell(server, worldKey, pos);

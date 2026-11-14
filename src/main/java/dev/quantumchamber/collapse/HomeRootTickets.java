@@ -23,6 +23,7 @@ public final class HomeRootTickets {
     private record Retry(long after, int delay) {}
     private boolean stopping;
     private static boolean initialized;
+    private static final org.slf4j.Logger LOGGER=org.slf4j.LoggerFactory.getLogger("quantumchamber");
     private HomeRootTickets() {}
 
     public static void initialize() {
@@ -32,7 +33,10 @@ public final class HomeRootTickets {
         ServerTickEvents.START_SERVER_TICK.register(s -> {
             var owner=servers.get(s);
             if(owner!=null) {
-                for (var lease:List.copyOf(owner.leases.values())) lease.refresh();
+                for (var lease:List.copyOf(owner.leases.values())) {
+                    try { lease.refresh(); }
+                    catch (RuntimeException failure) { lease.warnCleanup(failure); }
+                }
                 if (!owner.retries.isEmpty()) owner.retries.keySet().removeIf(sid -> !preparing(s,sid));
             }
         });
@@ -44,6 +48,9 @@ public final class HomeRootTickets {
     interface Backend {
         void add(ServerWorld world,ChunkPos pos,UUID sid);
         void remove(ServerWorld world,ChunkPos pos,UUID sid);
+        default boolean full(ServerWorld world,ChunkPos pos) {
+            return world.getChunkManager().getWorldChunk(pos.x,pos.z)!=null;
+        }
     }
     static final Backend NATIVE=new Backend() {
         public void add(ServerWorld world,ChunkPos pos,UUID sid) { world.getChunkManager().addTicket(TYPE,pos,2,sid); }
@@ -86,9 +93,17 @@ public final class HomeRootTickets {
     private static boolean preparing(MinecraftServer server,UUID sid) {
         try {
             var row=SessionRecoveryState.get(server).allFlushedSessions().get(sid);
-            return row instanceof HomeSessionRecord home && (home.state()==SessionState.COLLAPSING || home.state()==SessionState.PASSAGE_READY)
-                    && home.home().closeIntent() instanceof HomeSessionRecord.None && home.home().stopReason().isEmpty();
+            return row instanceof HomeSessionRecord home && prepareStage(server,home);
         } catch (RuntimeException unreadable) { return false; }
+    }
+
+    private static boolean prepareStage(MinecraftServer server,HomeSessionRecord row) {
+        if (!(row.home().closeIntent() instanceof HomeSessionRecord.None) || row.home().stopReason().isPresent()) return false;
+        return switch (row.state()) {
+            case COLLAPSING -> row.spaceLeases().isEmpty() && row.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned);
+            case PASSAGE_READY -> server.getOverworld().getTime()<row.home().passageExpiresAtGameTime();
+            default -> false;
+        };
     }
 
     private static boolean authorized(MinecraftServer s,UUID sid,ChamberOriginAuthority root,Purpose purpose) {
@@ -100,8 +115,7 @@ public final class HomeRootTickets {
                     || !row.equals(journal.allSessions().get(sid)) || journal.quarantinedSessions().contains(sid)
                     || row.home().closeIntent() instanceof HomeSessionRecord.Close || row.home().stopReason().isPresent()) return false;
             return purpose==Purpose.SELECT_CHECK ? row.state()==SessionState.SUPERPOSITION
-                    : row.state()==SessionState.COLLAPSING || row.state()==SessionState.PASSAGE_READY
-                    && s.getOverworld().getTime()<row.home().passageExpiresAtGameTime();
+                    : prepareStage(s,row);
         } catch (RuntimeException unreadable) { return false; }
     }
 
@@ -118,10 +132,13 @@ public final class HomeRootTickets {
         var owner=servers.get(s);
         if(owner==null) return;
         owner.stopping=stop;
-        for (var lease:List.copyOf(owner.leases.values())) {
-            if (lease.purpose==Purpose.START_CHECK && ChamberSessions.gateway() instanceof SuperpositionSessionManager manager)
-                manager.cancelProvisional(s,lease.root.chamberUuid(),lease.sid);
-            else lease.close();
+        for (var lease:List.copyOf(owner.leases.values())) lease.closeForEvent();
+        if (stop) {
+            // STOPPING 之後沒有正常 tick；逐 SID 把剩餘 refs 再試最後一次。
+            for (var lease:List.copyOf(owner.leases.values())) {
+                lease.closeForEvent();
+                if (!lease.chunks.isEmpty()) LOGGER.error("原艙票停止時仍未釋放：SID={} refs={}",lease.sid,lease.chunks);
+            }
         }
         owner.retries.clear();
     }
@@ -142,6 +159,23 @@ public final class HomeRootTickets {
         private long deadline;
         private boolean ready;
         private boolean closing;
+        private boolean warned;
+
+        private void closeForEvent() {
+            try {
+                if (purpose==Purpose.START_CHECK && ChamberSessions.gateway() instanceof SuperpositionSessionManager manager)
+                    manager.cancelProvisional(world.getServer(),root.chamberUuid(),sid);
+                if (owner.leases.get(sid)==this) close();
+            } catch (RuntimeException failure) { warnCleanup(failure); }
+        }
+
+        private void warnCleanup(RuntimeException failure) {
+            closing=true;
+            if (!warned) {
+                warned=true;
+                LOGGER.warn("原艙票清理失敗，保留未清 refs 下輪續試：SID={} refs={}",sid,chunks,failure);
+            }
+        }
 
         private Lease(HomeRootTickets owner,ServerWorld world,UUID sid,ChamberOriginAuthority root,Purpose purpose,
                 CorridorPageManager pages,long deadline,Backend backend) {
@@ -151,7 +185,7 @@ public final class HomeRootTickets {
 
         public boolean full() {
             if (!refresh()) return false;
-            return chunks.stream().allMatch(c -> world.getChunkManager().getWorldChunk(c.x,c.z)!=null);
+            return chunks.stream().allMatch(c -> backend.full(world,c));
         }
 
         private boolean refresh() {
@@ -162,7 +196,7 @@ public final class HomeRootTickets {
             if (purpose==Purpose.HOME_PREPARE_PASSAGE && !ready) {
                 var row=(HomeSessionRecord)SessionRecoveryState.get(server).allFlushedSessions().get(sid);
                 if (row.state()==SessionState.PASSAGE_READY && server.getTicks()<deadline
-                        && chunks.stream().allMatch(c -> world.getChunkManager().getWorldChunk(c.x,c.z)!=null)) {
+                        && chunks.stream().allMatch(c -> backend.full(world,c))) {
                     ready=true;
                     deadline=server.getTicks()+Math.max(0, Math.min(1200,row.home().passageExpiresAtGameTime()-world.getTime()));
                     owner.retries.remove(sid);

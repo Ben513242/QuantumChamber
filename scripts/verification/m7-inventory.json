@@ -38,7 +38,8 @@
       "quantumchamber:m1_empty|m7homeauthoritygametests.only_exact_complete_projection_resolves",
       "quantumchamber:m1_empty|m7homeauthoritygametests.provisional_wins_before_first_ticket",
       "quantumchamber:m1_empty|m7homeauthoritygametests.a_and_two_b_entries_contend_once",
-      "quantumchamber:m1_empty|m7homeauthoritygametests.partial_acquire_and_late_callback_release_native_tickets"
+      "quantumchamber:m1_empty|m7homeauthoritygametests.partial_acquire_and_late_callback_release_native_tickets",
+      "quantumchamber:m1_empty|m7homeauthoritygametests.removal_fault_isolated_for_two_native_owners"
     ]
   },
   "windows": {
