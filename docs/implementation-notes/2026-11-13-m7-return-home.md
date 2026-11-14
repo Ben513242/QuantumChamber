@@ -22,6 +22,22 @@
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
 - 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
 
+## 使用者 async 裁示：T2 原 pin 單次完整重跑（2026-11-14）
+
+來源：本 Codex 使用者對 root async 題目的明確回覆；原文另存 SDD `user-t2-full-once-ruling-20261114.md`。題目原文：
+
+> T2 的 source f3a79ec 已 C/I 清零，但完整回歸有 1／60 個 M5 GameTest 因 Windows AccessDenied 失敗。是否允許保留原 FAIL、不改碼，用新 nonce 完整重跑一次？同簽章再現即停；通過後才續 push／同 SHA CI，不包含 CI rerun。
+
+使用者選項原文：
+
+> 允許原 pin 完整重跑一次（建議）
+
+- 現行授權解除本項runtime HOLD：source `f3a79ec182653492fcbe5a41313cbf1e41c2a4e8` 不改碼／測試／script／build／workflow，保全部原FAIL/UNKNOWN，僅新nonce短預設root**完整run-all一次**。retryUsed目前0/1，實際啟動才記1；必要truth docs可本機commit，docs SHA不重置同code額度。下方未授/HOLD文字是裁示前歷史，不覆蓋本段。
+- 跑前fresh核HEAD/dirty與f3 runtime內容無差、W10既有producer身份/pins/非reparse/owner/locks及actual child65001；沿已工作M6 process handle/HasExited/ExitCode、stdout/stderr分實檔，不改gate/threshold、不造新framework、不重做T1/N2/focused。
+- 自然ENDALL0＋actual process ExitCode0＋全summary才採。同AccessDenied再現立即停；同fullDriver第三非預期工具FAIL立即停（歷史2/3），其他FAIL保原件先報/分類，禁止盲重跑。
+- 成功才必要docs truth／正常feature push／遠端讀回／追同SHA全部5 required CI真終局；不授CI rerun或CI失敗換docs重推。真全綠才T2closed，依既有連續授權進T3。source仍不得修改；main/tag/PR/LICENSE/人工開始/退役仍未授。
+- 原stop-index保runtime AccessDenied原FAIL1，重跑目前used0/1；原報告8b42…已保獨立before-authorized-retry副本，原XML/log/world不動。
+
 ## T2 full遇AccessDenied已停；單次新nonce重跑待使用者裁示（2026-11-14）
 
 - 修後完整full已自然FAIL：source `f3a79ec182653492fcbe5a41313cbf1e41c2a4e8`、HEAD `cd91b9407d101bc98f7f1f29b8947d0d7a07ad8a`，run-all `b893e94501cd4233800161b4f6965a9a`。預檢/W10/full-default/normal/legacy通過，M5 GT60案恰1FAIL，具名 `prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection`，只允已確認projection結果卻得到WRITE_FAILED。後續M6/M7/full summary/CI未執行，沒有ENDALL。

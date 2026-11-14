@@ -119,7 +119,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-14 現行：T2 OPEN／HOLD，f3a79ec修後full在M5投影帳本atomic move AccessDenied FAIL，需使用者另裁一次重跑。** N2 C0/I0/M1（M02 docs已修）與focused125/M7 23/4/11保留；full HEADcd91b940，M5 60案1FAIL WRITE_FAILED，actual handle/outer自然exit1，無ENDALL，不是driver工具第三次。原XML/log/world完整保留；postcheck09 run內/producer102鎖＋本次failed world鎖獨占、無runtime owner。現在runtime/source/push HOLD，只讀與本機truth docs；不修M5/OS/oracle、不重跑、不套M6 waiver、不CI/不T3。原note流程要用M6一次重跑條款需另問，單次新nonce完整full提案已就緒未授，詳M7 note/SDD stop-index。
+**2026-11-14 現行：T2仍OPEN；使用者已明確允許f3原pin新nonce完整run-all一次，used0/1尚未啟。** 題目/選項/來源原文見M7 note最上方「T2原pin單次完整重跑」節及SDD user-t2-full-once-ruling-20261114.md。來源/測試/scripts/build/workflow不改，保原FAIL；fresh核HEAD內容/W10/owner/locks/child65001後沿已工作M6實際handle/ExitCode分檔，完整自然ENDALL0+actual0+summary才採。同AccessDenied再現停，driver第三非預期工具FAIL停。成功才正常feature push/同SHA5requiredCI，無CIrerun授權；全綠才T2closed自動T3。下方舊未授/HOLD均為裁示前歷史；main/tag/PR/LICENSE/人工/退役未授。
 - **full driver目前2/3**：長cwd267、短root outer未返回是同一實際full driver兩次非預期工具失敗，原因各保，不因新wrapper名/簽章/docs重置；新候選第三次即停報。可選hash/人工source解碼另列操作事件，不能冒稱遊戲失敗。
 - 新止損：同 task 同範圍 N0/N1/N2… Important 總數含新項，任一兩整改輪窗口未下降即停；同穩定 problem ID 驗證工具連續第三次非預期 FAIL 即停，不再疊修。expected RED／negative／mutation 正確拒絕分列；舊 FAIL／UNKNOWN／Evidence3／NativeStartup3／main-only2 保留。
 - T1 source67／CI57 的 CI43418385083 attempt1 五 job 真 success 原判不變，不重做 T1／PoC。既有 W10 producer 只核不重建／重套；production full 前照 README 核實並 UTF-8。人工代操作開始、main／tag／PR／LICENSE／退役仍未授。
