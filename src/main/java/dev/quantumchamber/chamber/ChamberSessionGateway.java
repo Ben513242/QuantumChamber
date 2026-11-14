@@ -11,10 +11,14 @@ public interface ChamberSessionGateway {
      * COLLAPSE 與 PASSAGE 是 M5 的塌縮狀態（spec §5、§10.7）：COLLAPSING、SEALED 為 COLLAPSE，PASSAGE_READY 為 PASSAGE。
      * 兩者都只由 record（collapse view）推導、不看 runtime，而且都讓該原艙不能開新 session；不走返還流程。
      */
-    enum Presence { NONE, ARMING, ACTIVE, RETURNING, UNKNOWN, COLLAPSE, PASSAGE }
+    enum Presence { NONE, ARMING, ACTIVE, RETURNING, UNKNOWN, COLLAPSE, PASSAGE, BUSY }
     enum StartResult { ARMED_ONLY, STAGING, STARTED, REJECTED }
 
     Presence presence(MinecraftServer server, UUID chamberUuid);
+    default Presence localPresence(ServerWorld world, net.minecraft.util.math.BlockPos pos) {
+        return world.getBlockEntity(pos) instanceof ChamberControllerBlockEntity be && be.chamberUuid()!=null
+                ? presence(world.getServer(),be.chamberUuid()) : Presence.NONE;
+    }
     StartResult start(ServerWorld originWorld, ChamberControllerBlockEntity controller, List<UUID> participantUuids);
     boolean returnToOrigin(ServerWorld originWorld, ChamberControllerBlockEntity controller);
 

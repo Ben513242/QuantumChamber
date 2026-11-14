@@ -89,7 +89,12 @@ if($M7GameTestXml){
     New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts/verification'),(Join-Path $fixture 'src/testmod'),(Join-Path $fixture 'src/test/java/dev/quantumchamber/persistence'),$m7Output -Force|Out-Null
     foreach($name in @('m7-ci-gametest.ps1','m7-inventory.json','m6-ci-gametest.ps1','gates.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $fixture 'scripts/verification')}
     Copy-Item -LiteralPath $SourceRoot -Destination (Join-Path $fixture 'src/testmod/java') -Recurse
-    foreach($name in @('M7BudgetSpikeTest.java','M7PublishSpikeTest.java')){Copy-Item -LiteralPath (Join-Path $repo "src/test/java/dev/quantumchamber/persistence/$name") -Destination (Join-Path $fixture 'src/test/java/dev/quantumchamber/persistence')}
+    $testBase=Join-Path $repo 'src/test/java'
+    foreach($file in Get-ChildItem (Join-Path $testBase 'dev/quantumchamber') -Filter 'M7*Test.java' -Recurse -File){
+        $dest=Join-Path (Join-Path $fixture 'src/test/java') ([IO.Path]::GetRelativePath($testBase,$file.FullName))
+        New-Item -ItemType Directory -Path (Split-Path $dest) -Force|Out-Null
+        Copy-Item -LiteralPath $file.FullName -Destination $dest
+    }
     Copy-Item -LiteralPath (Join-Path $original 'raw') -Destination $m7Output -Recurse
     foreach($name in @('inputs.json','summary.json')){Copy-Item -LiteralPath (Join-Path $original $name) -Destination $m7Output}
     # 正例完全不parse/save XML或重序列化inputs，保留其原始hash。

@@ -39,7 +39,8 @@
       "dev.quantumchamber.gametest.M5UniverseProjectionGameTests",
       "dev.quantumchamber.gametest.M5UniverseDoorGameTests",
       "dev.quantumchamber.gametest.M5UniversePassageGameTests",
-      "dev.quantumchamber.gametest.M7HomeSpikeGameTests"
+      "dev.quantumchamber.gametest.M7HomeSpikeGameTests",
+      "dev.quantumchamber.gametest.M7HomeAuthorityGameTests"
     ]
   },
   "depends": {

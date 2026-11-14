@@ -18,5 +18,8 @@ public final class ChamberSessions {
 
     private ChamberSessions() { }
     public static ChamberSessionGateway gateway() { return gateway; }
+    public static ChamberSessionGateway.Presence localPresence(ServerWorld world, net.minecraft.util.math.BlockPos pos) {
+        return gateway.localPresence(world,pos);
+    }
     public static void install(ChamberSessionGateway replacement) { gateway = Objects.requireNonNull(replacement, "gateway"); }
 }

@@ -59,6 +59,11 @@ public final class ChamberCollapsePort {
         /** 這一格是否受投影保護（{@link ChamberProtectionService#mayMutate} 在非 vanilla 的 world key 時拒絕未授權的變更）。 */
         boolean protectedCell(MinecraftServer server, RegistryKey<World> worldKey, BlockPos pos);
 
+        /** 只有已核對兩端登記與實例的投影才可辨識其原艙。 */
+        default java.util.Optional<UUID> entryChamber(ServerWorld world, ChamberControllerBlockEntity controller) {
+            return java.util.Optional.empty();
+        }
+
         /** 這個位置是否是已確認投影的 Controller（{@link ChamberPowerCoordinator} 的載入辨識：inert 的 PROJECTION）。 */
         boolean projectionControllerAt(MinecraftServer server, RegistryKey<World> worldKey, BlockPos pos);
     }

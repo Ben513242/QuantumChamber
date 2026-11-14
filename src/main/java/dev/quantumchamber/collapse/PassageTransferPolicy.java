@@ -58,6 +58,15 @@ final class PassageTransferPolicy implements TransferSafety {
                 bounds.getMaxX() + 1 + REACH, bounds.getMaxY() + 1, bounds.getMaxZ() + 1 + REACH);
     }
 
+    /** 原艙供電鄰域與通道預載區塊的聯集。 */
+    static java.util.Set<ChunkPos> homeChunks(ChamberFrame frame) {
+        var chunks = new java.util.LinkedHashSet<>(preloadChunks(frame));
+        var pos = frame.controllerPos();
+        for (int x=(pos.getX()-3)>>4; x<=(pos.getX()+3)>>4; x++)
+            for (int z=(pos.getZ()-3)>>4; z<=(pos.getZ()+3)>>4; z++) chunks.add(new ChunkPos(x,z));
+        return java.util.Set.copyOf(chunks);
+    }
+
     /** §9.1 預載涵蓋的 chunk：{@code fullChunkRange(reach(frame))}，依 x、z 遞增的順序（與傳送時的 FULL 檢查同一個推導）。 */
     static List<ChunkPos> preloadChunks(ChamberFrame frame) {
         var range = TransferSafety.fullChunkRange(reach(frame));

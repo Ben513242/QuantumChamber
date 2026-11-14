@@ -525,6 +525,13 @@ public final class CollapseAuthorities {
         return projection.current.find(chamber, id).map(Lookup::found).orElseGet(Lookup::absent);
     }
 
+    /** 讀取可用且已確認的投影，保留讀取失敗類別。 */
+    public Lookup<ProjectionLedger.Entry> checkedProjection(UUID chamber, UniverseId id) {
+        var result=projection(chamber,id);
+        if (result.succeeded() && unconfirmed(Authority.PROJECTION_LEDGER)) return Lookup.waiting();
+        return result;
+    }
+
     /**
      * 已確認的 projection entries（spec §6.5；F4b-1：§9.3 的投影保護索引在開服時由它建立），依寫入順序、不可變。唯讀，不讀檔。只列已經 checked 讀回確認的
      * 內容：roll-forward 尚未確認的寫入（current 領先已確認的內容）不在其中，確認之後才出現。

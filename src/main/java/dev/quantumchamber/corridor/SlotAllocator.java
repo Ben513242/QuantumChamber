@@ -15,14 +15,56 @@ public final class SlotAllocator {
     static final int MAX_TICKET_COVERAGE_CHUNKS=4096;
     private final Map<Integer, SlotLease> leases = new LinkedHashMap<>();
     private int peakCoverage;
+    private final java.util.function.Supplier<Collection<dev.quantumchamber.persistence.SessionRecoveryRecord.SpaceLease>> retained;
+
+    public SlotAllocator() { this(java.util.List::of); }
+    SlotAllocator(java.util.function.Supplier<Collection<dev.quantumchamber.persistence.SessionRecoveryRecord.SpaceLease>> retained) {
+        this.retained=retained;
+    }
+    private Optional<Set<Long>> corridorCoverage(Collection<BlockBox> proposed) {
+        var boxes=new ArrayList<>(proposed);
+        retained.get().forEach(lease -> boxes.add(lease.bounds()));
+        return coverage(boxes);
+    }
+    private final Map<java.util.UUID, Set<Long>> rootRefs = new LinkedHashMap<>();
+
+    /** 走廊只在固定走廊世界，原艙只在原版主世界；兩個世界的同座標各計一格。 */
+    public boolean reserveRoot(java.util.UUID sid, Set<Long> chunks) {
+        if (chunks.isEmpty() || chunks.size() > 4 || rootRefs.size() >= 64 || rootRefs.containsKey(sid)) return false;
+        var corridor = corridorCoverage(leases.values().stream().map(SlotLease::bounds).toList());
+        if (corridor.isEmpty()) return false;
+        var root = rootCoverage();
+        root.addAll(chunks);
+        int total = corridor.get().size() + root.size();
+        if (total > MAX_TICKET_COVERAGE_CHUNKS) return false;
+        rootRefs.put(sid, Set.copyOf(chunks));
+        peakCoverage = Math.max(peakCoverage, total);
+        return true;
+    }
+    void checkCoverageWithRoots(Collection<BlockBox> proposed) {
+        var current=coverage(proposed);
+        if (current.isEmpty() || current.get().size()+rootCoverage().size()>MAX_TICKET_COVERAGE_CHUNKS)
+            throw new IllegalStateException("[LEASE_COVERAGE_EXCEEDED] 原艙與走廊總覆蓋超限");
+    }
+
+    public void releaseRoot(java.util.UUID sid) { rootRefs.remove(sid); }
+
+    private Set<Long> rootCoverage() {
+        var root = new HashSet<Long>();
+        rootRefs.values().forEach(root::addAll);
+        return root;
+    }
     public record SlotLease(int slotId, BlockPos origin, BlockBox bounds) {
         public SlotLease { origin = origin.toImmutable(); bounds = copy(bounds); }
         @Override public BlockBox bounds() { return copy(bounds); }
     }
     public Optional<SlotLease> reserve(BlockBox relativeBounds) {
-        if (leases.size() >= 64) return Optional.empty();
+        var retainedLeases=retained.get();
+        var slots=new HashSet<>(leases.keySet());
+        retainedLeases.forEach(lease -> slots.add(lease.slotId()));
+        if (slots.size() >= 64) return Optional.empty();
         int slot = 0;
-        while (leases.containsKey(slot)) slot++;
+        while (slots.contains(slot)) slot++;
         // 有限實體格網只依空間碰撞選位，與歷史邏輯距離無關。
         for (int row = 0; row < 128; row++) for (int column = 0; column < 128; column++) {
             var origin = new BlockPos(1000 + 192 * column, 70, 2000 + 192 * row);
@@ -39,13 +81,13 @@ public final class SlotAllocator {
                     || Math.abs((long) bounds.getMinZ()) >= 29_999_984 || Math.abs((long) bounds.getMaxZ()) >= 29_999_984) continue;
             boolean collision = leases.values().stream().anyMatch(existing -> existing.bounds.intersects(bounds)
                     || existing.origin.getSquaredDistance(origin) < 160 * 160);
-            if (!collision) {
+            if (!collision && retainedLeases.stream().noneMatch(lease -> lease.bounds().intersects(bounds))) {
                 var proposed=new ArrayList<BlockBox>(); leases.values().forEach(lease -> proposed.add(lease.bounds)); proposed.add(bounds);
-                var coverage=coverage(proposed);
-                if (coverage.isEmpty()) return Optional.empty();
+                var coverage=corridorCoverage(proposed);
+                if (coverage.isEmpty() || coverage.get().size() + rootCoverage().size() > MAX_TICKET_COVERAGE_CHUNKS) return Optional.empty();
                 var lease = new SlotLease(slot, origin, bounds);
                 leases.put(slot, lease);
-                peakCoverage=Math.max(peakCoverage,coverage.get().size());
+                peakCoverage=Math.max(peakCoverage,coverage.get().size() + rootCoverage().size());
                 return Optional.of(lease);
             }
         }
@@ -61,9 +103,11 @@ public final class SlotAllocator {
             throw new IllegalStateException("[LEASE_OWNERSHIP_INVALID] 已保存租約重疊或超過容量");
         }
         var proposed=new ArrayList<BlockBox>(); leases.values().forEach(lease -> proposed.add(lease.bounds)); proposed.add(bounds);
-        var coverage=coverage(proposed).orElseThrow(() -> new IllegalStateException("[LEASE_COVERAGE_EXCEEDED] 已保存租約超過 ticket coverage 容量"));
+        var coverage=corridorCoverage(proposed).orElseThrow(() -> new IllegalStateException("[LEASE_COVERAGE_EXCEEDED] 已保存租約超過 ticket coverage 容量"));
+        if (coverage.size()+rootCoverage().size()>MAX_TICKET_COVERAGE_CHUNKS)
+            throw new IllegalStateException("[LEASE_COVERAGE_EXCEEDED] 原艙與走廊總覆蓋超限");
         leases.put(slotId, new SlotLease(slotId, bounds.getCenter(), bounds));
-        peakCoverage=Math.max(peakCoverage,coverage.size());
+        peakCoverage=Math.max(peakCoverage,coverage.size()+rootCoverage().size());
     }
     /** 用獨立配置器重播熱 journal 租約，採用正式上限、碰撞與區塊覆蓋規則。 */
     public static void validateSavedLeases(Collection<dev.quantumchamber.persistence.SessionRecoveryRecord.SpaceLease> saved) {

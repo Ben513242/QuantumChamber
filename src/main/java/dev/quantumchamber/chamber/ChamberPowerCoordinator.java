@@ -109,7 +109,7 @@ public final class ChamberPowerCoordinator {
                     @Override public void clearCandidateRetryRequiresLow() { controller.clearCandidateRetryRequiresLow(); }
                     @Override public ChamberSessionGateway.Presence presence() {
                         observed[0] = null;
-                        return observed[0] = gateway.presence(world.getServer(), controller.chamberUuid());
+                        return observed[0] = ChamberSessions.localPresence(world,controller.getPos());
                     }
                     @Override public ChamberSessionGateway.StartResult start(List<UUID> participants) {
                         return gateway.start(world, controller, participants);
@@ -158,7 +158,7 @@ public final class ChamberPowerCoordinator {
      */
     static boolean normalizesOwnerless(ChamberSessionGateway.Presence presence, boolean doorHasMembrane) {
         Objects.requireNonNull(presence, "presence");
-        return doorHasMembrane && presence != ChamberSessionGateway.Presence.COLLAPSE && presence != ChamberSessionGateway.Presence.PASSAGE;
+        return doorHasMembrane && presence != ChamberSessionGateway.Presence.BUSY && presence != ChamberSessionGateway.Presence.COLLAPSE && presence != ChamberSessionGateway.Presence.PASSAGE;
     }
 
     /**
@@ -204,6 +204,10 @@ public final class ChamberPowerCoordinator {
             // production僅在exact原艙及完整供電鄰域已核實後進入此方法。
             if(!powered)sessions.clearCandidateRetryRequiresLow();
             var presence = Objects.requireNonNull(sessions.presence(), "presence");
+            if (presence == ChamberSessionGateway.Presence.BUSY) {
+                registry.setPowerState(uuid,powered && record.enabled() ? ChamberPowerState.POWERED : ChamberPowerState.RETURNING);
+                return ChamberState.ARMED;
+            }
             if (presence == ChamberSessionGateway.Presence.COLLAPSE || presence == ChamberSessionGateway.Presence.PASSAGE) {
                 // M5 塌縮狀態（spec §10.7）：不走 pending／needsReturn、不呼叫 returnToOrigin（斷電等即時訊號由塌縮流程處理）。
                 boolean poweredAndEnabled = powered && record.enabled();

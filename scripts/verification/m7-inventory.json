@@ -27,11 +27,18 @@
       "dev.quantumchamber.persistence.M7HomeJournalTest.uncheckedReleaseCannotLendCoverageBeyond4096Chunks",
       "dev.quantumchamber.persistence.M7HomeHistoryTest.receiptRoundTripThroughShortNameOrLinkedSaveRoot",
       "dev.quantumchamber.persistence.M7HomeHistoryTest.receiptRoundTripThroughLinkedSaveAncestor",
-      "dev.quantumchamber.persistence.M7HomeHistoryTest.linkedDataInsideSaveRefusesPublicationAndLookup"
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.linkedDataInsideSaveRefusesPublicationAndLookup",
+      "dev.quantumchamber.corridor.M7HomeCoverageTest.sameXZDifferentWorldConsumesCoverage",
+      "dev.quantumchamber.corridor.M7HomeCoverageTest.boundsRootSharesAndReferencesWithoutReleasingOthers",
+      "dev.quantumchamber.corridor.M7HomeCoverageTest.bothOrdersRespectCombinedCoverageLimit"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",
-      "quantumchamber:m1_empty|m7homespikegametests.projection_activation_remains_rejected_before_home_production"
+      "quantumchamber:m1_empty|m7homespikegametests.projection_activation_remains_rejected_before_home_production",
+      "quantumchamber:m1_empty|m7homeauthoritygametests.only_exact_complete_projection_resolves",
+      "quantumchamber:m1_empty|m7homeauthoritygametests.provisional_wins_before_first_ticket",
+      "quantumchamber:m1_empty|m7homeauthoritygametests.a_and_two_b_entries_contend_once",
+      "quantumchamber:m1_empty|m7homeauthoritygametests.partial_acquire_and_late_callback_release_native_tickets"
     ]
   },
   "windows": {

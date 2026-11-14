@@ -63,12 +63,25 @@ public final class CorridorPageManager {
     private ServerWorld world;
     private SessionRecoveryState journal;
     private final CandidateLedgerService candidates = new CandidateLedgerService();
-    private final SlotAllocator allocator = new SlotAllocator();
+    private final SlotAllocator allocator = new SlotAllocator(this::retainedLeases);
+    private Collection<SessionRecoveryRecord.SpaceLease> retainedLeases() {
+        if (journal==null) return List.of();
+        return java.util.stream.Stream.of(journal.allSessions(),journal.allFlushedSessions(),journal.pendingSessions())
+                .flatMap(rows -> rows.values().stream()).flatMap(row -> row.spaceLeases().stream()).distinct().toList();
+    }
+    public static void validateJournalCoverage(MinecraftServer server, Collection<SessionRecoveryRecord.SpaceLease> proposed) {
+        if (active==null || active.server!=server) return;
+        active.requireThread();
+        var physical=new ArrayList<>(active.protectedLeases.values());
+        proposed.forEach(lease -> physical.add(lease.bounds()));
+        active.allocator.checkCoverageWithRoots(physical);
+    }
     private final Map<UUID,Space> spaces = new LinkedHashMap<>();
     private final Map<Integer,BlockBox> protectedLeases = new LinkedHashMap<>();
     private final Set<UUID> completedReleases = new HashSet<>();
     private int budgetTick = Integer.MIN_VALUE, writes, lastTick = Integer.MIN_VALUE;
     private int peakCenterTickets;
+    private final Set<UUID> operating = new HashSet<>();
 
     public static CorridorPageManager forServer(MinecraftServer server) {
         if (active == null || active.server != server || server.getWorld(SuperpositionWorld.KEY) != active.world) {
@@ -310,14 +323,31 @@ public final class CorridorPageManager {
 
     /** 空間操作共用的不可重入 guard；finally 保證提交失敗也會釋放。 */
     public <T> T exclusiveOperation(UUID sessionUuid,java.util.function.Supplier<T> operation) {
-        var space=space(sessionUuid);
-        if(space.operations!=0) throw new IllegalStateException("空間已有進行中的操作");
-        space.operations++;
-        try { return operation.get(); } finally { space.operations--; }
+        requireThread();
+        var space=spaces.get(sessionUuid);
+        if ((space != null && space.operations != 0) || !operating.add(sessionUuid)) throw new IllegalStateException("同一 session 已有進行中的操作");
+        if (space != null) space.operations++;
+        try { return operation.get(); }
+        finally {
+            if (space != null) space.operations--;
+            operating.remove(sessionUuid);
+        }
     }
+    public boolean hasReservation(UUID sid) { requireThread(); return spaces.containsKey(sid); }
+
+    public boolean reserveRootCoverage(UUID sid, Set<Long> chunks) {
+        requireThread();
+        return allocator.reserveRoot(sid,chunks);
+    }
+
+    public void releaseRootCoverage(UUID sid) {
+        requireThread();
+        allocator.releaseRoot(sid);
+    }
+
     public boolean operationInProgress(UUID sessionUuid) {
         requireThread(); var space=spaces.get(sessionUuid);
-        return space!=null && space.operations!=0;
+        return operating.contains(sessionUuid) || space!=null && space.operations!=0;
     }
 
     /**

@@ -1108,7 +1108,9 @@ public final class SessionRecoveryState extends PersistentState {
         for(var snapshot:List.of(candidate,records,flushed,pendingSessions())) {
             snapshot.forEach((sid,row) -> held.computeIfAbsent(sid,id -> new HashSet<>()).addAll(row.spaceLeases()));
         }
-        dev.quantumchamber.corridor.SlotAllocator.validateSavedLeases(held.values().stream().flatMap(java.util.Set::stream).toList());
+        var physical=held.values().stream().flatMap(java.util.Set::stream).toList();
+        dev.quantumchamber.corridor.SlotAllocator.validateSavedLeases(physical);
+        if (owner!=null) dev.quantumchamber.corridor.CorridorPageManager.validateJournalCoverage(owner,physical);
         var wrapped=new NbtCompound(); NbtHelper.putDataVersion(wrapped);
         wrapped.put("data",encode(new NbtCompound(),candidate,6));
         HomeJournalBudget.requireReserved(wrapped);

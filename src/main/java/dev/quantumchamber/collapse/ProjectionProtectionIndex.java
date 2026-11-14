@@ -104,6 +104,10 @@ public final class ProjectionProtectionIndex {
         if (registered) return;
         registered = true;
         ChamberCollapsePort.installProjections(new ChamberCollapsePort.Projections() {
+            @Override public Optional<UUID> entryChamber(net.minecraft.server.world.ServerWorld world,
+                    dev.quantumchamber.chamber.ChamberControllerBlockEntity controller) {
+                return HomeEndpointAuthority.resolveEntry(world,controller).map(entry -> entry.chamberUuid());
+            }
             @Override public boolean protectedCell(MinecraftServer server, RegistryKey<World> worldKey, BlockPos pos) {
                 return ProjectionProtectionIndex.protectedCell(server, worldKey, pos);
             }
@@ -278,6 +282,17 @@ public final class ProjectionProtectionIndex {
                 .filter(record -> record.originDimensionRole() == DimensionRole.OVERWORLD
                         && onShell(ChamberGeometry.bounds(new ChamberFrame(record.anchorPos(), record.facing())), pos))
                 .isPresent();
+    }
+
+    /** 在已確認索引查找唯一的精確 Controller 位置，重疊即拒絕。 */
+    Optional<ProjectionLedger.Entry> uniqueSite(RegistryKey<World> world, BlockPos pos) {
+        requireServerThread("uniqueSite");
+        var view = snapshot.worlds().get(world);
+        if (view == null) return Optional.empty();
+        var hits = view.byChunk().get(ChunkPos.toLong(pos.getX() >> 4,pos.getZ() >> 4));
+        if (hits == null) return Optional.empty();
+        var rows = hits.stream().map(Indexed::entry).filter(row -> row.controllerPos().equals(pos)).limit(2).toList();
+        return rows.size()==1 ? Optional.of(rows.getFirst()) : Optional.empty();
     }
 
     /** 熱路徑：這個位置是否是已確認投影（PENDING 或 COMPLETE）的 Controller。只讀記憶體。 */

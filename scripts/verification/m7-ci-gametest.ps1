@@ -43,7 +43,7 @@ function Assert-M7SavedSummary($Saved,$Proof){
 function Save-M7Inputs([DateTime]$Start,[string]$Runtime){
     $raw=Join-Path $OutputRoot 'raw';New-Item -ItemType Directory -Path $raw,(Join-Path $raw 'junit'),(Join-Path $raw 'artifacts'),(Join-Path $raw 'runtime') -Force|Out-Null
     $records=@();$candidates=@(@{kind='gametest';source=(Join-Path $repo 'build/gametest-m7-results.xml');target=(Join-Path $raw 'gametest.xml')})
-    foreach($file in @(Get-ChildItem (Join-Path $repo 'build/test-results/test') -Filter 'TEST-dev.quantumchamber.persistence.M7*.xml' -File -ErrorAction SilentlyContinue)){$candidates+=@{kind='junit';source=$file.FullName;target=(Join-Path $raw ('junit/'+$file.Name))}}
+    foreach($file in @(Get-ChildItem (Join-Path $repo 'build/test-results/test') -Filter 'TEST-dev.quantumchamber.*.M7*.xml' -File -ErrorAction SilentlyContinue)){$candidates+=@{kind='junit';source=$file.FullName;target=(Join-Path $raw ('junit/'+$file.Name))}}
     foreach($file in @(Get-ChildItem (Join-Path $repo 'build/libs') -Filter '*.jar' -File -ErrorAction SilentlyContinue|Where-Object {$_.Name -notmatch '-dev[.]jar$'})){$candidates+=@{kind='artifact';source=$file.FullName;target=(Join-Path $raw ('artifacts/'+$file.Name))}}
     if(Test-Path (Join-Path $Runtime 'logs')){Copy-Item -LiteralPath (Join-Path $Runtime 'logs') -Destination (Join-Path $raw 'runtime') -Recurse}
     foreach($file in @(Get-ChildItem $Runtime -Filter 'm4-boundary-*.json' -File -ErrorAction SilentlyContinue)){Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $raw 'runtime')}
@@ -56,11 +56,17 @@ function Verify-M7([string]$Root){
     $manifest=Get-Content -LiteralPath (Join-Path $Root 'inputs.json') -Raw|ConvertFrom-Json -DateKind String
     if($manifest.schema -ne 1 -or $manifest.head -cne $ExpectedHead -or $manifest.platform -cne $Platform -or $manifest.actualPlatform -cne $actualPlatform){throw 'M7_INPUT_IDENTITY'}
     $inputs=@($manifest.inputs);foreach($input in $inputs){$path=[IO.Path]::GetFullPath((Join-Path $Root $input.relative));if(-not $path.StartsWith($Root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'M7_INPUT_PATH'};if((Get-FileHash $path).Hash -cne $input.sha256){throw 'M7_INPUT_HASH'}}
+    $expectedClasses=@($expectedJUnit | ForEach-Object {$_.Substring(0,$_.LastIndexOf('.'))} | Sort-Object -Unique)
     $xmls=@($inputs|Where-Object {$_.kind -ceq 'gametest'});$junit=@($inputs|Where-Object {$_.kind -ceq 'junit'});$logs=@($inputs|Where-Object {$_.relative -ceq 'raw/runtime/logs/latest.log'})
-    if($xmls.Count -ne 1 -or $junit.Count -ne 4 -or $logs.Count -ne 1 -or @(@($xmls)+@($junit)+@($logs)|Where-Object {-not $_.fresh}).Count){throw 'M7_NOT_CURRENT'}
+    if($xmls.Count -ne 1 -or $junit.Count -ne $expectedClasses.Count -or $logs.Count -ne 1 -or @(@($xmls)+@($junit)+@($logs)|Where-Object {-not $_.fresh}).Count){throw 'M7_NOT_CURRENT'}
     $declarations=@(Declared-GameTests $SourceRoot|Where-Object {$_.scope -ceq 'm7_home' -and ($_.batch -notmatch '_(windows|ubuntu)$' -or $_.batch.EndsWith('_'+$Platform.ToLowerInvariant(),[StringComparison]::Ordinal))}|ForEach-Object identity)
     Exact-M7 $expectedGame $declarations 'M7_DECLARATION_SET'
-    $declaredJUnit=@();foreach($name in @('M7BudgetSpikeTest','M7PublishSpikeTest','M7HomeJournalTest','M7HomeHistoryTest')){$text=Get-Content -LiteralPath (Join-Path $repo "src/test/java/dev/quantumchamber/persistence/$name.java") -Raw;foreach($m in [regex]::Matches($text,'@Test\s+void\s+(\w+)\(')){$declaredJUnit+="dev.quantumchamber.persistence.$name."+$m.Groups[1].Value}}
+    $declaredJUnit=@()
+    foreach($file in Get-ChildItem (Join-Path $repo 'src/test/java/dev/quantumchamber') -Filter 'M7*Test.java' -Recurse -File){
+        $source=Get-Content -LiteralPath $file.FullName -Raw
+        $package=[regex]::Match($source,'(?m)^package ([\w.]+);').Groups[1].Value
+        foreach($m in [regex]::Matches($source,'@Test\s+void\s+(\w+)\(')){$declaredJUnit+="$package.$($file.BaseName)."+$m.Groups[1].Value}
+    }
     Exact-M7 $expectedJUnit $declaredJUnit 'M7_JUNIT_DECLARATION_SET'
     [xml]$gt=Get-Content -LiteralPath (Join-Path $Root $xmls[0].relative) -Raw
     Exact-M7 $expectedGame @($gt.SelectNodes('//testcase')|ForEach-Object {$_.classname+'|'+$_.name}) 'M7_GAME_SET'
@@ -105,7 +111,7 @@ if($launched){
     $start=[DateTime]::UtcNow;$failure=$null
     try{
         if($IsWindows){& (Join-Path $PSScriptRoot 'gates.ps1') -Mode M7Runtime -Label m7-runtime -EvidenceRoot $OutputRoot -Gradle $Gradle -M7Nonce $GameNonce}
-        else{& $Gradle test --tests dev.quantumchamber.persistence.M7BudgetSpikeTest --tests dev.quantumchamber.persistence.M7PublishSpikeTest --tests dev.quantumchamber.persistence.M7HomeJournalTest --tests dev.quantumchamber.persistence.M7HomeHistoryTest runGameTestM7 remapJar remapSourcesJar "-Pm7GameNonce=$GameNonce" "-Pm7Head=$head" --rerun-tasks --console=plain *> (Join-Path $OutputRoot 'gradle.log');if($LASTEXITCODE -ne 0){throw "M7_RUNTIME_EXIT $LASTEXITCODE"}}
+        else{& $Gradle test --tests 'dev.quantumchamber.*.M7*Test' runGameTestM7 remapJar remapSourcesJar "-Pm7GameNonce=$GameNonce" "-Pm7Head=$head" --rerun-tasks --console=plain *> (Join-Path $OutputRoot 'gradle.log');if($LASTEXITCODE -ne 0){throw "M7_RUNTIME_EXIT $LASTEXITCODE"}}
     }catch{$failure=$_}
     finally{Save-M7Inputs $start $runtime}
     if($failure){Save-Json (Join-Path $OutputRoot 'failure.json') @{head=$ExpectedHead;platform=$Platform;status='FAIL';message=$failure.Exception.Message};throw $failure}
