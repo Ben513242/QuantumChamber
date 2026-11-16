@@ -2191,6 +2191,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
         private boolean cohortFailureOwned;
         final BlockPos lever;
         final ConnectedGameTestPlayer operator;
+        /** 建立 fixture 時 server 的世界數；同一個 GameTest server 先跑的案例可能已建立動態宇宙，無效 case 只比對這個起點，不寫死數量（T3 fix3）。 */
+        final long worldsAtStart;
         /** 等待逾時自清的登記，只在 server thread 使用；同一 context 第二個 fixture 改標不明確，該 context 不自清（8-H，2026-11-11）。 */
         private static final Map<TestContext,Object> TIMEOUT_CLEANUP=new java.util.IdentityHashMap<>();
         private static final Object AMBIGUOUS=new Object();
@@ -2205,6 +2207,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
         }
         NativeEntry(TestContext context,int count,Direction facing,boolean trustedEffects,BlockPos offset) {
             this.context=context; server=context.getWorld().getServer(); target=server.getWorld(dev.quantumchamber.superposition.SuperpositionWorld.KEY);
+            worldsAtStart=worldCount();
             pages=CorridorPageManager.forServer(server);
             frame=ChamberGameTestBuilder.buildForSession(context,false,facing,false,offset);
             var anchor=switch(facing) { case NORTH -> ChamberGameTestBuilder.CONTROLLER; case SOUTH -> new BlockPos(7,7,10);
@@ -2248,8 +2251,9 @@ public final class M2CorridorGameTests implements FabricGameTest {
         void assertNoSession() {
             context.assertTrue(record()==null,"無效cohort不能reserve／寫journal／入場");
             context.assertTrue(players.stream().allMatch(connection -> connection.player().getServerWorld()==context.getWorld()),"無效case全員保持來源");
-            context.assertEquals(4L,java.util.stream.StreamSupport.stream(server.getWorlds().spliterator(),false).count(),"無效case不創造新world");
+            context.assertEquals(worldCount(),worldsAtStart,"無效case不創造新world");
         }
+        long worldCount() { return java.util.stream.StreamSupport.stream(server.getWorlds().spliterator(),false).count(); }
         void assertInventory() {
             for(var connection : players) context.assertEquals(inventories.get(connection.player().getUuid()),
                     connection.player().writeNbt(new NbtCompound()).get("Inventory"),"native完整inventory保持");
