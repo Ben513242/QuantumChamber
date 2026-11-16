@@ -119,6 +119,22 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-16 最新：Claude 接手續作 T3（使用者原話「codex冷卻中你繼續實作」）。fix2 的 production pin `3aa493e` 審查清零（N2 C0/I0/M3，增量 C0/I0/M0），下一步在本次文件 commit 上跑完整回歸。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「Claude 接手，T3 fix2 審查清零」節，再讀 `docs/handoffs/2026-11-14-m7-t3-handoff.md`。
+- fix2 修完整回歸的兩個 JUnit 失敗：
+  - BUSY 不交接的測試期待；
+  - `HomeRootTickets` 兩則 log 補 `LOG_MARKER`。
+
+  有具名 RED、GREEN、三個 mutation 都 KILLED 並還原。
+- N2 的 M3（`OriginDoors` 在套用時看不到 HOME 的 BUSY）帶到 T4，T4 開工時必須處理或請使用者裁示。
+- 計數全部照交接保留，不重置：
+  - AccessDenied 重跑額度 1/1 已用完；
+  - 完整回歸啟動器歷史 2/3；
+  - fixture 3/3；
+  - mutation 兩事件。
+- T3 要等同 SHA 五個 required CI 都成功才結案。結案後依連續授權接 T4。main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+下段是 2026-11-14 收尾交接時的紀錄。
+
 **2026-11-14最新：真user「準備收尾交接」，T3 OPEN，本輪不新fix/runtime/full/push/T4。** 先讀 `docs/handoffs/2026-11-14-m7-t3-handoff.md`，再M7 note現行節／S最新STATUS與progress。sourceaa1／N1 C0/I0/M0保原，full0e8/rootcfc/holder6b自然exit1，:test1164/2fail/2既有平台skip，GT根本未啟；兩缺口待修，舊10:50runtime log不可冒作本輪AccessDenied。原fixture3/3／再任一非預期即停、AccessDenied1/1、fullDriver歷史2、mutation兩事件與全FAIL保。handoff事實窄審最終docs C0/I0/M0（非N2）後僅local docs commit，不push/CI（user收尾且codegateFAIL，非CI豁免/已過）。下一棒收到續作指示可按既有M7 scope處理fix2，不重問玩法／正常push，但完整production門檻及各另授邊界不變。下段「現在進full」均是此次handoff前歷史。
 
 **2026-11-14現行：T3 fix1 N1 C0/I0/M0，N0 Important6→N1 0。** sourceaa1d354e、已驗7558b0e；Win29JUnit/9GT/11controls/guard2+12與九變異原件（8原driverKILLED＋expiry原FAIL/同席語意KILLED）已核。現在fresh W10前置後完整full/新SHA首次五CI，尚未T3closed；全綠才自動T4。fixture3/3任一新非預期即停、AccessDenied1/1、fullDriver歷史2及mutation兩事件全保，不盲重跑/舊CIrerun。下方N0與STOP是歷史，最新以本段及M7 note/N1 report為準。

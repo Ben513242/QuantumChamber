@@ -1,8 +1,29 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；使用者現要求收尾交接，本輪暫停新工作。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2（見下節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
-## 最新：使用者要求收尾交接；T3 full兩JUnit FAIL未修（2026-11-14）
+## 最新：Claude 接手，T3 fix2 審查清零，待完整回歸（2026-11-16）
+
+- **接手**：使用者原話「codex冷卻中你繼續實作」。controller 改由 Claude 擔任，依 [T3 交接](../handoffs/2026-11-14-m7-t3-handoff.md) 續作，沒有重派 T1、T2。
+  - 接手時核實：HEAD `a697eba`，tracked clean，比 origin（`9358368`）多 9 個 commit，沒有 java 行程。
+  - implementer 與 reviewer 都是 Claude 子代理。
+- **fix2**（`9b76d49`，base `a697eba`）：修完整回歸的兩個 JUnit 失敗，原件是 `S/t3-full-holder-6b571243…/junit/`。
+  - `ChamberPowerCoordinatorTest`：測試對 BUSY 的期待改成「不交接」，並加上明示案例。production 的 `normalizesOwnerless` 在 `aa1d354` 就已排除 BUSY，這次只補 Javadoc。依據是 spec §6 :190：「其他端busy為11而不取得門控制權」。
+  - `HomeRootTickets:140,176`：兩則帶 SID 的 log 補上 `CollapseService.LOG_MARKER`。依 `CollapseService:111–113` 的規則，能歸屬到 session 的 log 用 `LOG_MARKER`，不用 TICK。訊息、等級與參數不變。
+  - 證據放在 `S/t3-fix2-gates/`：未修改的 HEAD 上兩案各 1 失敗（具名 RED）→ GREEN 19/19、2/2 → 三個 direct owner mutation（:140 marker、:176 marker、BUSY 排除）全部 KILLED，且以備份還原、SHA 相同 → final GREEN。
+- **fix2b**（`3aa493e`）：處理 N2 的 M1、M2，只改註解、區域變數名與斷言訊息：BUSY 不交接的方法註解，以及 spec 引用統一寫成「§6 :190」。
+  - 在 commit 後的乾淨 pin 上跑 focused：power 19/19、marker 2/2。
+- **N2 審查**：fix2 是 C0／I0／M3，fix2b 增量複核 C0／I0／M0。原件在 `S/t3-fix2-n2-review.md`。
+  - **M3 帶到 T4（未修，T4 開工時必須處理或請使用者裁示）**：`OriginDoors.java:597–637` 的 `applyOwnerless` 在套用時只讀 `journal.flushedRecords()`。這份資料經 `SessionRecoveryState.legacyRows` 過濾，看不到 `HomeSessionRecord`。
+    - 後果：排入在先、A 之後才因 B 的 HOME 變成 BUSY 時，A 的 stale 量子膜仍可能被改成一般開門，和 spec :212 不對稱。
+    - 目前沒有 runtime 證據證實會觸發，後果也不會關住人或損失資料。
+    - 最小修法是套用前比照 `:666` 再查 presence。
+- **下一步**：在這次文件 commit 上跑完整回歸。production pin 是 `3aa493e`。
+  - 完整回歸的 AccessDenied 重跑額度已用完（1/1），同簽章再現就停。
+  - 完整回歸的啟動器歷史為 2/3，下一次非預期的工具失敗就停。
+  - 通過後正常 push，等同 SHA 五個 required CI 都成功，T3 才算結案。
+
+## 前一節：使用者要求收尾交接；T3 full兩JUnit FAIL未修（2026-11-14）
 
 真user本輪原文「準備收尾交接」（primary root轉述，S/user-handoff-steering-20261114.md）；本輪停止新fix/runtime/full/push/T4，沒有取消整個既授M7範圍。精確交接：`docs/handoffs/2026-11-14-m7-t3-handoff.md`，接手先讀此檔，不沿下面歷史「現在進full」文字自行恢復。
 
