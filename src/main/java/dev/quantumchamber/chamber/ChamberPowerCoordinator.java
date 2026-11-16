@@ -130,13 +130,13 @@ public final class ChamberPowerCoordinator {
     /**
      * M5 spec §10.6 :613（F5-2）：找不到所屬 session、卻帶著量子膜的原艙門（例如終局之後、改門之前 crash），在協調完這座原艙之後交給塌縮流程，排入下一個 tick 正規化為一般開門
      * （{@link ChamberCollapsePort.Membranes}；chamber 不 import collapse）。只在 ORIGIN 分支、艙體的 chunk 都已載入（{@code loaded}）時讀門；門的 25 格有任何一格帶著量子膜，而且
-     * presence 不是 M5 的塌縮狀態（{@link #normalizesOwnerless}）時才交出。MEASURED（含 DORMANT）的艙也包含在內（presence 是 ACTIVE 或 UNKNOWN）。有 COLLAPSING、SEALED、
-     * PASSAGE_READY 的艙由該 session 的門邏輯負責，這裡不交出，塌縮流程套用時也再排除一次。排入、套用與 log 都在塌縮流程；這裡不寫門、不丟出例外（刷新在 Controller 的排程刻與
-     * neighbor update 裡）。
+     * presence 不是 COLLAPSE／PASSAGE／BUSY（{@link #normalizesOwnerless}）時才交出。MEASURED（含 DORMANT）的艙也包含在內（presence 是 ACTIVE 或 UNKNOWN）。有 COLLAPSING、SEALED、
+     * PASSAGE_READY 的艙由該 session 的門邏輯負責，這裡不交出，塌縮流程套用時也再排除一次；BUSY（同艙其他端的旅程擁有門）這裡也不交出。排入、套用與 log 都在塌縮流程；這裡不寫門、
+     * 不丟出例外（刷新在 Controller 的排程刻與 neighbor update 裡）。
      * <p>{@code presence} 是同一次 {@link #reconcile} 最後讀到的值（F6-0，F5-2 quality Nit：不再讀第二次）。協調裡的 {@code start}、{@code returnToOrigin} 只會讓 presence 在非塌縮的
      * presence（NONE、ARMING、ACTIVE、RETURNING、UNKNOWN）之間改變，不會變成或離開 COLLAPSE／PASSAGE，所以用它判斷與協調之後再讀一次的結果相同（F6-1 Step 0 補上 UNKNOWN，F6-0
-     * quality Minor 2：durable 是 ARMING 但沒有 runtime 時、DORMANT 的 MEASURED 都是 UNKNOWN）。讀不到時（{@code null}；{@link #reconcile} 已以同一個原因記 WARN）略過，下一次
-     * 刷新再判斷。
+     * quality Minor 2：durable 是 ARMING 但沒有 runtime 時、DORMANT 的 MEASURED 都是 UNKNOWN）。presence 是 BUSY 時，reconcile 讀到後先行 return，不呼叫 {@code start}、
+     * {@code returnToOrigin}，所以協調之後仍是 BUSY，不會離開 BUSY。讀不到時（{@code null}；{@link #reconcile} 已以同一個原因記 WARN）略過，下一次刷新再判斷。
      */
     private static void normalizeOwnerlessMembrane(ServerWorld world, ChamberFrame frame, UUID chamber, ChamberSessionGateway.Presence presence) {
         boolean membrane = doorHasMembrane(world, frame);
@@ -154,7 +154,7 @@ public final class ChamberPowerCoordinator {
 
     /**
      * M5 spec §10.6 :613 的條件（純函式，F5-2）：門帶著量子膜，而且 presence 不是 {@code COLLAPSE}／{@code PASSAGE}（COLLAPSING、SEALED、PASSAGE_READY 的 session 自己擁有門）
-     * 也不是 {@code BUSY}（同艙其他端的旅程擁有門；M7 spec §190：其他端 busy 不取得門控制權）時，才交給塌縮流程正規化。
+     * 也不是 {@code BUSY}（同艙其他端的旅程擁有門；M7 spec §6 :190：其他端 busy 不取得門控制權）時，才交給塌縮流程正規化。
      * 每次刷新都以這座艙的門實際讀到的 {@code doorHasMembrane} 呼叫（F6-0，F5-2 quality Nit：門沒有量子膜的那一半也是 production 的路徑）。
      */
     static boolean normalizesOwnerless(ChamberSessionGateway.Presence presence, boolean doorHasMembrane) {
