@@ -320,6 +320,8 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             var dormant = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, settled.participants(), List.of(), SessionState.MEASURED, settled.home());
             boolean[] fail = {false};
             M5GameTestSupport.installFlushProbe(c, state -> { if (fail[0]) throw new IllegalStateException("M7_FIX1_JOURNAL_FLUSH_FAULT"); }, hooks);
+            // 任何路徑收尾都先解除故障並補一次寫出，不把本 fixture 未確認的寫入留給之後的 test（mut16 實測：中途失敗時之後兩案 admitHome 被拒）。
+            hooks.add(() -> { fail[0] = false; journal.flush(server); });
             long eventAt = server.getOverworld().getTime();
             fail[0] = true;
             try {
