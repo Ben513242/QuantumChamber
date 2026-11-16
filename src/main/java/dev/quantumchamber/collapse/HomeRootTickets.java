@@ -137,7 +137,7 @@ public final class HomeRootTickets {
             // STOPPING 之後沒有正常 tick；逐 SID 把剩餘 refs 再試最後一次。
             for (var lease:List.copyOf(owner.leases.values())) {
                 lease.closeForEvent();
-                if (!lease.chunks.isEmpty()) LOGGER.error("原艙票停止時仍未釋放：SID={} refs={}",lease.sid,lease.chunks);
+                if (!lease.chunks.isEmpty()) LOGGER.error(CollapseService.LOG_MARKER,"原艙票停止時仍未釋放：SID={} refs={}",lease.sid,lease.chunks);
             }
         }
         owner.retries.clear();
@@ -173,7 +173,7 @@ public final class HomeRootTickets {
             closing=true;
             if (!warned) {
                 warned=true;
-                LOGGER.warn("原艙票清理失敗，保留未清 refs 下輪續試：SID={} refs={}",sid,chunks,failure);
+                LOGGER.warn(CollapseService.LOG_MARKER,"原艙票清理失敗，保留未清 refs 下輪續試：SID={} refs={}",sid,chunks,failure);
             }
         }
 

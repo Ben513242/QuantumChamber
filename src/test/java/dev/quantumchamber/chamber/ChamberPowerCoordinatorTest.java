@@ -325,12 +325,14 @@ class ChamberPowerCoordinatorTest {
 
     /**
      * M5 spec §10.6 :613（F5-2）：找不到所屬 session 的量子膜，只在門帶著量子膜、而且 presence 不是 M5 的塌縮狀態時交給塌縮流程正規化。COLLAPSE（COLLAPSING、SEALED）與 PASSAGE
-     * （PASSAGE_READY）由該 session 的門邏輯負責；MEASURED（含 DORMANT：ACTIVE 或 UNKNOWN）與沒有 session（NONE）都包含在內。門沒有量子膜時一律不交出。
+     * （PASSAGE_READY）由該 session 的門邏輯負責；BUSY 是同艙其他端的旅程擁有門（M7 spec §190：其他端 busy 不取得門控制權），同樣不交出。MEASURED（含 DORMANT：ACTIVE 或
+     * UNKNOWN）與沒有 session（NONE）都包含在內。門沒有量子膜時一律不交出。
      */
     @Test void ownerlessMembraneIsHandedOverOnlyWithAMembraneAndWithoutAnM5Presence() {
         var cases = new java.util.ArrayList<org.junit.jupiter.api.function.Executable>();
         for (var presence : ChamberSessionGateway.Presence.values()) {
-            boolean m5 = presence == ChamberSessionGateway.Presence.COLLAPSE || presence == ChamberSessionGateway.Presence.PASSAGE;
+            boolean m5 = presence == ChamberSessionGateway.Presence.COLLAPSE || presence == ChamberSessionGateway.Presence.PASSAGE
+                    || presence == ChamberSessionGateway.Presence.BUSY;
             cases.add(() -> assertEquals(!m5, ChamberPowerCoordinator.normalizesOwnerless(presence, true), "門帶著量子膜，presence=" + presence));
             cases.add(() -> assertFalse(ChamberPowerCoordinator.normalizesOwnerless(presence, false), "門沒有量子膜，presence=" + presence));
         }
@@ -338,6 +340,8 @@ class ChamberPowerCoordinatorTest {
         cases.add(() -> assertTrue(ChamberPowerCoordinator.normalizesOwnerless(ChamberSessionGateway.Presence.UNKNOWN, true), "DORMANT（沒有 runtime 的 MEASURED）"));
         cases.add(() -> assertFalse(ChamberPowerCoordinator.normalizesOwnerless(ChamberSessionGateway.Presence.COLLAPSE, true), "COLLAPSING／SEALED 自己擁有門"));
         cases.add(() -> assertFalse(ChamberPowerCoordinator.normalizesOwnerless(ChamberSessionGateway.Presence.PASSAGE, true), "PASSAGE_READY 自己擁有門"));
+        cases.add(() -> assertFalse(ChamberPowerCoordinator.normalizesOwnerless(ChamberSessionGateway.Presence.BUSY, true),
+                "BUSY：同艙其他端的旅程擁有門，不交給塌縮流程正規化（M7 spec §190）"));
         cases.add(() -> assertThrows(NullPointerException.class, () -> ChamberPowerCoordinator.normalizesOwnerless(null, true)));
         assertAll(cases);
     }

@@ -154,7 +154,8 @@ public final class ChamberPowerCoordinator {
 
     /**
      * M5 spec §10.6 :613 的條件（純函式，F5-2）：門帶著量子膜，而且 presence 不是 {@code COLLAPSE}／{@code PASSAGE}（COLLAPSING、SEALED、PASSAGE_READY 的 session 自己擁有門）
-     * 時，才交給塌縮流程正規化。每次刷新都以這座艙的門實際讀到的 {@code doorHasMembrane} 呼叫（F6-0，F5-2 quality Nit：門沒有量子膜的那一半也是 production 的路徑）。
+     * 也不是 {@code BUSY}（同艙其他端的旅程擁有門；M7 spec §190：其他端 busy 不取得門控制權）時，才交給塌縮流程正規化。
+     * 每次刷新都以這座艙的門實際讀到的 {@code doorHasMembrane} 呼叫（F6-0，F5-2 quality Nit：門沒有量子膜的那一半也是 production 的路徑）。
      */
     static boolean normalizesOwnerless(ChamberSessionGateway.Presence presence, boolean doorHasMembrane) {
         Objects.requireNonNull(presence, "presence");
