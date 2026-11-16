@@ -233,11 +233,13 @@ public final class HomeClosure {
     }
 
     /**
-     * 正式訊號入口：READY 期間 exact B 斷電或結構失效（§9.2 ENTRY_STOPPED）。在 guard 內重讀 B 當下的訊號，與傳入的一致才 mint。投影端沒有 registry 的
-     * enabled，所以 {@link EntrySignal#DISABLED} 在本 task 不會被當下的 B 證實（規格待釐清，見 T4 回報）。
+     * 正式訊號入口：READY 期間 exact B 斷電或結構失效（§9.2 ENTRY_STOPPED）。在 guard 內重讀 B 當下的訊號，與傳入的一致才 mint。
+     * B 端的停止只有 {@link EntrySignal#LOW}（斷電）與 {@link EntrySignal#INVALID}（結構失效）。{@link EntrySignal#DISABLED} 依使用者 2026-11-17 裁示
+     * 當成不會發生，一律拒絕、不 mint：投影艙沒有停用開關（{@code ChamberMaintenanceInteraction.toggleEnabled} 要求原艙身分）。記錄格式仍保留
+     * {@code HomeSessionRecord.Signal.DISABLED}，只為舊資料相容。
      */
     public static void onEntryStopped(MinecraftServer server, HomeSessionRecord row, ServerWorld entry, EntrySignal signal, long observedAt) {
-        if (!server.isOnThread() || row.state() != SessionState.PASSAGE_READY || signal == null) return;
+        if (!server.isOnThread() || row.state() != SessionState.PASSAGE_READY || signal == null || signal == EntrySignal.DISABLED) return;
         var journal = SessionRecoveryState.get(server);
         if (!settled(journal, row) || HomeRootFence.queued(server, row.sessionUuid()) || entry == null || exactEntry(server, row) != entry) return;
         var h = row.home();
