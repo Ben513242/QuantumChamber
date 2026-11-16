@@ -185,20 +185,15 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
         var ticket=delay.acquire(sid,root);
         var pos=new net.minecraft.util.math.ChunkPos(root.controllerPos());
         int[] missing={0};
-        long firstTick=c.getTick();
         java.util.function.IntConsumer poll=ordinal -> {
             if (!ticket.full()) missing[0]++;
             if (ordinal==200 && (missing[0]!=200 || delay.lastMissing!=200 || delay.polls<200)) findings.add("I06_EARLY_FULL");
         };
         poll.accept(1);
-        for(int ordinal=2;ordinal<=200;ordinal++) {
-            final int count=ordinal;
-            c.runAtTick(firstTick+ordinal-1,()->{
-                try { poll.accept(count); }
-                catch (RuntimeException | Error failure) { f.close(); throw failure; }
-            });
-        }
-        c.runAtTick(firstTick+200,()->{
+        // T4 fix1：第二趟由第一趟的收尾回呼啟動，此時原版 GameTestState 正在迭代自己的排程表（fastutil Object2LongOpenHashMap）。
+        // 回呼內一次排入兩百筆會讓表在迭代中 rehash，正在執行的回呼留在表內、下一 tick 再跑一次（gate t4a-fix1-diag 實測：
+        // 第一趟收尾斷言在 tick 586 通過、587 重跑時第二趟已合法占艙）。改為每 tick 只排下一筆；輪詢次數、tick 位置與判定都不變。
+        pollEachTick(c,f,poll,2,()->{
             try {
                 boolean first=delay.full(c.getWorld(),pos);
                 if (!first || delay.firstFull!=201 || ticket.full() || HomeTicketFaultFixture.count(c.getWorld(),sid)!=0)
@@ -210,6 +205,15 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
                     finally { f.close(); }
                 });
             } catch (RuntimeException | Error problem) { f.close(); throw problem; }
+        });
+    }
+
+    /** 從第 {@code ordinal} 次起每 tick 輪詢一次到第 200 次，再下一個 tick 執行 {@code after}；每次只在排程表排入一筆。 */
+    private static void pollEachTick(TestContext c,M2CorridorGameTests.NativeEntry f,java.util.function.IntConsumer poll,int ordinal,Runnable after) {
+        c.waitAndRun(1,()->{
+            try { poll.accept(ordinal); }
+            catch (RuntimeException | Error failure) { f.close(); throw failure; }
+            if (ordinal<200) pollEachTick(c,f,poll,ordinal+1,after); else c.waitAndRun(1,after);
         });
     }
 
