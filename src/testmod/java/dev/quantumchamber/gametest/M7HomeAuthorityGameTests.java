@@ -298,6 +298,7 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
     public void only_exact_complete_projection_resolves(TestContext context) throws Exception {
         var fixture=new M2CorridorGameTests.NativeEntry(context,1);
         try {
+            M7HomeClosureGameTests.requireCandidateStores(fixture.server);
             var a = fixture.controller();
             context.assertTrue(new ChamberActivationService().attemptArm(context.getWorld(),a).accepted(), "正式 A 登記");
             var frame = new ChamberFrame(a.getPos(), a.getCachedState().get(ChamberControllerBlock.FACING));
