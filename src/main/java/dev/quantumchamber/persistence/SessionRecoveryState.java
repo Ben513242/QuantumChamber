@@ -776,6 +776,14 @@ public final class SessionRecoveryState extends PersistentState {
         requireServerThread(server); return commitHome(() -> flush(server),expected,next,false);
     }
     CommitResult commitHome(Runnable flush,HomeSessionRecord expected,HomeSessionRecord next,boolean restore) {
+        if(closeLatch(expected,next))
+            return CommitResult.of(CommitResult.Status.REJECTED,new IllegalStateException("HOME 結案只由回程終局 owner 提交"));
+        return commitHomeEdge(flush,expected,next,restore);
+    }
+    private static boolean closeLatch(HomeSessionRecord expected,HomeSessionRecord next) {
+        return expected.home().closeIntent() instanceof HomeSessionRecord.None && next.home().closeIntent() instanceof HomeSessionRecord.Close;
+    }
+    private CommitResult commitHomeEdge(Runnable flush,HomeSessionRecord expected,HomeSessionRecord next,boolean restore) {
         requireMutationThread(); requireHealthy(); var sid=expected.sessionUuid();
         if(!expected.equals(records.get(sid)) || !expected.equals(flushed.get(sid)) || quarantined.contains(sid)
                 || pending!=null || terminated.contains(sid) || !HomeSessionRecord.edge(expected,next,restore)
@@ -784,9 +792,34 @@ public final class SessionRecoveryState extends PersistentState {
         try { stageHome(next,!restore); } catch(RuntimeException invalid) { return CommitResult.of(CommitResult.Status.REJECTED,invalid); }
         return finishHome(next,restore,flush);
     }
-    /** 所有玩家返還、原生清理與門 checkpoint 已由呼叫端確認後，才要求移除熱列。 */
+    /** M7 spec §9.2 :273：NONE→CLOSE 只接受回程終局 owner 在事件 guard 內發出的一次性提交（roll-forward）。 */
+    public CommitResult latchHomeClose(MinecraftServer server, dev.quantumchamber.collapse.HomeClosure.CloseMint mint) {
+        requireServerThread(server); return latchHomeClose(() -> flush(server),mint,server);
+    }
+    CommitResult latchHomeClose(Runnable flush, dev.quantumchamber.collapse.HomeClosure.CloseMint mint, MinecraftServer owner) {
+        if(mint==null || !closeLatch(mint.expected(),mint.next()) || !mint.consume(owner))
+            return CommitResult.of(CommitResult.Status.REJECTED,new IllegalStateException("沒有回程終局 owner 的結案提交"));
+        return commitHomeEdge(flush,mint.expected(),mint.next(),false);
+    }
+    /** 結案列的移除只接受回程終局 owner 的一次性 proof（M7 spec §5.3）：B 門、原生 checkpoint 與 exact 收據都由 owner 核對過。 */
+    public TerminalResult finishHomeClose(MinecraftServer server, HomeSessionRecord expected, dev.quantumchamber.collapse.HomeClosure.HomeClosureProof proof) {
+        requireServerThread(server);
+        HomeReceiptStore store;
+        try { store=new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)); }
+        catch(IOException failure) { return TerminalResult.of(TerminalResult.Status.REJECTED,new UncheckedIOException(failure)); }
+        return finishHomeClose(store,() -> flush(server),expected,proof,server);
+    }
+    TerminalResult finishHomeClose(HomeReceiptStore store, Runnable flush, HomeSessionRecord expected,
+            dev.quantumchamber.collapse.HomeClosure.HomeClosureProof proof, MinecraftServer owner) {
+        if(!(expected.home().closeIntent() instanceof HomeSessionRecord.Close) || proof==null || !proof.consume(owner,expected))
+            return TerminalResult.of(TerminalResult.Status.REJECTED,new IllegalStateException("沒有回程終局 owner 的移除 proof"));
+        return terminateHome(store,flush,expected);
+    }
+    /** 未選定 RETURNING 的完整返還收尾；已結案列只經 {@link #finishHomeClose}，外部 caller 不能自宣已完成。 */
     public TerminalResult terminateHome(MinecraftServer server,HomeSessionRecord expected) {
         requireServerThread(server);
+        if(expected.home().closeIntent() instanceof HomeSessionRecord.Close)
+            return TerminalResult.of(TerminalResult.Status.REJECTED,new IllegalStateException("結案列只經 finishHomeClose 移除"));
         HomeReceiptStore store;
         try { store=new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)); }
         catch(IOException failure) { return TerminalResult.of(TerminalResult.Status.REJECTED,new UncheckedIOException(failure)); }

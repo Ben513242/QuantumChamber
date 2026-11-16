@@ -78,16 +78,22 @@ public final class ChamberRegistry {
         return Map.copyOf(records);
     }
 
+    /**
+     * 停用／啟用的持久提交點（直接 setter 與維護入口都經這裡）。M7 spec §9.1：啟用先經回程停用防線，已選定旅程的停止尚未 checked 時保持 pending；
+     * 停用提交後同步通知防線，回程 latch 尚未 checked 時不回報成功。
+     */
     boolean setEnabled(UUID chamberUuid, boolean enabled) {
         ChamberRecord current = records.get(chamberUuid);
         if (current == null || current.enabled() == enabled) {
             return false;
         }
+        var roots = ChamberCollapsePort.roots();
+        if (enabled && !roots.permitsEnable(this, chamberUuid)) return false;
         records.put(chamberUuid, new ChamberRecord(
                 current.chamberUuid(), current.originWorldKey(), current.originDimensionRole(), current.anchorPos(),
                 current.facing(), current.instanceKind(), enabled, current.destroyed(), current.powerState()));
         changed.run();
-        return true;
+        return enabled || roots.onRootEvent(this, current, ChamberCollapsePort.RootEvent.DISABLED);
     }
 
     public boolean setPowerState(UUID chamberUuid, ChamberPowerState state) {
@@ -109,12 +115,16 @@ public final class ChamberRegistry {
         projectionIndex.add(record.originDimensionRole(), record.chamberUuid(), bounds(record));
     }
 
+    /** 真正移除的持久提交點（含原生 setter 的收尾）：同艙另一端的回程未終局時拒絕；移除後同步通知回程停用防線（M7 spec §9.1、[R3]）。 */
     boolean removeOrigin(UUID chamberUuid) {
         ChamberRecord record = records.get(chamberUuid);
         if (record == null || record.instanceKind() != ChamberInstanceKind.ORIGIN || record.destroyed()) return false;
+        var roots = ChamberCollapsePort.roots();
+        if (!roots.permitsRemoval(this, chamberUuid)) return false;
         records.remove(chamberUuid);
         projectionIndex.remove(record.originDimensionRole(), chamberUuid, bounds(record));
         changed.run();
+        roots.onRootEvent(this, record, ChamberCollapsePort.RootEvent.DESTROYED);
         return true;
     }
 

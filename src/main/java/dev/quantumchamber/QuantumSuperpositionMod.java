@@ -57,6 +57,9 @@ public final class QuantumSuperpositionMod implements ModInitializer {
         // 它的 END_SERVER_TICK（同步權威健康）晚於塌縮流程的 tick。
         ProjectionProtectionIndex.registerEvents();
         UniverseLifecycleService.initialize();
+        // M7 T4：回程終局 owner 與原艙停用防線。SERVER_STARTED 晚於 journal／registry／ownership 與上面的 authority 初始化，早於任何玩家維護；
+        // END_SERVER_TICK 排在最後，看到的是本 tick 其他流程之後的 journal。
+        dev.quantumchamber.collapse.HomeRootFence.initialize();
         RuntimeCompatibility compatibility = CompatibilityManager.detect(
                 FabricLoader.getInstance()::isModLoaded);
         LOGGER.info("Detected optional mod compatibility: sodium={}, iris={}, immersive_portals={}",

@@ -30,6 +30,8 @@ public final class ChamberLifecycleService {
         Objects.requireNonNull(removeController, "removeController");
         ChamberRecord record = resolveAuthorizedOrigin(authority).orElse(null);
         if (record == null || record.powerState() != ChamberPowerState.OFF) return false;
+        // M7 spec §2 [R3]：同艙另一端的回程收尾前，一般拆除在改世界之前就拒絕。
+        if (!ChamberCollapsePort.roots().permitsRemoval(registry, record.chamberUuid())) return false;
         if (!removeController.getAsBoolean()) return false;
         // 原生 setter hook 可能已先完成同一筆清理。
         return !registry.records().containsKey(record.chamberUuid()) || completeRemoval(authority);

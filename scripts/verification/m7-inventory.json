@@ -30,7 +30,13 @@
       "dev.quantumchamber.persistence.M7HomeHistoryTest.linkedDataInsideSaveRefusesPublicationAndLookup",
       "dev.quantumchamber.corridor.M7HomeCoverageTest.sameXZDifferentWorldConsumesCoverage",
       "dev.quantumchamber.corridor.M7HomeCoverageTest.boundsRootSharesAndReferencesWithoutReleasingOthers",
-      "dev.quantumchamber.corridor.M7HomeCoverageTest.bothOrdersRespectCombinedCoverageLimit"
+      "dev.quantumchamber.corridor.M7HomeCoverageTest.bothOrdersRespectCombinedCoverageLimit",
+      "dev.quantumchamber.persistence.M7CloseMatrixTest.decideFollowsCloseMatrixPriority",
+      "dev.quantumchamber.persistence.M7CloseMatrixTest.restartClosedNeedsStartupOwner",
+      "dev.quantumchamber.persistence.M7CloseMatrixTest.closeLatchRequiresOwnerMint",
+      "dev.quantumchamber.persistence.M7CloseMatrixTest.closedRowRemovalRequiresClosureProof",
+      "dev.quantumchamber.persistence.M7CloseMatrixTest.participantCloseKeepsActualActorAndPhase",
+      "dev.quantumchamber.persistence.M7CloseMatrixTest.permanentSealCannotBeArchived"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",
@@ -39,7 +45,11 @@
       "quantumchamber:m1_empty|m7homeauthoritygametests.provisional_wins_before_first_ticket",
       "quantumchamber:m1_empty|m7homeauthoritygametests.a_and_two_b_entries_contend_once",
       "quantumchamber:m1_empty|m7homeauthoritygametests.partial_acquire_and_late_callback_release_native_tickets",
-      "quantumchamber:m1_empty|m7homeauthoritygametests.removal_fault_isolated_for_two_native_owners"
+      "quantumchamber:m1_empty|m7homeauthoritygametests.removal_fault_isolated_for_two_native_owners",
+      "quantumchamber:m1_empty|m7homeclosuregametests.ownerless_membrane_yields_to_home_busy",
+      "quantumchamber:m1_empty|m7homeclosuregametests.ordinary_closed_door_needs_native_checkpoint",
+      "quantumchamber:m1_empty|m7homeclosuregametests.root_disable_latches_before_ack_and_reenable",
+      "quantumchamber:m1_empty|m7homeclosuregametests.home_busy_root_rejects_ordinary_removal"
     ]
   },
   "windows": {

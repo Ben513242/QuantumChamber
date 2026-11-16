@@ -72,7 +72,14 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                 value instanceof Provisional p ? p.sid.equals(sid) : ((SuperpositionSession)value).initial.sessionUuid().equals(sid))) return false;
         if (journal.allSessions().containsKey(sid) || journal.allFlushedSessions().containsKey(sid)
                 || journal.pendingSessions().containsKey(sid) || journal.quarantinedSessions().contains(sid)) return false;
-        return pages.exclusiveOperation(sid,() -> sessions.putIfAbsent(chamber,new Provisional(sid,owner.getTicks()))==null);
+        boolean claimed=pages.exclusiveOperation(sid,() -> sessions.putIfAbsent(chamber,new Provisional(sid,owner.getTicks()))==null);
+        // M7 spec §2 [R3]：A 自 B 暫占起受保護；撤銷舊的斷電協調結果，之後的協調看到 BUSY 不會再判 OFF。
+        if (claimed) ChamberProtectionService.get().revokeReconciliation(chamber);
+        return claimed;
+    }
+    /** 同艙另一端的回程暫占（尚未 checked ARMING）。 */
+    public boolean provisionalClaimed(MinecraftServer owner, UUID chamber) {
+        return owner==server && owner.isOnThread() && sessions.get(chamber) instanceof Provisional p && p.valid;
     }
     public boolean ownsProvisional(MinecraftServer owner, UUID chamber, UUID sid) {
         return owner==server && owner.isOnThread() && sessions.get(chamber) instanceof Provisional p && p.valid && p.sid.equals(sid);

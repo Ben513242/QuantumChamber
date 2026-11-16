@@ -23,6 +23,13 @@ public final class ChamberMaintenanceInteraction {
         if (context == null) return result(player, false, "無法維護：需要有效的原始控制器身分。");
         boolean enabled = !context.record().enabled();
         if (!context.lifecycle().setOriginEnabled(context.authority(), enabled)) {
+            // M7 spec §9.1：回程停止尚未持久時不回報完成；停用已登記則等收尾，啟用則暫不放行。
+            var registry = ChamberRegistryState.get(world.getServer()).registry();
+            var after = registry.records().get(context.record().chamberUuid());
+            if (after != null && !enabled && !after.enabled())
+                return result(player, false, "原始艙體已登記停用；回程停止仍在收尾中。");
+            if (after != null && enabled && !after.enabled() && !ChamberCollapsePort.roots().permitsEnable(registry, after.chamberUuid()))
+                return result(player, false, "原始艙體仍有回程在收尾，暫時不能啟用。");
             return result(player, false, "維護失敗：控制器身分已變更。");
         }
         // 管理停用也經過同一返還交易；高電位不解除艙體保護。

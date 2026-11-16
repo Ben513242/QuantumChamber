@@ -18,15 +18,23 @@ import net.minecraft.world.World;
  *     {@code CollapseService.initialize()} 註冊。F5 的通道期間（§10.5）也接在同一個介面。</li>
  * <li>{@link Membranes}：找不到所屬 session、卻帶著量子膜的原艙門的正規化（spec §10.6 :613，M5 F5-2）：{@link ChamberPowerCoordinator} 刷新該艙時交給塌縮流程排入下一個
  *     tick，由 {@code CollapseService.initialize()} 註冊。</li>
+ * <li>{@link Roots}：回程旅程的原艙停用防線（M7 spec §9.1）：registry 的停用、啟用與移除提交點同步通知，由 {@code HomeRootFence.initialize()} 註冊。</li>
  * </ul>
- * 沒有註冊時（例如只有 M1 的 JUnit）一律等同「沒有投影、不攔截、不正規化」：{@link Projections#NONE}、{@link Doors#NONE}、{@link Membranes#NONE}。
+ * 沒有註冊時（例如只有 M1 的 JUnit）一律等同「沒有投影、不攔截、不正規化、不阻擋」：{@link Projections#NONE}、{@link Doors#NONE}、{@link Membranes#NONE}、{@link Roots#NONE}。
  */
 public final class ChamberCollapsePort {
     private static volatile Projections projections = Projections.NONE;
     private static volatile Doors doors = Doors.NONE;
     private static volatile Membranes membranes = Membranes.NONE;
+    private static volatile Roots roots = Roots.NONE;
 
     private ChamberCollapsePort() {}
+
+    /** 目前註冊的原艙停用防線；沒有註冊時是 {@link Roots#NONE}。 */
+    public static Roots roots() { return roots; }
+
+    /** 註冊原艙停用防線（取代之前註冊的）。 */
+    public static void installRoots(Roots replacement) { roots = Objects.requireNonNull(replacement, "roots"); }
 
     /** 目前註冊的投影查詢；沒有註冊時是 {@link Projections#NONE}。 */
     public static Projections projections() { return projections; }
@@ -83,8 +91,8 @@ public final class ChamberCollapsePort {
 
     /**
      * 找不到所屬 session、卻帶著量子膜的原艙門（spec §10.6 :613；例如終局之後、改門之前 crash）的正規化：{@link ChamberPowerCoordinator} 在 ORIGIN 分支協調完、艙體的 chunk 都已載入、
-     * 門的 25 格有任何一格帶著量子膜、而且 presence 不是 {@code COLLAPSE}／{@code PASSAGE} 時，在 server thread 上呼叫（F6-0 補上 chunk 的條件，F5-2 quality Nit）。實作只排入下一個 tick 的正規化（不在刷新的當下寫門：刷新可能就在 chunk 載入的
-     * load-sync 裡），套用時再確認沒有 M5 塌縮狀態的 session 擁有這扇門（有 COLLAPSING、SEALED、PASSAGE_READY 時由該 session 的門邏輯負責）。實作不得丟出例外。
+     * 門的 25 格有任何一格帶著量子膜、而且 presence 不是 {@code COLLAPSE}／{@code PASSAGE}／{@code BUSY} 時，在 server thread 上呼叫（F6-0 補上 chunk 的條件，F5-2 quality Nit；M7 加上 BUSY）。實作只排入下一個 tick 的正規化（不在刷新的當下寫門：刷新可能就在 chunk 載入的
+     * load-sync 裡），套用時再確認沒有 M5 塌縮狀態的 session 擁有這扇門（有 COLLAPSING、SEALED、PASSAGE_READY 時由該 session 的門邏輯負責），presence 也沒有變成 BUSY（同艙另一端的回程擁有門）。實作不得丟出例外。
      */
     @FunctionalInterface
     public interface Membranes {
@@ -93,6 +101,31 @@ public final class ChamberCollapsePort {
 
         /** {@code world} 裡 {@code frame} 這座原艙（registry 的 {@code chamber}）的門帶著量子膜，而且沒有 M5 塌縮狀態的 session。 */
         void normalizeOwnerless(ServerWorld world, ChamberFrame frame, UUID chamber);
+    }
+
+    /** 原艙在 registry 持久提交點發生的根事件（M7 spec §9.1）；普通斷電不是根事件。 */
+    public enum RootEvent { DISABLED, INVALID_STRUCTURE, DESTROYED, IDENTITY_MISMATCH }
+
+    /**
+     * 回程旅程對原艙的停用防線（M7 spec §9.1、§6）：{@link ChamberRegistry} 在停用、啟用與移除的持久提交點同步呼叫，由 {@code collapse} 的回程 owner 註冊。
+     * {@code registry} 不屬於任何已啟動的 server 時，實作一律放行（例如只有 M1 的 JUnit）。只在 server thread 呼叫，實作不得丟出例外。
+     */
+    public interface Roots {
+        /** 沒有回程 owner：不阻擋、不需要停止任何旅程。 */
+        Roots NONE = new Roots() {
+            @Override public boolean permitsEnable(ChamberRegistry registry, UUID chamber) { return true; }
+            @Override public boolean onRootEvent(ChamberRegistry registry, ChamberRecord record, RootEvent event) { return true; }
+            @Override public boolean permitsRemoval(ChamberRegistry registry, UUID chamber) { return true; }
+        };
+
+        /** 這座原艙是否可以重新啟用：已選定的旅程停止原因尚未 checked 持久時回 false（pending）。 */
+        boolean permitsEnable(ChamberRegistry registry, UUID chamber);
+
+        /** registry 已提交 {@code event}；回 true 只表示所有需要停止的旅程都已 checked latch，或沒有這種旅程。 */
+        boolean onRootEvent(ChamberRegistry registry, ChamberRecord record, RootEvent event);
+
+        /** 一般拆除是否允許：同艙另一端的回程從暫占起到 checked 終局都回 false。 */
+        boolean permitsRemoval(ChamberRegistry registry, UUID chamber);
     }
 
     /** {@link Doors#use} 的結果。 */

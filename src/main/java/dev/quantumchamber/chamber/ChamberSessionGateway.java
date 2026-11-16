@@ -10,6 +10,7 @@ public interface ChamberSessionGateway {
     /**
      * COLLAPSE 與 PASSAGE 是 M5 的塌縮狀態（spec §5、§10.7）：COLLAPSING、SEALED 為 COLLAPSE，PASSAGE_READY 為 PASSAGE。
      * 兩者都只由 record（collapse view）推導、不看 runtime，而且都讓該原艙不能開新 session；不走返還流程。
+     * BUSY（M7）：同艙另一端的回程（暫占或 HOME 列）占用這座艙；本端不取得門控制權，也不交出量子膜正規化。
      */
     enum Presence { NONE, ARMING, ACTIVE, RETURNING, UNKNOWN, COLLAPSE, PASSAGE, BUSY }
     enum StartResult { ARMED_ONLY, STAGING, STARTED, REJECTED }

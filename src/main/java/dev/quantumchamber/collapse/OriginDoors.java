@@ -55,7 +55,7 @@ import org.slf4j.LoggerFactory;
  * <p><b>找不到所屬 session 的量子膜</b>（spec §10.6 :613，F5-2；條件見 M5 note F4b-3「補充第 8 點」）：{@code ChamberPowerCoordinator} 在 ORIGIN 分支協調完、門帶著量子膜、presence 不是
  * {@code COLLAPSE}／{@code PASSAGE} 時，經 {@code ChamberCollapsePort.Membranes}（{@code CollapseService.normalizeOwnerless}）交給 {@link #queueOwnerless}：排入下一個 tick 的
  * {@link DoorGoal#NORMALIZE_OWNERLESS}（session 為 null；這座艙已有待套用的門時不排，session 的門優先）。套用時（{@link #ownerlessStep}）先等艙體外擴 3 格的 chunk 都 FULL（不退避），
- * 再排除仍有 COLLAPSING、SEALED、PASSAGE_READY session 的艙（那些艙由該 session 的 {@link #watchDoor} 與待套用的門負責，兩者不同時寫門），門已沒有量子膜就完成，否則 sealed 與
+ * 再排除 presence 是 BUSY 的艙（同艙另一端的 M7 回程擁有門，M7 T4），以及仍有 COLLAPSING、SEALED、PASSAGE_READY session 的艙（那些艙由該 session 的 {@link #watchDoor} 與待套用的門負責，兩者不同時寫門），門已沒有量子膜就完成，否則 sealed 與
  * passable 都改為一般開門（{@code DoorState.OPEN}，結果依 {@link #applyOutcome}）。MEASURED（含 DORMANT）的艙也包含在內。SEALED 帶著量子膜時，{@link #cancelSealedClose}
  * 不取消還沒套用的關門（F5-0，F4b-3 spec m-2），所以正規化可以繼續排除有 SEALED session 的艙。排入與完成各記一則 INFO（帶 {@link CollapseService#TICK_LOG_MARKER}：不屬於任何 session）。
  * <p>每個 session 的門狀態（{@code doorLoaded}、{@code doorSeenLoaded}、{@code membrane}、{@code doorReleased}）留在 {@link CollapseService.Track}：它們的生命週期（第一次
@@ -605,6 +605,12 @@ final class OriginDoors {
         var world = service.server.getWorld(door.world);
         if (world == null) return;
         boolean loaded = CollapseService.neighborhoodLoaded(world, door.frame);
+        // M7 spec :212、§6 :190：排入之後同艙另一端的回程才開始（collapse view 只看舊列，看不到 HOME），套用前再查一次 presence；BUSY 時門屬於那趟旅程。
+        if (loaded && service.sessions.presence(service.server, door.chamber) == ChamberSessionGateway.Presence.BUSY) {
+            doors.remove(door.chamber);
+            LOGGER.info(LOG_MARKER, "同艙另一端的回程擁有這座艙（BUSY），不再正規化找不到所屬 session 的量子膜：chamber={}", door.chamber);
+            return;
+        }
         var owner = loaded ? collapseOwner(door.chamber) : null;
         switch (ownerlessStep(loaded, owner == null ? null : owner.state(), loaded && ChamberPowerCoordinator.doorHasMembrane(world, door.frame))) {
             case WAIT -> { }

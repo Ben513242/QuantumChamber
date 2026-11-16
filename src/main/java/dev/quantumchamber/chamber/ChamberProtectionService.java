@@ -85,6 +85,11 @@ public final class ChamberProtectionService {
         originAt(world, controllerPos).ifPresent(record -> reconciledOffOrigins.remove(record.chamberUuid()));
     }
 
+    /** 同艙另一端開始旅程時撤銷舊的斷電協調結果（M7 spec §2 [R3]）：下一次協調核實 presence 與電位之前，A 的艙體維持保護。 */
+    public void revokeReconciliation(UUID chamberUuid) {
+        reconciledOffOrigins.remove(Objects.requireNonNull(chamberUuid, "chamberUuid"));
+    }
+
     /** 僅供已核對原艙身分、實際電位與 session 結果的協調器發布。 */
     void completeReconciliation(ChamberRegistry registry, UUID uuid) {
         if (registry != attachedRegistry) return;
