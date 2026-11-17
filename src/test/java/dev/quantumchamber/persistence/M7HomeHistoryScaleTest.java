@@ -39,6 +39,13 @@ import org.junit.jupiter.api.io.TempDir;
  * 拆段只為了讓 Gradle testLogging 在段與段之間印出事件列，M7 gate 的「90 秒無輸出就判卡住」看得到進度；每一趟的步驟與斷言都和拆段前相同，
  * 也沒有減少趟數。每段開頭核對前面各段的趟數全部完成（{@code BLOCK_ORDER}），最後一個方法也先核對 {@value #TRIPS} 趟都完成：某一趟失敗之後，
  * 之後的各段與最後一段都以具名錯因失敗，不會在只完成一部分的狀態上通過。只跑其中一個方法同樣會以 {@code BLOCK_ORDER} 失敗。
+ * <p>strict 趟抽樣（T4 B2b-4，B2b3-M1：M7 gate 的 600 秒總時限要留給後續 task）：admission（同名檔查詢與同卷探測）、CLOSE 列以正式 writer
+ * （{@link SessionJournalStore#write}）落盤，以及開服 strict 載入（{@code SessionRecoveryState.load}，含預算與這一列自己的收據核對）只在「strict 趟」做：
+ * 第 0 趟、各段的第一趟與最後一趟、{@code samples}（前、中、4096 邊界前後、最後一趟），以及每 {@value #STRICT_STRIDE} 趟（固定抽樣）。其餘趟的 CLOSE 列
+ * 以同一份 data NBT 在記憶體 strict decode（{@code SessionRecoveryState.fromNbt}）放進熱 state，不落盤、不重讀。不抽樣的部分：4100 趟每一趟都走正式發布
+ * （{@code publishOrVerify}）與正式 checked 移除（{@code terminateHome}），每一趟之後的斷言（REMOVED、熱列已清空、移除時寫出的 journal 位元組等於空 schema6、
+ * 列舉 0、碰到別的 SID 0）也都照舊；最後一個方法另核 strict 趟恰好依規則全部執行（{@code STRICT_SAMPLE}）。「熱 journal 檔先有這一列、移除後回到空」
+ * 的磁碟層級證據只在 strict 趟；其餘趟由 REMOVED（移除的 checked 寫出 exact 讀回已無這一列）與寫出後的 journal 位元組負責。
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
@@ -46,6 +53,8 @@ class M7HomeHistoryScaleTest {
     static final int TRIPS = 4100;
     static final int BLOCKS = 10;
     static final int PER_BLOCK = TRIPS / BLOCKS;
+    /** strict 趟的固定抽樣間距（見類別說明）。 */
+    static final int STRICT_STRIDE = 64;
     /** static：PER_CLASS 底下非 static 的 {@code @TempDir} 欄位每個方法都會換一個新目錄，各段必須共用同一個存檔目錄。 */
     @TempDir static Path save;
 
@@ -55,6 +64,10 @@ class M7HomeHistoryScaleTest {
     private Path receipts;
     // 抽樣：前（0、1）、中、4096 邊界前後（TRIPS=4100 時為第 4095、4096 趟，也就是第 4096、4097 個 SID）與最後一趟。
     private final SortedSet<Integer> samples = new TreeSet<>(List.of(0, 1, TRIPS / 2, TRIPS - 5, TRIPS - 4, TRIPS - 1));
+    /** strict 趟（見類別說明）：在 setUp 依規則算出，執行前就固定。 */
+    private final SortedSet<Integer> strictTrips = new TreeSet<>();
+    /** 已經走完全部斷言的 strict 趟數。 */
+    private int strictDone;
     private final Map<Integer, String> published = new HashMap<>();
     private byte[] emptyJournal;
     /** 已經走完全部斷言的趟數；一趟的每個斷言都通過之後才加一。 */
@@ -68,6 +81,10 @@ class M7HomeHistoryScaleTest {
         store = new HomeReceiptStore(probe.root());
         journal = save.resolve("data/quantumchamber_sessions.dat");
         receipts = HomeReceiptStore.receiptPath(save.toRealPath(), sid(0)).getParent();
+        for (int trip = 0; trip < TRIPS; trip++) {
+            int offset = trip % PER_BLOCK;
+            if (trip == 0 || offset == 0 || offset == PER_BLOCK - 1 || trip % STRICT_STRIDE == 0 || samples.contains(trip)) strictTrips.add(trip);
+        }
     }
 
     private static UUID sid(int trip) { return UUID.nameUUIDFromBytes(("m7-t4b2b2-history-" + trip).getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
@@ -118,14 +135,23 @@ class M7HomeHistoryScaleTest {
     private void oneTrip(int trip) throws Exception {
         var sid = sid(trip);
         var frozen = closed(sid);
+        var wrapped = M7BudgetSpikeTest.wrap(List.of(HomeJournalCodec.encode(frozen)));
         probe.allow(sid);
-        // 1. admission 側：新 SID 只查同名檔（不存在），並做同卷發布探測。
-        store.requireAdmissible(sid);
-        // 2. CLOSE 列進熱 journal（fixture，見類別說明的限制），開服 strict 載入只核這一列自己的收據（尚未發布）。
-        SessionJournalStore.write(journal, M7BudgetSpikeTest.wrap(List.of(HomeJournalCodec.encode(frozen))));
-        var state = SessionRecoveryState.load(journal); state.requireHealthy();
+        boolean strict = strictTrips.contains(trip);
+        SessionRecoveryState state;
+        if (strict) {
+            // strict 趟（見類別說明）。1. admission 側：新 SID 只查同名檔（不存在），並做同卷發布探測。
+            store.requireAdmissible(sid);
+            // 2. CLOSE 列以正式 writer 進熱 journal（fixture，見類別說明的限制），開服 strict 載入只核這一列自己的收據（尚未發布）。
+            SessionJournalStore.write(journal, wrapped);
+            state = SessionRecoveryState.load(journal);
+        } else {
+            // 其餘趟：同一份 data NBT 在記憶體 strict decode，CLOSE 列放進熱 state（不落盤、不重讀；落盤與開服載入由 strict 趟負責）。
+            state = SessionRecoveryState.fromNbt(wrapped.getCompound("data"));
+        }
+        state.requireHealthy();
         assertEquals(Map.of(sid, frozen), state.allFlushedSessions(), "第 " + trip + " 趟：CLOSE 列在熱 journal");
-        // 3. 正式發布收據；4. 正式 checked 移除熱列（移除前 exact 核對收據）。
+        // 3. 正式發布收據；4. 正式 checked 移除熱列（移除前 exact 核對收據）。每一趟都做，不抽樣。
         store.publishOrVerify(frozen);
         if (samples.contains(trip)) published.put(trip, sha256(Files.readAllBytes(HomeReceiptStore.receiptPath(save, sid))));
         var removed = state.terminateHome(store, () -> state.checkedSave(journal.toFile(), null), frozen);
@@ -136,11 +162,14 @@ class M7HomeHistoryScaleTest {
         else assertArrayEquals(emptyJournal, bytes, "HISTORY_IN_JOURNAL：第 " + trip + " 趟移除後 journal 不得累積任何歷史或計數");
         assertEquals(List.of(), probe.listings(), "RECEIPT_DIRECTORY_LISTED：第 " + trip + " 趟：收據只能按已知 SID exact lookup，不得列舉目錄");
         assertEquals(List.of(), probe.foreign(), "FOREIGN_RECEIPT_TOUCHED：第 " + trip + " 趟：只能碰這一趟 SID 自己的收據檔");
+        if (strict) strictDone++;
     }
 
     // 最後一段：>4096 之後的 admission、舊收據 exact 讀回與磁碟計數（拆段前單一方法的後半，斷言不變）。
     @Order(BLOCKS + 1) @Test void moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan() throws Exception {
         assertEquals(TRIPS, completedTrips, "BLOCK_ORDER：" + TRIPS + " 趟必須全部完成才能核對 >4096 之後的狀態，實際只完成 " + completedTrips + " 趟");
+        assertTrue(strictTrips.containsAll(samples), "STRICT_SAMPLE：strict 趟必須涵蓋全部抽樣趟：" + samples);
+        assertEquals(strictTrips.size(), strictDone, "STRICT_SAMPLE：strict 趟必須依規則全部執行（" + strictTrips.size() + " 趟），實際 " + strictDone + " 趟");
         double tripSeconds = tripNanos / 1e9;
         assertEquals(6, SessionJournalStore.read(journal).getCompound("data").getInt("SchemaVersion"));
 
@@ -184,8 +213,8 @@ class M7HomeHistoryScaleTest {
         for (int trip = 0; trip < TRIPS; trip++) expected.add(sid(trip) + ".dat");
         assertEquals(TRIPS, expected.size(), "fixture 的 SID 必須互異");
         assertEquals(List.copyOf(expected), names, "RECEIPT_SET：收據目錄必須恰好是每個 SID 一個 .dat，沒有索引、計數檔或暫存殘留");
-        System.out.printf("M7_T4B2B2_HISTORY trips=%d receipts=%d tripSeconds=%.1f perTripMillis=%.2f listings=%d foreign=%d samples=%s blocks=%d perBlock=%d%n",
-                TRIPS, names.size(), tripSeconds, tripSeconds * 1000 / TRIPS, probe.listings().size(), probe.foreign().size(), samples, BLOCKS, PER_BLOCK);
+        System.out.printf("M7_T4B2B2_HISTORY trips=%d receipts=%d tripSeconds=%.1f perTripMillis=%.2f listings=%d foreign=%d samples=%s blocks=%d perBlock=%d strictTrips=%d strictStride=%d%n",
+                TRIPS, names.size(), tripSeconds, tripSeconds * 1000 / TRIPS, probe.listings().size(), probe.foreign().size(), samples, BLOCKS, PER_BLOCK, strictDone, STRICT_STRIDE);
     }
 
     /**
