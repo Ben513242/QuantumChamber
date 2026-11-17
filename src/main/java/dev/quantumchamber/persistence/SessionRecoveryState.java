@@ -215,6 +215,10 @@ public final class SessionRecoveryState extends PersistentState {
     // 「讀回已確認之後才出現的例外」最近一次 WARN 的去重鍵（FailureText.dedupeKey），以 session 為單位；該 session 下一次乾淨的
     // 寫出（讀回確認、沒有例外）或終局成功時移除。
     private final Map<UUID, String> confirmedFailureWarnings = new HashMap<>();
+    // T4 P1：寫出前核對到收據不符（或無法核對）而已記過管理員 ERROR 的 session；每個 instance 每個 SID 只記一次。
+    private final java.util.Set<UUID> receiptMismatchReported = new HashSet<>();
+    // T4 P1：目前這次 save 是否來自 checked flush（{@link #flush}）。不是時就是原版的原生存檔（autosave、/save-all、停服）。
+    private boolean checkedWrite;
     private String loadError;
     private MinecraftServer owner;
     private InstalledState installation;
@@ -939,7 +943,17 @@ public final class SessionRecoveryState extends PersistentState {
     public void flush(MinecraftServer server) {
         requireServerThread(server);
         if (get(server) != this) throw new IllegalStateException("journal 不屬於此 server");
-        save(path(server).toFile(), server.getRegistryManager());
+        checkedSave(path(server).toFile(), server.getRegistryManager());
+    }
+    /**
+     * checked flush 的寫出：與原生存檔走同一個 {@link #save}，差別只在收據核對擋下寫出時（T4 P1）——這裡照舊丟出，由 caller 以 flushed 判定失敗並退避；
+     * 原生存檔則不丟出、保持 dirty（見 {@link #receiptHold}）。
+     */
+    void checkedSave(File file, RegistryWrapper.WrapperLookup lookup) {
+        boolean outer = checkedWrite;
+        checkedWrite = true;
+        try { save(file, lookup); }
+        finally { checkedWrite = outer; }
     }
     public NbtCompound writeNbt(NbtCompound nbt) {
         requireHealthy();
@@ -1026,7 +1040,15 @@ public final class SessionRecoveryState extends PersistentState {
                     candidate[0] = decoded;
                 });
                 var target = file.toPath().toAbsolutePath().normalize();
-                if(prepared.schema()==6) verifyReceipts(target,expected);
+                if(prepared.schema()==6) {
+                    var hold=receiptHold(target,expected);
+                    if(hold!=null) {
+                        // T4 P1：原生存檔（autosave、/save-all、停服）不把收據不符丟進原版存檔鏈：這次不寫出、保持 dirty，原版照常存完其他
+                        // PersistentState 與各世界。checked flush 照舊丟出（caller 回報失敗並退避）。
+                        if(!checkedWrite) return;
+                        throw hold;
+                    }
+                }
                 boolean sameCheckedPath = target.equals(checkedPath);
                 pending = new PendingAttempt(target, prepared, candidate[0].allFlushedSessions(),
                         sameCheckedPath ? checkedWrapped : null, flushed, sameCheckedPath && checkedAbsent);
@@ -1062,6 +1084,51 @@ public final class SessionRecoveryState extends PersistentState {
                     exception instanceof IOException io ? io : new IOException("journal strict readback 失敗", exception));
         }
         setDirty(false);
+    }
+
+    /**
+     * 寫出前逐列核對同 SID 的收據（T4 P1；M7 spec §5.3 :175、§10 :307「錯配或未知維持鎖與原件」；t4b2a-review P1）。開服 strict 載入另以
+     * {@link #verifyReceipts} 核對全部列，不在這裡。
+     * <ul>
+     * <li>本次有變動的列（不等於 {@link #flushed}，或 target 不是上一次 checked 讀回的同一個檔）與收據不符時，回傳擋下這次寫出的原因：
+     *     寫出的 bytes 永不含「本次有變動、而且與收據不符」的列。</li>
+     * <li>未變動、已在 target 上的列與收據不符時不擋：照原樣重寫不會擴大不一致，其他 SID 的進度照常落盤。</li>
+     * <li>兩種情形都不改那一列與收據原件（熱列仍在，同艙仍占用），每個 instance 每個 SID 只記一次管理員 ERROR（{@link #reportReceiptMismatch}）。</li>
+     * </ul>
+     * 無法建立收據 store（存檔根無法解析）時，每一列都當成無法核對處理。
+     * @return 擋下寫出的原因；可以寫出時為 null
+     */
+    private IOException receiptHold(Path target, Map<UUID, JournalSession> rows) {
+        if (rows.isEmpty()) return null;
+        boolean onDisk = target.equals(checkedPath) && !checkedAbsent;
+        HomeReceiptStore store = null;
+        IOException unavailable = null;
+        try { store = new HomeReceiptStore(target.getParent().getParent()); }
+        catch (IOException failure) { unavailable = failure; }
+        IOException hold = null;
+        for (var row : rows.values()) {
+            Exception failure = unavailable;
+            if (store != null) {
+                try { store.verifyActive(row); continue; }
+                catch (IOException | RuntimeException mismatch) { failure = mismatch; }
+            }
+            var sid = row.sessionUuid();
+            boolean unchanged = onDisk && row.equals(flushed.get(sid));
+            reportReceiptMismatch(sid, unchanged, failure);
+            if (unchanged) continue;
+            var blocked = new IOException("回程收據與本次要寫出的熱列不符：session=" + sid + "：" + failure.getMessage(), failure);
+            if (hold == null) hold = blocked; else hold.addSuppressed(blocked);
+        }
+        return hold;
+    }
+
+    /** {@link #receiptHold} 的管理員 ERROR：帶 {@code CollapseService.LOG_MARKER} 與 {@code session=<SID>}，每個 instance 每個 SID 只記一次。 */
+    private void reportReceiptMismatch(UUID sid, boolean unchanged, Exception failure) {
+        if (!receiptMismatchReported.add(sid)) return;
+        org.slf4j.LoggerFactory.getLogger("quantumchamber").error(dev.quantumchamber.collapse.CollapseService.LOG_MARKER,
+                "回程收據與熱列不符或無法核對（外部竄改或損壞）：保留熱列、收據原件與占用，需要管理員處理（{}）：session={}：{}",
+                unchanged ? "這一列未變動，journal 照原樣寫出" : "這一列本次有變動，不寫出 journal、保持 dirty",
+                sid, FailureText.describe(failure), failure);
     }
 
     /** 只讀收斂：原 checked exact 才解除；原 attempt exact 也不得在本 instance 復活已 abort 的 current。 */
