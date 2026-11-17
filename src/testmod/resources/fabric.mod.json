@@ -19,7 +19,8 @@
       "dev.quantumchamber.gametest.M4CandidateRecoveryProbe",
       "dev.quantumchamber.gametest.M5CollapseRecoveryProbe",
       "dev.quantumchamber.gametest.M6UniverseRecoveryProbe",
-      "dev.quantumchamber.gametest.M6SettingsTraceProbe"
+      "dev.quantumchamber.gametest.M6SettingsTraceProbe",
+      "dev.quantumchamber.gametest.M7HomeFenceStartupProbe"
     ],
     "fabric-gametest": [
       "dev.quantumchamber.gametest.M6UniverseGameTests",

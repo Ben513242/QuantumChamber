@@ -268,6 +268,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             }
             c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, ChamberDoorService.DoorState.passable(p.frame.outwardFacing())).succeeded(),
                     "B 的門是可通行膜");
+            var writes = guardWitness(c, p, sid, hooks);
             var actor = p.f.players.getFirst().player();
             // 門口有人：站在門的中央那一格；淨空：站在艙內中央。
             var spot = Vec3d.ofBottomCenter(ChamberGeometry.localToWorld(p.frame, 3, 1, passage ? 0 : 3));
@@ -294,6 +295,8 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                             && k.doorGoal() == DoorGoal.CLOSE_IF_CLEAR_ELSE_OPEN && k.closedAtGameTime() == now
                             && k.evidence().equals(new ParticipantClosed(actor.getUuid(), HomeSessionRecord.Phase.valueOf(phase.name()), now)),
                             "收據保留實際 actor、phase 與時間：" + receipt.home().closeIntent());
+                    c.assertTrue(writes.size() >= 3 && writes.stream().allMatch(write -> write.endsWith("guard=true")),
+                            "GUARD_WRITE_OUTSIDE：參與者關門的結案寫出與 B 門 checkpoint 都必須在 session operation guard 內：" + writes);
                     c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
                     c.complete();
                 } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
@@ -321,6 +324,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             boolean[] fail = {false};
             M5GameTestSupport.installFlushProbe(c, state -> { if (fail[0]) throw new IllegalStateException("M7_FIX1_JOURNAL_FLUSH_FAULT"); }, hooks);
             // 任何路徑收尾都先解除故障並補一次寫出，不把本 fixture 未確認的寫入留給之後的 test（mut16 實測：中途失敗時之後兩案 admitHome 被拒）。
+            // 這次寫出只在判定之後的收尾執行，不代替下面要驗的 production 重試。
             hooks.add(() -> { fail[0] = false; journal.flush(server); });
             long eventAt = server.getOverworld().getTime();
             fail[0] = true;
@@ -333,24 +337,32 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                 c.assertTrue(!HomeRootFence.permitsEnable(server, p.chamber) && !lifecycle.setOriginEnabled(p.root, true)
                         && !registry.records().get(p.chamber).enabled(), "QUEUE_ENABLE：排隊期間拒絕同根復啟");
             } finally { fail[0] = false; }
-            // 前一筆由下一次 journal 寫出帶出（autosave 或任何 checked 寫出都會）；這裡直接補一次寫出。
-            journal.flush(server);
-            c.assertTrue(dormant.equals(journal.allFlushedSessions().get(sid)) && !journal.rollForwardPending(sid), "前一筆已 checked");
-            var store = p.receipts();
-            until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            // 審查 I-1：前一筆只由 production 的唯一重試者（SessionRecoveryManager 的 HOME 分支，沿用同一個 journal 退避）收斂，測試不手動寫出。
+            // 故障在同一個 tick 內就已解除，第一次重試沒有退避，所以有界等待 20 ticks。重試寫出確認後，同一個 END_SERVER_TICK 內防線就 latch、終局 owner 就結案
+            // 並移除熱列（fix2 green 實測），所以只等「roll-forward 已確認」，不等中間狀態；之後的結果由收據驗。
+            until(c, 20, () -> !journal.rollForwardPending(sid), () -> {
                 try {
-                    var receipt = store.lookup(sid).orElseThrow();
-                    c.assertTrue(receipt.home().stopReason().equals(Optional.of(RootReason.ROOT_DISABLED)) && receipt.home().stoppedAtGameTime() == eventAt
-                            && receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED
-                            && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, eventAt)),
-                            "QUEUE_FIRST_WINS：排隊的第一個事件以原原因與時間 latch：" + receipt.home());
-                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber) && HomeRootFence.permitsEnable(server, p.chamber)
-                            && lifecycle.setOriginEnabled(p.root, true) && registry.records().get(p.chamber).enabled(), "收尾後放行復啟");
-                    c.complete();
-                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
-                finally { p.close(); hooks.release(); }
+                    var store = p.receipts();
+                    until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                        try {
+                            var receipt = store.lookup(sid).orElseThrow();
+                            c.assertTrue(receipt.home().stopReason().equals(Optional.of(RootReason.ROOT_DISABLED)) && receipt.home().stoppedAtGameTime() == eventAt
+                                    && receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED
+                                    && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, eventAt)),
+                                    "QUEUE_FIRST_WINS：排隊的第一個事件以原原因與時間 latch：" + receipt.home());
+                            c.assertTrue(!gate().globalChamberBusy(server, p.chamber) && HomeRootFence.permitsEnable(server, p.chamber)
+                                    && lifecycle.setOriginEnabled(p.root, true) && registry.records().get(p.chamber).enabled(), "收尾後放行復啟");
+                            c.complete();
+                        } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                        finally { p.close(); hooks.release(); }
+                    }, () -> {
+                        try { throw new GameTestException("QUEUED_LATCH_NOT_CLOSED_OUT row=" + journal.allSessions().get(sid) + " flushed=" + journal.allFlushedSessions().get(sid)); }
+                        finally { p.close(); hooks.release(); }
+                    });
+                } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
             }, () -> {
-                try { throw new GameTestException("QUEUED_LATCH_NOT_CLOSED_OUT row=" + journal.allSessions().get(sid) + " flushed=" + journal.allFlushedSessions().get(sid)); }
+                try { throw new GameTestException("HOME_ROLL_FORWARD_NOT_RETRIED：HOME roll-forward 寫出失敗後，production 沒有在有界時間內重試收斂：current="
+                        + journal.allSessions().get(sid) + " flushed=" + journal.allFlushedSessions().get(sid) + " pending=" + journal.rollForwardPending(sid)); }
                 finally { p.close(); hooks.release(); }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
@@ -383,6 +395,77 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                     "重建成功後放行啟用");
             c.complete();
         } finally { f.close(); }
+    }
+
+    /**
+     * 回程的寫入都在 session operation guard 內（M7 spec §9.1 :249）：同 SID 已有操作時，原艙停用只排隊、不回報成功、拒絕同根復啟；guard 釋放後由
+     * 防線與終局 owner 在 guard 內 latch、結案與移除，journal 寫出與 B 門 checkpoint 當下都持有 guard。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_guard",tickLimit=600)
+    public void home_writes_hold_session_guard(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new Projection(c, hooks);
+        try {
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            var pages = dev.quantumchamber.corridor.CorridorPageManager.forServer(server);
+            var lifecycle = new ChamberLifecycleService(ChamberRegistryState.get(server).registry());
+            var sid = UUID.randomUUID();
+            p.dormant(sid, 49);
+            var writes = guardWitness(c, p, sid, hooks);
+            long eventAt = server.getOverworld().getTime();
+            boolean[] acked = {true}, reenabled = {true};
+            pages.exclusiveOperation(sid, () -> {
+                acked[0] = lifecycle.setEnabled(p.chamber, false);
+                reenabled[0] = lifecycle.setEnabled(p.chamber, true);
+                return null;
+            });
+            c.assertTrue(!acked[0] && ((HomeSessionRecord) journal.allSessions().get(sid)).home().stopReason().isEmpty() && writes.isEmpty(),
+                    "GUARD_EVENT_NOT_QUEUED：同 SID 的操作進行中時，原艙停用只能排隊、不在 guard 外寫入、不回報成功：acked=" + acked[0] + " writes=" + writes);
+            c.assertTrue(!reenabled[0] && !ChamberRegistryState.get(server).registry().records().get(p.chamber).enabled(), "GUARD_ENABLE_BLOCKED：排隊期間拒絕同根復啟");
+            var store = p.receipts();
+            until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                try {
+                    var receipt = store.lookup(sid).orElseThrow();
+                    c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED
+                            && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, eventAt)), "guard 釋放後以排隊事件的原因與時間結案：" + receipt.home());
+                    c.assertTrue(writes.size() >= 4 && writes.stream().allMatch(write -> write.endsWith("guard=true")),
+                            "GUARD_WRITE_OUTSIDE：原艙 latch、結案、移除的 journal 寫出與 B 門 checkpoint 都必須在 session operation guard 內：" + writes);
+                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
+                    c.complete();
+                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                finally { p.close(); hooks.release(); }
+            }, () -> {
+                try { throw new GameTestException("GUARDED_CLOSE_NOT_FINISHED row=" + journal.allSessions().get(sid) + " writes=" + writes); }
+                finally { p.close(); hooks.release(); }
+            });
+        } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /**
+     * 開服掃描完成前，原艙停用防線的 port 已 fail-closed（M7 spec §9.1 :246）：{@link M7HomeFenceStartupProbe} 在 SERVER_STARTED 的預設 phase 之前
+     * （世界已載入、HomeRootFence 的開服掃描尚未執行）以 ChamberRegistry.setEnabled 用的同一個 port 查詢；掃描完成後同一個查詢才放行。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_startup",tickLimit=100)
+    public void fence_rejects_enable_before_startup_scan(TestContext c) {
+        var server = c.getWorld().getServer();
+        var observed = M7HomeFenceStartupProbe.observed(server);
+        c.assertTrue(observed.equals(Optional.of("REJECTED")), "STARTING_FENCE：開服掃描完成前 port 必須拒絕 enable：" + observed);
+        c.assertTrue(ChamberCollapsePort.roots().permitsEnable(ChamberRegistryState.get(server).registry(), M7HomeFenceStartupProbe.PROBE_CHAMBER),
+                "開服掃描完成後同一個查詢放行");
+        c.complete();
+    }
+
+    /** 記下每一次 journal 寫出與 B 門原生 checkpoint 當下，這個 SID 的 session operation guard 是否持有（M7 spec §9.1 :249）。 */
+    private static List<String> guardWitness(TestContext c, Projection p, UUID sid, M2CorridorGameTests.TestHooks hooks) {
+        var writes = new ArrayList<String>();
+        var pages = dev.quantumchamber.corridor.CorridorPageManager.forServer(p.f.server);
+        M5GameTestSupport.installFlushProbe(c, state -> writes.add("flush guard=" + pages.operationInProgress(sid)), hooks);
+        M5GameTestSupport.installChunkCheckpointProbe(c, p.b.getRegistryKey(), 0, tick -> {
+            writes.add("checkpoint guard=" + pages.operationInProgress(sid));
+            return "";
+        }, hooks);
+        return writes;
     }
 
     private static boolean stopped(SessionRecoveryState journal, UUID sid, RootReason reason) {

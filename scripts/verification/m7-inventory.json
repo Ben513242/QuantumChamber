@@ -55,7 +55,9 @@
       "quantumchamber:m1_empty|m7homeclosuregametests.participant_close_keeps_door_open_when_doorway_occupied",
       "quantumchamber:m1_empty|m7homeclosuregametests.participant_close_closes_door_when_doorway_clear",
       "quantumchamber:m1_empty|m7homeclosuregametests.root_event_queues_behind_unconfirmed_journal",
-      "quantumchamber:m1_empty|m7homeclosuregametests.fence_init_failure_keeps_enable_blocked"
+      "quantumchamber:m1_empty|m7homeclosuregametests.fence_init_failure_keeps_enable_blocked",
+      "quantumchamber:m1_empty|m7homeclosuregametests.home_writes_hold_session_guard",
+      "quantumchamber:m1_empty|m7homeclosuregametests.fence_rejects_enable_before_startup_scan"
     ]
   },
   "windows": {
