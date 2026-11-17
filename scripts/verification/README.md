@@ -725,3 +725,31 @@ VerifyOnly逐檔重讀hash與exact集合，驗codeSHA、真平台、zero skip、
 本輪先一輪純靜態收斂與candidate commit，凍結t1-m6-convergence-batch-plan.md/json，controller核後僅一次窄JUnit+GT+CI正負/readonly自測。禁止native pair/18/39、額外main-only/全class或argfile快照/clean/W10/full/CI/push。首非預期FAIL立即停不fix/retry/續；PASS後也回原同席核新scope C/I0，controller才正常push追同SHA新T1雙平台與全部舊required，CI FAIL不rerun。本輪即使closed仍不開T2。
 
 I2正式reserve錯與32slot反證移T2，不再採T1舊上界；I7超M6殘留不擋、不默認塞T4。T4正式Windows39/78phase維持原十三cut與三門態；日期TODO按使用者提供的Claude重現：object[]多載問題需明確string[]或既有M6方式，再驗3/6/9位秒及錯格式。本輪不重演日期，不把cast當已驗。所有歷史FAIL/UNKNOWN及Evidence3/Native保守3/main-only2等計數不重置。
+
+## M7 home probe（T4 Phase B1：Windows 原生 close 矩陣）
+
+`m7-home-probe.ps1` 是 M7 回程終局的跨 JVM crash／reopen probe（M7 spec §5.3、§9.2、§10、V10；plan Task 4 的 Windows native 固定矩陣）。39 列 `close-{ordinary|sealed|passable}-{cut}`，十三個 cut 逐字為 `before-close, after-close, before-door, after-door, before-checkpoint, after-checkpoint, after-temp-force, before-publish, after-publish, after-readback, after-recheck, before-remove, after-remove`。精確集合同時存在三處，啟動時逐項比對：runner 的 manifest、`m7-inventory.json` 的 `windows.native`、Java phase 表（receipt 的 `rowTable`）。只放 Windows；Ubuntu 不跑原生鏈，不記 skip 或 PASS。
+
+| 檔案 | 內容 |
+| --- | --- |
+| `src/testmod/java/dev/quantumchamber/gametest/M7HomeProbe.java` | entrypoint：只有 `quantumchamber.m7home.*` 存在時才建立 runner；`reached` 給 mixin 呼叫，沒啟用時不做任何事 |
+| `src/testmod/java/dev/quantumchamber/gametest/M7HomeClosurePhases.java` | phase 表（三門態×十三 cut、群組 A～D 的預期終局）、fixture、halt／final receipt 與斷言 |
+| `src/testmod/java/dev/quantumchamber/gametest/mixin/M7HomeCloseWindowMixin.java` | cut 點：`HomeClosure.latch`／`converge` 的交接呼叫（`M7HomeCloseWindowMixin`）與 `HomeReceiptStore.publishOrVerify` 內部（同檔的 `M7HomeReceiptWindowMixin`），只通知、不改參數與結果 |
+| `build.gradle` 的 `m7HomeProbe` run | Gradle `runM7HomeProbe`，runDir `run/m7-home-<nonce>`，只轉入 `-Pm7Home{Phase,Nonce,StartupNonce,Root}` |
+
+```powershell
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1                                  # 39 列
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -DoorState sealed                # 一個門態的 13 列（CI 分片；三片聯集恰為 39 列）
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -Only close-ordinary-before-close,close-sealed-after-remove
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifySummary <m7-home-run-*.json> -ExpectedHead <完整SHA> -SelfTest
+```
+
+- 每列一個新的 owned root `run/m7-home-<runId 12 hex>-<列名>`（`probe-common.ps1` 的 `New-OwnedRoot`），兩個 phase 各一個 JVM，phase evidence 在 `.superpowers/verification/m7-home-<nonce>/<phase>/`，已存在就拒絕重跑；root 與原件永久保留。
+- `crash`：fresh 世界蓋 A 原艙（不供電，參與者帶 QuantumState 在艙內，以正式 `attemptArm` 登記），物化 B 投影（COMPLETE projection ledger），經正式 journal 入口走到 HOME DORMANT，參與者站在 B 艙內；以正式 `ChamberLifecycleService.setEnabled(false)` 停用 A（`HomeRootFence` checked latch `ROOT_DISABLED`），以原生 `ChunkSaveCheckpoint.save` 做基線存檔（registry 停用、stop latch、B 門初始狀態都落盤）後 arm cut。下一個 tick 由正式 `HomeClosure` 推進，走到該 cut 時寫 `halt.json`（CREATE_NEW＋force）並 `Runtime.halt(77)`。乾淨 halt 的條件：cut 第一次 hit、Java 沒有記下失敗、停服尚未開始、事件序列恰為 cut 之前的前綴；否則 `HALT_REFUSED`、exit 78。
+- `reopen`：新 JVM 開同一個世界。開服前先讀 crash 留下的 journal 檔 hash 與收據目錄清單（必須與 halt 當下相同），開服時載入 B／A 讀門格（磁碟狀態），參與者以 crash 基線存下的 playerdata 登入；之後等正式 owner 從磁碟續做到 checked 移除，核對事件序列、收據、檔案、兩側門格、資源與零移動，再把 B 門設為 CLOSED（模擬玩家之後自己關門）觀察 40 tick 不被舊旅程打開，正常停服寫 `final.json`。
+- 正式 B 來源票到 T5 才有：兩個 phase 都以測試票保持 B 艙體外擴 4 格的 chunks（沿 Phase A 的 `holdChunks`）。
+- 預期終局（群組）：A＝before-close（重開重新 mint ROOT_DISABLED，事件 13 個）；B＝after-close～before-publish（從已凍結 CLOSE 續做並發佈；checkpoint 之前的 cut 重開時 B 門仍是初始狀態、outcome APPLIED，之後 UNCHANGED；暫存檔保留）；C＝after-publish～before-remove（收據已存在只驗 exact、不覆寫，事件含 `verify-existing`）；D＝after-remove（什麼都不做、沒有 checkpoint）。細節見 SDD `t4b1-report.md` 的預期終局表；runner 的 `Assert-M7Crash`／`Assert-M7Reopen` 與 Java 各自核對同一張表。
+- 兩種結束都核對：receipt 的 PID、StartTime（±1 秒）、startupNonce 與實際 JVM 相符、標示 testmod runtime；JVM 已結束；`world/session.lock` 可獨占開啟；latest.log 恰有一行 `M7_HOME_BEGIN`（reopen 另恰有一行 `M7_HOME_END`）。crash 另要求 Gradle 非 0、JVM 77、Gradle 輸出有 `finished with non-zero exit value 77`、沒有 `final.json`；reopen 要求 Gradle 與 JVM 都是 0、沒有 `halt.json`。
+- 逾時沿 `probe-common.ps1`：`-IdleSeconds`（預設 90）、`-PhaseMinutes`（預設 5）、`-BlockMinutes`（預設 240）；逾時 FAIL、保留 root，不可同 root 重跑。啟動前已有非 daemon Java 就拒絕。
+- summary `m7-home-run-<runId>.json`（`-EvidenceRoot`，預設 `.superpowers/verification`）記錄選擇（all／doorState／only）、`selectedRows`、每列兩個 phase 的身分、退出碼、receipt 路徑與 SHA-256、耗時（每 phase、每列與總計）。`-VerifySummary` 唯讀逐列、逐 phase 重驗：列名與順序必須等於選擇的精確集合（不是只看總數）、phase 名稱恰為 crash／reopen、退出碼、receipt hash 與內容、JVM 與 root 不重用。`-SelfTest` 只改記憶體副本，負控為列缺少、多出、改名、對調、phase 改名、選擇不符、HEAD 不符，以及每列兩個 phase 的退出碼、receipt hash、crash 的 cut 與事件、reopen 的狀態與事件；每個負控都要以預期的具名錯因被拒，結束後再完整重驗原件。
+- run-all 與 CI 接線屬 T4 Phase B2，這裡不納入。
