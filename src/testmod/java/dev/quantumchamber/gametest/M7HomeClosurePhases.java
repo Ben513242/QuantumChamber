@@ -537,6 +537,8 @@ final class M7HomeClosurePhases {
                 halt.put("status", refused.isEmpty() ? "HALT" : "HALT_REFUSED");
                 halt.put("refused", refused);
                 halt.put("hit", cutHits);
+                // probe-common.ps1 的 Get-ReceiptNote 讀 M5 halt receipt 的 hit／crashPointFailure／refused；本 probe 沒有獨立的 crash 點失敗（事件記錄失敗都在 failures），固定 none。
+                halt.put("crashPointFailure", "none");
                 halt.put("ending", "HALT");
                 halt.put("events", events);
                 halt.put("checkpoints", checkpoints);
