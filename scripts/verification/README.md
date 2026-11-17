@@ -739,7 +739,7 @@ I2正式reserve錯與32slot反證移T2，不再採T1舊上界；I7超M6殘留不
 | `build.gradle` 的 `m7HomeProbe` run | Gradle `runM7HomeProbe`，runDir `run/m7-home-<nonce>`，只轉入 `-Pm7Home{Phase,Nonce,StartupNonce,Root}` |
 
 ```powershell
-pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1                                  # 39 列
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1                                  # 全部 45 列（close 39＋restart 3＋receipt 3）；只要 close 矩陣請用 -Family close
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -DoorState sealed                # 一個門態的 13 列（CI 分片；三片聯集恰為 39 列）
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -Only close-ordinary-before-close,close-sealed-after-remove
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -Family close                  # close 矩陣 39 列（restart、receipt 同理）
@@ -761,7 +761,7 @@ pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifySummary <m7-
 
 ### B2a：其餘跨 JVM 鏈（`M7HomeChainPhases.java`）
 
-manifest 在 close 矩陣 39 列之後再接 5 列（`m7-inventory.json` 的 `windows.native` 共 44 列、順序相同）；選擇器 `-Family close|restart|receipt`，三個 `-DoorState` 分片（只含 close 列）與 restart（3 列）、receipt（2 列）兩族的聯集恰為全部列、互不重疊，runner 啟動時靜態核對。fixture、receipt、halt 與 summary 沿 B1；預期終局與假設見 SDD `t4b2a-report.md`。
+manifest 在 close 矩陣 39 列之後再接 6 列（B2a 的 5 列與 T4 P1 的 `receipt-mismatch-stop`；`m7-inventory.json` 的 `windows.native` 共 45 列、順序相同）；選擇器 `-Family close|restart|receipt`，三個 `-DoorState` 分片（只含 close 列）與 restart（3 列）、receipt（3 列）兩族的聯集恰為全部列、互不重疊，runner 啟動時靜態核對。fixture、receipt、halt 與 summary 沿 B1；預期終局與假設見 SDD `t4b2a-report.md`、`t4p1-report.md`。列表改變時，舊 summary 的 `rowTable` 與新 manifest 不同，`-VerifySummary` 會以 `M7_HOME_SAVED_SUMMARY` 拒絕，要在新 HEAD 重跑。
 
 | 列 | crash（halt 77 的點） | reopen 的預期 |
 | --- | --- | --- |
@@ -770,8 +770,9 @@ manifest 在 close 矩陣 39 列之後再接 5 列（`m7-inventory.json` 的 `wi
 | `restart-ready-low-no-root` | 同上的 READY、沒有 stop；A 經正式供電協調由 POWERED 轉為 LOW（RETURNING），gamerule `spawnChunkRadius`=0（`low-saved`） | 開服掃描不 latch；RESTART_CLOSED（本 instance 的 startup UUID）；每個收尾事件當下 A 的 chunk 都未載入 |
 | `receipt-existing` | 收據已發佈、熱列移除的 journal flush 受控失敗（`remove-rejected`，RESTORED） | 從已凍結 CLOSE 續做、`verify-existing`、不覆寫（收據清單含修改時間不變）、before-remove 當下仍占用 |
 | `receipt-player-closed` | 成功收尾後參與者以正式方塊互動關 B 門、原生 checkpoint（`player-closed`） | 沒有任何收尾事件、B 門保持 CLOSED/NONE（舊 SID 不掃收據） |
+| `receipt-mismatch-stop`（T4 P1） | 同 `receipt-existing` 走到 `remove-rejected`（RESTORED，journal dirty）；同一個 tick 把收據換成同 SID、內容不同的合法收據，在 A、B 兩側控制器上方放海綿標記、把 gamerule `announceAdvancements` 設為 false，然後**正常停服**。halt 點 `stopped` 在 Fabric `SERVER_STOPPED`（`MinecraftServer.shutdown` 的最後；停服存檔丟出例外時不會走到）：只讀檔案核對 journal 已寫出、熱列與停服前相同、收據仍是竄改的那份、這個 SID 的管理員 ERROR 恰一則（`QUANTUMCHAMBER_COLLAPSE`），之後模擬管理員還原原本的收據，再 halt(77)。runner 的 crash 端核對另包含 `stoppingSeen`／`stoppedSeen` 與收據三個 hash | 開服時仍占用；停服前放的兩個標記與 gamerule 都已落盤；之後同 `receipt-existing`（從已凍結 CLOSE 續做、`verify-existing`、不覆寫） |
 
 - 每列 reopen 收尾後，參與者以正式方塊互動（`BlockState.onUse` → `QuantumBulkheadBlock.onUse`）關 B 門，40 tick 內不得有事件、checkpoint 或收據變動。
 - runner 另核：crash／reopen 的事件序列與 outcome、各列 crash 當下的 journal／registry／收據／門狀態、開服掃描前的觀察（`early`）、收據的原因與 Evidence、收據檔案、checkpoint 範圍（含門 chunk）、移除前後的占用、零移動，以及每列必須成立的 Java 斷言名稱清單。`-SelfTest` 的逐列負控與 close 列相同（每列 8 個）。
-- 同 JVM 的子項（`M7HomeClosureGameTests`）：`checkpoint_failure_keeps_close_and_lock`（checkpoint 結果未知）、`existing_receipt_mismatch_keeps_lock`（發佈前目標已存在而內容不同）、`published_receipt_mismatch_keeps_lock`（收據與熱列跨檔不符；不符期間 journal 的原生存檔會失敗，所以先等 400 tick 內沒有原生 autosave 的窗口）。
+- 同 JVM 的子項（`M7HomeClosureGameTests`）：`checkpoint_failure_keeps_close_and_lock`（checkpoint 結果未知）、`existing_receipt_mismatch_keeps_lock`（發佈前目標已存在而內容不同）、`published_receipt_mismatch_keeps_lock`（收據與熱列跨檔不符；T4 P1 起不再避開原生 autosave 的窗口，改成在不符而且 journal dirty 的期間正面呼叫 `saveAll(true,false,false)`（autosave 的同一條路徑）與 `save(false,true,true)`（`/save-all flush`），斷言例外不傳出、raids 與 level.dat（flush 時另有兩側 chunk）都存到、journal 照原樣寫出、保鎖，管理員 ERROR 只記一次）。
 - run-all、CI 接線與 `-VerifySummary` 的完整性檢查屬 T4 Phase B2b。

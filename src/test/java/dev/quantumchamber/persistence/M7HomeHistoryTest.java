@@ -144,6 +144,91 @@ class M7HomeHistoryTest {
         }
     }
 
+    /**
+     * T4 P1（R1、R3）：未變動、已在磁碟上的 CLOSE 列與收據不符時，原生存檔（{@code save(File,…)}，原版 {@code PersistentStateManager.save} 的入口）不得丟出例外；
+     * 其他 SID 的變動照常落盤，不符的那一列照原樣寫出、收據原件不動。開服 strict 載入仍拒絕（R5，不在本輪）。
+     */
+    @Test void nativeSaveWritesOtherRowsWhileUnchangedRowMismatchesItsReceipt() throws Exception {
+        var frozen=closed(31);
+        var legacy=M7HomeJournalTest.other();
+        var target=save.resolve("data/session.dat");
+        SessionJournalStore.write(target,M7BudgetSpikeTest.wrap(List.of(legacy,HomeJournalCodec.encode(frozen))));
+        new HomeReceiptStore(save).publishOrVerify(frozen);
+        var state=SessionRecoveryState.load(target); state.requireHealthy();
+        var receipt=save.resolve("data/quantumchamber_home_receipts").resolve(frozen.sessionUuid()+".dat");
+        NbtIo.writeCompressed(HomeReceiptStore.wrapper(closed(32)),receipt);
+        var tampered=Files.readAllBytes(receipt);
+        var old=SessionRecoveryRecord.fromNbt(legacy,5);
+        var next=old.withProgress(old.participants(),old.spaceLeases(),dev.quantumchamber.superposition.SessionState.RETURNING,old.restoreEntryEffectOnReturn());
+        state.put(next);
+        assertDoesNotThrow(() -> state.save(target.toFile(),null),"未變動的不符列不得讓原生存檔丟出例外");
+        assertFalse(state.isDirty());
+        assertEquals(next,state.allFlushedSessions().get(next.sessionUuid()),"其他 SID 的變動已落盤");
+        assertEquals(frozen,state.allFlushedSessions().get(frozen.sessionUuid()));
+        var disk=SessionRecoveryState.fromNbt(SessionJournalStore.read(target).getCompound("data")).allSessions();
+        assertEquals(Map.of(next.sessionUuid(),next,frozen.sessionUuid(),frozen),disk);
+        assertArrayEquals(tampered,Files.readAllBytes(receipt),"收據原件不得被覆寫或刪除");
+        assertThrows(RuntimeException.class,() -> SessionRecoveryState.load(target).requireHealthy(),"開服 strict 載入仍拒絕（R5）");
+    }
+
+    /**
+     * T4 P1（R1、R3）：本次有變動的列與收據不符（未結案的熱列遇到同 SID 的既有收據）時，原生存檔不得丟出例外，也不得寫出：journal 與收據的 bytes 都不變、
+     * 保持 dirty、flushed 仍是上一份 durable；管理員處理（移除那份收據）之後，下一次原生存檔才寫出。
+     */
+    @Test void nativeSaveHoldsChangedRowThatMismatchesItsReceipt() throws Exception {
+        var original=M7HomeJournalTest.measured(1);
+        for(var p:original.getList("Participants",10)) ((NbtCompound)p).putBoolean("Returned",true);
+        var old=HomeJournalCodec.decode(original);
+        var target=save.resolve("data/session.dat");
+        SessionJournalStore.write(target,M7BudgetSpikeTest.wrap(List.of(original)));
+        var state=SessionRecoveryState.load(target); state.requireHealthy();
+        var cleared=original.copy(); cleared.put("SpaceLeases",new NbtList());
+        var next=HomeJournalCodec.decode(cleared);
+        assertEquals(SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING,
+                state.commitHome(() -> {throw new IllegalStateException("注入：寫出前失敗");},old,next,false).status());
+        new HomeReceiptStore(save).publishOrVerify(closed(31));
+        var receipt=save.resolve("data/quantumchamber_home_receipts").resolve(old.sessionUuid()+".dat");
+        var planted=Files.readAllBytes(receipt); var disk=Files.readAllBytes(target);
+        assertDoesNotThrow(() -> state.save(target.toFile(),null),"有變動的不符列不得讓原生存檔丟出例外");
+        assertArrayEquals(disk,Files.readAllBytes(target),"有變動而且與收據不符的列不得寫出");
+        assertTrue(state.isDirty());
+        assertEquals(old,state.allFlushedSessions().get(old.sessionUuid()));
+        assertEquals(next,state.allSessions().get(old.sessionUuid()));
+        assertArrayEquals(planted,Files.readAllBytes(receipt));
+        Files.delete(receipt);
+        assertDoesNotThrow(() -> state.save(target.toFile(),null));
+        assertEquals(next,state.allFlushedSessions().get(old.sessionUuid()),"管理員處理之後才寫出");
+        assertFalse(state.isDirty());
+    }
+
+    /**
+     * T4 P1（R4）：checked flush（commit 的寫出、recovery 的重試）遇到本次有變動而且與收據不符的列，照舊回報失敗：提交回 ROLL_FORWARD_PENDING 並帶收據不符的原因、
+     * 不寫出；直接的 checked 寫出丟出 {@code UncheckedIOException}。同一個狀態的原生存檔不丟出、也不寫出。
+     */
+    @Test void checkedFlushStillFailsOnChangedRowThatMismatchesItsReceipt() throws Exception {
+        var original=M7HomeJournalTest.measured(1);
+        for(var p:original.getList("Participants",10)) ((NbtCompound)p).putBoolean("Returned",true);
+        var old=HomeJournalCodec.decode(original);
+        var target=save.resolve("data/session.dat");
+        SessionJournalStore.write(target,M7BudgetSpikeTest.wrap(List.of(original)));
+        var state=SessionRecoveryState.load(target); state.requireHealthy();
+        new HomeReceiptStore(save).publishOrVerify(closed(31));
+        var disk=Files.readAllBytes(target);
+        var cleared=original.copy(); cleared.put("SpaceLeases",new NbtList());
+        var next=HomeJournalCodec.decode(cleared);
+        var result=state.commitHome(() -> state.checkedSave(target.toFile(),null),old,next,false);
+        assertEquals(SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING,result.status());
+        var cause=FailureText.describe(result.failure().orElseThrow());
+        assertTrue(cause.contains("既有回程歷史不能與未結案熱列共存"),cause);
+        assertArrayEquals(disk,Files.readAllBytes(target),"checked flush 不得寫出有變動而且與收據不符的列");
+        assertEquals(old,state.allFlushedSessions().get(old.sessionUuid()));
+        assertThrows(java.io.UncheckedIOException.class,() -> state.checkedSave(target.toFile(),null));
+        assertArrayEquals(disk,Files.readAllBytes(target));
+        assertDoesNotThrow(() -> state.save(target.toFile(),null),"同一個狀態的原生存檔不丟出");
+        assertArrayEquals(disk,Files.readAllBytes(target));
+        assertTrue(state.isDirty());
+    }
+
     @Test void matchingTypedReceiptStillRequiresExactWrapperBeforeRemovingActive() throws Exception {
         var frozen=closed(31); var store=new HomeReceiptStore(save);
         var target=save.resolve("data/session.dat");

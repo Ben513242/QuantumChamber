@@ -25,6 +25,7 @@ import dev.quantumchamber.chamber.ChamberPowerCoordinator;
 import dev.quantumchamber.chamber.ChamberRegistryState;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
 import dev.quantumchamber.collapse.CollapseAuthorities;
+import dev.quantumchamber.collapse.CollapseService;
 import dev.quantumchamber.collapse.HomeClosure;
 import dev.quantumchamber.collapse.HomeEndpointAuthority;
 import dev.quantumchamber.collapse.ProjectionLedger;
@@ -47,6 +48,7 @@ import dev.quantumchamber.persistence.HomeSessionRecord.RootStop;
 import dev.quantumchamber.persistence.HomeSessionRecord.Selected;
 import dev.quantumchamber.persistence.HomeSessionRecord.Unselected;
 import dev.quantumchamber.persistence.JournalSession;
+import dev.quantumchamber.persistence.SessionJournalStore;
 import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.registry.ModEffects;
@@ -83,6 +85,7 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.WorldSavePath;
 import net.minecraft.util.hit.BlockHitResult;
 import net.minecraft.util.math.BlockBox;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameRules;
@@ -99,12 +102,15 @@ import net.minecraft.world.World;
  * <li>{@code restart-ready-low-no-root}：READY、部分 Crossed、A 只是普通斷電（LOW）時 crash；reopen 開服掃描不 latch，以 RESTART_CLOSED 收尾，A 的 chunk 一直未載入。</li>
  * <li>{@code receipt-existing}：收據已發佈、熱列移除失敗（journal flush 故障，RESTORED）時 crash；reopen 從 CLOSE 續做，只驗既有收據 exact、不覆寫、移除前不解鎖。</li>
  * <li>{@code receipt-player-closed}：成功收尾後玩家以正式方塊互動關 B 門、checkpoint 之後 crash；reopen 舊 SID 不重開門。</li>
+ * <li>{@code receipt-mismatch-stop}（T4 P1）：同 {@code receipt-existing} 走到熱列移除失敗（RESTORED，journal dirty）之後，把收據換成同 SID、內容不同的合法收據，
+ *     在 A、B 兩側放標記方塊、改一個 gamerule（level.dat），然後<em>正常停服</em>；停服存檔必須完成（SERVER_STOPPED），停服後只讀檔案核對熱列與竄改的收據都保留、
+ *     管理員 ERROR 恰一則，再模擬管理員還原收據，halt(77)。reopen 核對標記與 gamerule 都已落盤、開服時仍占用，之後從 CLOSE 續做（同 {@code receipt-existing}）。</li>
  * </ul>
  * 預期終局見 SDD {@code t4b2a-report.md}；Java（本類）與 runner（{@code m7-home-probe.ps1}）各自核對。
  */
 final class M7HomeChainPhases {
     static final List<String> NAMES = List.of("restart-enable-before-entry", "restart-ready-stop-crossed", "restart-ready-low-no-root",
-            "receipt-existing", "receipt-player-closed");
+            "receipt-existing", "receipt-player-closed", "receipt-mismatch-stop");
     /** 收尾的完整事件序列（正式 owner 從沒有 CLOSE 起推進到 checked 移除）。 */
     static final List<String> FULL = M7HomeClosurePhases.CUTS;
     /** 從已凍結 CLOSE 續做、收據已存在（沿 B1 群組 C）。 */
@@ -119,7 +125,9 @@ final class M7HomeChainPhases {
         RESTART_READY_STOP("restart-ready-stop-crossed", "restart", "passable", "repaired-saved"),
         RESTART_READY_LOW("restart-ready-low-no-root", "restart", "passable", "low-saved"),
         RECEIPT_EXISTING("receipt-existing", "receipt", "ordinary", "remove-rejected"),
-        RECEIPT_PLAYER_CLOSED("receipt-player-closed", "receipt", "ordinary", "player-closed");
+        RECEIPT_PLAYER_CLOSED("receipt-player-closed", "receipt", "ordinary", "player-closed"),
+        /** halt 點 {@code stopped}：正常停服完成之後（SERVER_STOPPED），不是正式 owner 的事件。 */
+        RECEIPT_MISMATCH_STOP("receipt-mismatch-stop", "receipt", "ordinary", "stopped");
 
         final String row, family, door, crashPoint;
 
@@ -134,11 +142,14 @@ final class M7HomeChainPhases {
 
         boolean ready() { return this == RESTART_READY_STOP || this == RESTART_READY_LOW; }
 
+        /** crash 當下收據已發佈、熱列仍在（RESTORED）：reopen 從已凍結的 CLOSE 續做、只驗既有收據。 */
+        boolean existingReceipt() { return this == RECEIPT_EXISTING || this == RECEIPT_MISMATCH_STOP; }
+
         /** crash phase 在 halt 之前的收尾事件。 */
         List<String> crashEvents() {
             return switch (this) {
                 case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW -> List.of();
-                case RECEIPT_EXISTING -> {
+                case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP -> {
                     var events = new ArrayList<>(FULL.subList(0, FULL.indexOf("before-remove") + 1));
                     events.add("remove-rejected");
                     yield List.copyOf(events);
@@ -150,7 +161,7 @@ final class M7HomeChainPhases {
         List<String> reopenEvents() {
             return switch (this) {
                 case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW -> FULL;
-                case RECEIPT_EXISTING -> FROM_EXISTING;
+                case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP -> FROM_EXISTING;
                 case RECEIPT_PLAYER_CLOSED -> List.of();
             };
         }
@@ -159,7 +170,7 @@ final class M7HomeChainPhases {
         List<String> reopenDoorOutcome() {
             return switch (this) {
                 case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW -> List.of("APPLIED");
-                case RECEIPT_EXISTING -> List.of("UNCHANGED");
+                case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP -> List.of("UNCHANGED");
                 case RECEIPT_PLAYER_CLOSED -> List.of();
             };
         }
@@ -173,13 +184,18 @@ final class M7HomeChainPhases {
         /** reopen 開服時 B 門的磁碟狀態。 */
         String diskDoorAtReopen() {
             return switch (this) {
-                case RECEIPT_EXISTING -> "OPEN/NONE";
+                case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP -> "OPEN/NONE";
                 default -> initialDoorSummary();
             };
         }
     }
 
-    private enum Step { SETUP, READY, AWAIT_CUT, AWAIT_CRASH_CLOSE, AWAIT_CLOSE, QUIET, DONE }
+    /** {@code receipt-mismatch-stop} 的標記方塊：控制器正上方、艙體頂端再高 6 格（A 與 B 同一個座標；在測試票保持的 chunk 內、不在艙體與門口）。 */
+    static BlockPos marker() {
+        return new BlockPos(FRAME.controllerPos().getX(), ChamberGeometry.bounds(FRAME).getMaxY() + 6, FRAME.controllerPos().getZ());
+    }
+
+    private enum Step { SETUP, READY, AWAIT_CUT, STOP_MISMATCH, AWAIT_CRASH_CLOSE, AWAIT_CLOSE, QUIET, DONE }
 
     /** 一個 phase 的 runner；只在 server thread 執行（cut 事件由正式 owner 在 server thread 呼叫）。 */
     static final class Run implements M7HomeProbe.Phase {
@@ -216,6 +232,20 @@ final class M7HomeChainPhases {
         private UUID startupInstance;
         private int eventsBeforeQuiet, checkpointsBeforeQuiet;
         private List<Map<String, Object>> receiptsBeforeQuiet;
+        /** 世界的存檔根（開服時記下；停服之後的檔案核對不再經 server）。 */
+        private Path saveRoot;
+        /** receipt-mismatch-stop：quantumchamber logger 的 ERROR 擷取、原本的收據 bytes、停服步驟的事實與停服前的快照、停服前的 journal（只讀 isDirty）。 */
+        private LogCapture logs;
+        private byte[] originalReceipt;
+        private final Map<String, Object> stopFacts = new LinkedHashMap<>();
+        private Map<String, Object> preStop;
+        private SessionRecoveryState stopJournal;
+        /**
+         * receipt-mismatch-stop：probe 自己在暫存存檔根以正式 {@code HomeReceiptStore.publishOrVerify} 產生竄改用收據的期間。{@code M7HomeReceiptWindowMixin}
+         * 無法區分存檔根，這段期間的事件不是正式 owner 的事件，不記入事件序列，只計數（T4 P1 試跑 1 的工具問題）。
+         */
+        private boolean scratchPublish;
+        private int scratchEventsIgnored;
 
         Run(M7HomeClosurePhases.Configuration config) {
             this.config = config;
@@ -317,6 +347,7 @@ final class M7HomeChainPhases {
             guarded(() -> {
                 require(failures.isEmpty(), "M7_HOME_PRESTART_FAILED " + failures);
                 require(owner.getSavePath(WorldSavePath.ROOT).toRealPath().equals(config.root().resolve("world").toRealPath()), "M7_HOME_SAVE_ROOT");
+                saveRoot = owner.getSavePath(WorldSavePath.ROOT);
                 homeChunks = M7HomeClosurePhases.homeChunks();
                 if (crashPhase()) setupCrash(); else setupReopen();
             });
@@ -329,6 +360,7 @@ final class M7HomeChainPhases {
                 switch (step) {
                     case READY -> ready();
                     case AWAIT_CUT -> awaitCut();
+                    case STOP_MISMATCH -> stopMismatch();
                     case AWAIT_CRASH_CLOSE -> awaitCrashClose();
                     case AWAIT_CLOSE -> awaitClose();
                     case QUIET -> quiet();
@@ -347,6 +379,7 @@ final class M7HomeChainPhases {
 
         private void stopped(MinecraftServer owner) {
             if (owner != server) return;
+            if (crashPhase() && chain == Chain.RECEIPT_MISMATCH_STOP) { stoppedWithMismatch(); return; }
             proof.put("stoppedSeen", true);
             proof.put("ending", "STOP");
             proof.put("events", events);
@@ -517,14 +550,16 @@ final class M7HomeChainPhases {
                     expect("aDoorUnchanged", aBefore.equals(doorSummary(overworld)), () -> aBefore + "→" + doorSummary(overworld));
                     halt();
                 }
-                case RECEIPT_EXISTING, RECEIPT_PLAYER_CLOSED -> {
+                case RECEIPT_EXISTING, RECEIPT_PLAYER_CLOSED, RECEIPT_MISMATCH_STOP -> {
                     expect("disableAcked", lifecycle.setEnabled(chamber, false), () -> "停用沒有回報成功");
                     var stopped = journal.allFlushedSessions().get(sid);
                     expect("stopLatched", stopped instanceof HomeSessionRecord h && h.equals(journal.allSessions().get(sid))
                             && h.home().stopReason().equals(Optional.of(RootReason.ROOT_DISABLED)) && !journal.rollForwardPending(sid), () -> "row=" + stopped);
                     checkpoint(chunks, true);
                     baseline((HomeSessionRecord) stopped);
-                    if (chain == Chain.RECEIPT_EXISTING) {
+                    // T4 P1：停服之後要核對這個 SID 的管理員 ERROR 個數，從 arm 之前開始擷取（JVM 以 halt 結束，不另外關閉）。
+                    if (chain == Chain.RECEIPT_MISMATCH_STOP) logs = new LogCapture("quantumchamber");
+                    if (chain.existingReceipt()) {
                         // 只讓「熱列移除」那次 journal flush 失敗（records 已沒有本 SID、flushed 仍有）：production 回 RESTORED，熱列與收據都保留。
                         var fault = new M5GameTestSupport.FlushFault(server, "M7 B2a probe 受控：回程熱列移除的 journal 寫出失敗", Integer.MAX_VALUE,
                                 state -> !state.allSessions().containsKey(sid) && state.allFlushedSessions().containsKey(sid));
@@ -532,7 +567,7 @@ final class M7HomeChainPhases {
                         proof.put("faultInstalled", true);
                     }
                     armed = true;
-                    step = chain == Chain.RECEIPT_EXISTING ? Step.AWAIT_CUT : Step.AWAIT_CRASH_CLOSE;
+                    step = chain.existingReceipt() ? Step.AWAIT_CUT : Step.AWAIT_CRASH_CLOSE;
                     stepTicks = 0;
                     LOGGER.info("M7_HOME_ARMED row={} cut={} sid={}", chain.row, chain.crashPoint, sid);
                 }
@@ -595,13 +630,105 @@ final class M7HomeChainPhases {
             halt();
         }
 
+        /**
+         * receipt-mismatch-stop（T4 P1，t4b2a-review P1）：熱列移除失敗（RESTORED，journal 因此 dirty）的同一個 tick，把收據換成同 SID、內容不同的合法收據（外部竄改），
+         * 在 A、B 兩側放標記方塊、把 gamerule {@code announceAdvancements} 設為 false（存在 level.dat），然後正常停服。journal 仍 dirty，停服存檔一定會核對收據；
+         * 標記與 gamerule 只能由停服存檔寫出，reopen 核對它們都已落盤。
+         */
+        private void stopMismatch() throws Exception {
+            step = Step.DONE;
+            var journal = SessionRecoveryState.get(server);
+            var row = journal.allFlushedSessions().get(sid);
+            expect("removalRestored", row instanceof HomeSessionRecord h && h.equals(journal.allSessions().get(sid)) && h.home().closeIntent() instanceof Close
+                    && journal.isDirty() && !journal.rollForwardPending(sid) && !journal.quarantinedSessions().contains(sid) && !journal.pendingSessions().containsKey(sid),
+                    () -> "row=" + row + " dirty=" + journal.isDirty());
+            var frozen = (HomeSessionRecord) row;
+            var receipt = receiptsDir().resolve(sid + ".dat");
+            expect("receiptPublishedExact", new HomeReceiptStore(saveRoot).lookup(sid).filter(frozen::equals).isPresent(), () -> "收據不是本列的 exact 收據");
+            originalReceipt = Files.readAllBytes(receipt);
+            byte[] variant;
+            scratchPublish = true;
+            try { variant = M7HomeClosureGameTests.variantReceipt(frozen); }
+            finally { scratchPublish = false; }
+            stopFacts.put("scratchEventsIgnored", scratchEventsIgnored);
+            Files.write(receipt, variant);
+            stopFacts.put("originalReceiptSha256", bytesSha256(originalReceipt));
+            stopFacts.put("tamperedReceiptSha256", sha256(receipt));
+            expect("receiptTampered", !stopFacts.get("originalReceiptSha256").equals(stopFacts.get("tamperedReceiptSha256")), () -> "竄改後的收據與原本相同");
+            var marker = marker();
+            for (var world : List.of(overworld, b)) {
+                require(!world.getBlockState(marker).isOf(Blocks.SPONGE), "M7_HOME_MARKER_OCCUPIED：" + world.getRegistryKey().getValue());
+                world.setBlockState(marker, Blocks.SPONGE.getDefaultState(), 3);
+            }
+            server.getGameRules().get(GameRules.ANNOUNCE_ADVANCEMENTS).set(false, server);
+            expect("markersPlaced", overworld.getBlockState(marker).isOf(Blocks.SPONGE) && b.getBlockState(marker).isOf(Blocks.SPONGE)
+                    && !server.getGameRules().getBoolean(GameRules.ANNOUNCE_ADVANCEMENTS) && journal.isDirty(), () -> "標記或 gamerule 沒有放好");
+            stopFacts.put("marker", List.of(marker.getX(), marker.getY(), marker.getZ()));
+            stopFacts.put("stopServerTick", server.getTicks());
+            preStop = snapshot();
+            stopJournal = journal;
+            proof.put("stop", stopFacts);
+            LOGGER.info("M7_HOME_MISMATCH_STOP row={} sid={} tampered={}", chain.row, sid, stopFacts.get("tamperedReceiptSha256"));
+            stop();
+        }
+
+        /**
+         * receipt-mismatch-stop：停服已完成（Fabric 的 SERVER_STOPPED 在 {@code MinecraftServer.shutdown} 的最後；停服存檔丟出例外時不會走到這裡，JVM 不以 77 結束）。
+         * 世界已關閉，只讀檔案：journal 檔的這一列與停服前相同、journal 已寫出（不再 dirty）、收據仍是竄改後的那份、管理員 ERROR 恰一則而且帶 LOG_MARKER。
+         * 之後模擬管理員處理（還原原本的收據；否則下一個 JVM 的開服 strict 載入會拒絕，R5），再 halt(77)。
+         */
+        private void stoppedWithMismatch() {
+            proof.put("stoppedSeen", true);
+            Map<String, Object> atHalt = preStop == null ? new LinkedHashMap<>() : new LinkedHashMap<>(preStop);
+            try {
+                expect("stopCompleted", preStop != null && stoppingSeen, () -> "停服前沒有走到不符的停服步驟：stoppingSeen=" + stoppingSeen);
+                expect("journalCleanAfterStop", !stopJournal.isDirty(), () -> "停服存檔沒有寫出 journal");
+                var disk = SessionRecoveryState.fromNbt(SessionJournalStore.read(journalFile()).getCompound("data")).allSessions();
+                var before = ((Map<?, ?>) preStop.get("flushed")).get("text");
+                expect("journalRowAfterStop", disk.size() == 1 && disk.containsKey(sid) && String.valueOf(disk.get(sid)).equals(before), () -> "disk=" + disk);
+                var receipt = receiptsDir().resolve(sid + ".dat");
+                stopFacts.put("receiptAfterStopSha256", sha256(receipt));
+                expect("receiptKeptAfterStop", stopFacts.get("tamperedReceiptSha256").equals(stopFacts.get("receiptAfterStopSha256")), () -> "停服時收據被覆寫或刪除");
+                var errors = logs.matching(org.apache.logging.log4j.Level.ERROR, "session=" + sid).stream()
+                        .map(entry -> (entry.marker() == null ? "NO_MARKER" : entry.marker().getName()) + "|" + entry.message()).toList();
+                stopFacts.put("adminErrors", errors.size());
+                stopFacts.put("adminErrorEntries", errors);
+                expect("adminErrorOnce", errors.size() == 1 && errors.getFirst().startsWith(CollapseService.LOG_MARKER.getName() + "|"), () -> "errors=" + errors);
+                // 管理員處理：還原原本發佈的收據。
+                Files.write(receipt, originalReceipt);
+                expect("receiptRestored", sha256(receipt).equals(stopFacts.get("originalReceiptSha256")), () -> "還原後的收據不是原本那份");
+                atHalt.put("journalSha256", sha256(journalFile()));
+                atHalt.put("registrySha256", sha256(registryFile()));
+                atHalt.put("receipts", listing(receiptsDir()));
+                atHalt.put("receipt", receiptFacts());
+            } catch (Exception | Error failure) {
+                failures.add("stoppedWithMismatch：" + failure);
+                LOGGER.error("M7 home chain：停服之後的核對失敗", failure);
+            }
+            proof.put("stop", stopFacts);
+            var frozenAtHalt = atHalt;
+            halt(() -> frozenAtHalt);
+        }
+
+        private static String bytesSha256(byte[] bytes) {
+            try { return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes)); }
+            catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+        }
+
         /** crash：只有乾淨的 halt（fixture 點第一次 hit、沒有失敗、停服尚未開始、事件序列恰為預定的前綴）以 77 結束；否則 HALT_REFUSED、78。 */
-        private void halt() {
+        private void halt() { halt(this::snapshot); }
+
+        /**
+         * 同 {@link #halt()}，atHalt 由呼叫端給。receipt-mismatch-stop 的 halt 點在停服完成之後：停服必須已開始（不是 crash 之前的停服），atHalt 是停服前的記憶體快照
+         * 加上停服、還原收據之後的檔案事實。
+         */
+        private void halt(Supplier<Map<String, Object>> atHaltSource) {
             hits++;
             var refused = new ArrayList<String>();
             if (hits != 1) refused.add("hit=" + hits);
             if (!failures.isEmpty()) refused.add("failures=" + failures);
-            if (stoppingSeen) refused.add("stoppingSeen：停服已開始，不是 crash");
+            if (chain == Chain.RECEIPT_MISMATCH_STOP) { if (!stoppingSeen) refused.add("stoppingNotSeen：停服沒有開始"); }
+            else if (stoppingSeen) refused.add("stoppingSeen：停服已開始，不是 crash");
             if (!eventNames().equals(chain.crashEvents())) refused.add("events=" + eventNames() + " expected=" + chain.crashEvents());
             int exit = refused.isEmpty() ? M7HomeClosurePhases.HALT_EXIT : M7HomeClosurePhases.HALT_FAILED_EXIT;
             try {
@@ -614,7 +741,7 @@ final class M7HomeChainPhases {
                 halt.put("events", events);
                 halt.put("checkpoints", checkpoints);
                 halt.put("observed", observed);
-                halt.put("atHalt", snapshot());
+                halt.put("atHalt", atHaltSource.get());
                 halt.put("haltServerTick", server.getTicks());
                 halt.put("haltTimeUtc", Instant.now().toString());
                 writeDurably(config.evidence().resolve("halt.json"), JSON.toJson(halt));
@@ -699,11 +826,14 @@ final class M7HomeChainPhases {
                     expect("inStartupSet", startupContains(), () -> "開服收尾集合沒有本列");
                     closingRowText = String.valueOf(current);
                 }
-                case RECEIPT_EXISTING -> {
+                case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP -> {
                     var atFlushed = atHalt.getAsJsonObject("flushed");
                     expect("closeFromCrash", current instanceof HomeSessionRecord h && h.equals(flushed) && text(atFlushed, "text").equals(String.valueOf(h))
                             && h.home().closeIntent() instanceof Close, () -> "row=" + current);
                     expect("busyAtStart", gate().globalChamberBusy(server, chamber), () -> "沒有占用");
+                    // T4 P1：停服存檔寫出了 level.dat（停服前才改的 gamerule）。
+                    if (chain == Chain.RECEIPT_MISMATCH_STOP) expect("stopSavedLevel", !server.getGameRules().getBoolean(GameRules.ANNOUNCE_ADVANCEMENTS),
+                            () -> "停服前改的 gamerule 沒有落盤（level.dat 停在上一次存檔）");
                     closingRowText = text(baseline, "row");
                 }
                 case RECEIPT_PLAYER_CLOSED -> {
@@ -722,6 +852,9 @@ final class M7HomeChainPhases {
                 M7HomeClosureGameTests.holdChunks(overworld, FRAME);
                 expect("aDoorAtStart", text(baseline, "aDoor").equals(doorSummary(overworld)), () -> "A 門=" + doorSummary(overworld));
             }
+            // T4 P1：停服前才放的標記方塊在兩個世界都已落盤。
+            if (chain == Chain.RECEIPT_MISMATCH_STOP) expect("stopSavedMarkers", overworld.getBlockState(marker()).isOf(Blocks.SPONGE) && b.getBlockState(marker()).isOf(Blocks.SPONGE),
+                    () -> "A=" + overworld.getBlockState(marker()) + " B=" + b.getBlockState(marker()));
             // 零移動：參與者以 crash 前存下的 playerdata 登入。
             participant = connect();
             pose = M7HomeClosurePhases.pose(participant.player());
@@ -763,7 +896,7 @@ final class M7HomeChainPhases {
             var doorOutcome = events.stream().filter(event -> event.get("event").equals("after-door")).map(event -> String.valueOf(event.get("detail"))).toList();
             expect("reopenDoorOutcome", doorOutcome.equals(chain.reopenDoorOutcome()), () -> "outcome=" + doorOutcome);
             int expectedCheckpoints = chain == Chain.RECEIPT_PLAYER_CLOSED ? 0 : 1;
-            expect("reopenCheckpoint", checkpoints.size() == expectedCheckpoints && checkpoints.stream().allMatch(call -> checkpointOk(call, chain == Chain.RECEIPT_EXISTING)),
+            expect("reopenCheckpoint", checkpoints.size() == expectedCheckpoints && checkpoints.stream().allMatch(call -> checkpointOk(call, chain.existingReceipt())),
                     () -> "checkpoints=" + checkpoints);
             // 移除前不解鎖：before-remove 當下仍 busy、after-remove 當下才解除。
             expect("noEarlyUnlock", events.stream().filter(event -> event.get("event").equals("before-remove")).allMatch(event -> Boolean.TRUE.equals(event.get("busy")))
@@ -780,7 +913,7 @@ final class M7HomeChainPhases {
                 case RESTART_READY_LOW -> expect("receiptClose", close instanceof Close k && k.reason() == CloseReason.RESTART_CLOSED && k.doorGoal() == DoorGoal.OPEN
                         && startupInstance != null && k.evidence().equals(new RestartClosed(startupInstance, k.closedAtGameTime()))
                         && receipt.home().stopReason().isEmpty(), () -> "close=" + close + " instance=" + startupInstance);
-                case RECEIPT_EXISTING -> expect("receiptClose", receiptClose.equals(atHalt.getAsJsonObject("flushed").get("close")),
+                case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP -> expect("receiptClose", receiptClose.equals(atHalt.getAsJsonObject("flushed").get("close")),
                         () -> "close=" + receiptClose + " crash=" + atHalt.getAsJsonObject("flushed").get("close"));
                 case RECEIPT_PLAYER_CLOSED -> expect("receiptClose", receiptClose.equals(atHalt.getAsJsonObject("receipt").get("close")),
                         () -> "close=" + receiptClose + " crash=" + atHalt.getAsJsonObject("receipt").get("close"));
@@ -795,7 +928,7 @@ final class M7HomeChainPhases {
             var crashReceipts = atHalt.getAsJsonArray("receipts");
             boolean receiptsOk = switch (chain) {
                 case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW -> M7HomeClosurePhases.names(end).equals(List.of(sid + ".dat")) && crashReceipts.isEmpty();
-                case RECEIPT_EXISTING, RECEIPT_PLAYER_CLOSED -> JSON.toJsonTree(end).equals(crashReceipts) && M7HomeClosurePhases.names(end).equals(List.of(sid + ".dat"));
+                case RECEIPT_EXISTING, RECEIPT_PLAYER_CLOSED, RECEIPT_MISMATCH_STOP -> JSON.toJsonTree(end).equals(crashReceipts) && M7HomeClosurePhases.names(end).equals(List.of(sid + ".dat"));
             };
             expect("receiptFiles", receiptsOk, () -> "end=" + end + " crash=" + crashReceipts);
             String bEnd = chain == Chain.RECEIPT_PLAYER_CLOSED ? "CLOSED/NONE" : M7HomeClosurePhases.OPEN_NONE;
@@ -831,6 +964,7 @@ final class M7HomeChainPhases {
 
         @Override public void reached(String name, UUID session, Object detail) {
             if (server == null || !server.isOnThread()) { failures.add("eventOffThread：" + name); return; }
+            if (scratchPublish) { scratchEventsIgnored++; return; }
             try {
                 var record = new LinkedHashMap<String, Object>();
                 record.put("event", name);
@@ -844,6 +978,11 @@ final class M7HomeChainPhases {
                 if (crashPhase() && !armed) failures.add("eventBeforeArm：" + name);
                 if (name.equals("before-checkpoint")) checkpoints.add(checkpointObservation(detail));
                 if (crashPhase() && armed && name.equals(chain.crashPoint)) halt();
+                // receipt-mismatch-stop：熱列移除失敗（RESTORED）之後，同一個 tick 的 probe tick 做竄改與停服（halt 點在停服完成之後）。
+                if (crashPhase() && armed && chain == Chain.RECEIPT_MISMATCH_STOP && name.equals("remove-rejected") && step == Step.AWAIT_CUT) {
+                    step = Step.STOP_MISMATCH;
+                    stepTicks = 0;
+                }
             } catch (RuntimeException | Error failure) {
                 failures.add("eventRecord：" + name + "：" + failure);
                 LOGGER.error("M7 home chain：事件記錄失敗 {}", name, failure);
@@ -994,7 +1133,7 @@ final class M7HomeChainPhases {
         private Map<String, Object> receiptFacts() {
             var facts = new LinkedHashMap<String, Object>();
             try {
-                var stored = new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)).lookup(sid);
+                var stored = new HomeReceiptStore(saveRoot).lookup(sid);
                 facts.put("present", stored.isPresent());
                 stored.ifPresent(row -> {
                     facts.put("close", M7HomeClosurePhases.Run.closeFacts(row.home().closeIntent()));
@@ -1061,11 +1200,11 @@ final class M7HomeChainPhases {
             return Set.copyOf(chunks);
         }
 
-        private Path journalFile() { return server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(SessionRecoveryState.STATE_ID + ".dat"); }
+        private Path journalFile() { return saveRoot.resolve("data").resolve(SessionRecoveryState.STATE_ID + ".dat"); }
 
-        private Path registryFile() { return server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(ChamberRegistryState.STATE_ID + ".dat"); }
+        private Path registryFile() { return saveRoot.resolve("data").resolve(ChamberRegistryState.STATE_ID + ".dat"); }
 
-        private Path receiptsDir() { return server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve("quantumchamber_home_receipts"); }
+        private Path receiptsDir() { return saveRoot.resolve("data").resolve("quantumchamber_home_receipts"); }
 
         private void expect(String name, boolean condition, Supplier<String> detail) {
             if (!condition) throw new AssertionError(name + "：" + detail.get());

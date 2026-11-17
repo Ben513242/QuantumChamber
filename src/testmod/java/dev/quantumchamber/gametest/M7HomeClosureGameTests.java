@@ -809,9 +809,13 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
     /**
      * T4 Phase B2a：跨檔不符（M7 spec §5.3 :175–176、§10「receipt發佈／exact讀回前後、active未移除…錯配或未知維持鎖與原件」、V10「receipt與active錯配」）。
      * 收據已發佈、熱列移除的 journal 寫出受控失敗（RESTORED）之後，收據檔被換成同 SID、內容不同的合法收據：owner 的退避重試不得覆寫或刪除它、不得移除熱列，
-     * 保留占用（journal 此時 dirty，任何寫出都會因收據與熱列不符而被拒）；測試還原原本的收據之後，下一次重試才移除。單一 JVM 即可證明：比對都在同一個 server 內；
+     * 保留占用；測試還原原本的收據之後，下一次重試才移除。單一 JVM 即可證明：比對都在同一個 server 內；
      * 開服載入與寫入時的不符由 JUnit {@code everySchemaSixActiveSidMustAgreeWithItsHistory}、移除前 exact 由 {@code matchingTypedReceiptStillRequiresExactWrapperBeforeRemovingActive} 證明。
-     * 收據不符期間 journal 的原生存檔會失敗，所以先等到接下來 400 個 tick 內沒有原生 autosave 才開始。
+     * <p>T4 P1（B2a-M6、t4b2a-review P1）：不再避開原生 autosave 的窗口，改成在「收據不符、journal dirty」期間正面觸發原生存檔——autosave 的同一條路徑
+     * {@code saveAll(true,false,false)}，以及 {@code /save-all flush} 的 {@code save(false,true,true)}。例外不得傳出原版存檔鏈；overworld 的其他 PersistentState
+     * 與 level.dat 都要存到（flush 時兩側世界的 chunk 也要存到）；不符的那一列未變動、已在磁碟上，journal 照原樣寫出、不再 dirty；不符的 SID 仍保鎖（收據原件、
+     * 熱列與占用不變）；管理員 ERROR（{@code CollapseService.LOG_MARKER}、{@code session=<SID>}）每個 instance 只記一次。跨 JVM 的停服面由原生列
+     * {@code receipt-mismatch-stop} 證明。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_published_mismatch",tickLimit=2000)
     public void published_receipt_mismatch_keeps_lock(TestContext c) {
@@ -827,53 +831,113 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                     c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, ChamberDoorService.DoorState.CLOSED).succeeded(), "B 的門是普通關門");
                     var store = p.receipts();
                     var target = receiptPath(p, sid);
-                    M5GameTestSupport.afterAutosaveClear(c, (int) c.getTick(), "m7_home_published_mismatch", 400, (start, autosave) -> {
-                        try {
-                            var fault = new M5GameTestSupport.FlushFault(server, "T4b2a GameTest 受控：回程熱列移除的 journal 寫出失敗", 1,
-                                    state -> !state.allSessions().containsKey(sid) && state.allFlushedSessions().containsKey(sid));
-                            M5GameTestSupport.installFlushProbe(c, fault, hooks);
-                            var probe = M5GameTestSupport.installChunkCheckpointProbe(c, p.b.getRegistryKey(), 0, call -> "attempt=" + call, hooks);
-                            byte[][] original = {null};
-                            // 任何路徑收尾都先還原原本的收據，讓 dirty 的 journal 能寫出，不把收據不符留給之後的 test。
-                            hooks.add(() -> { try { if (original[0] != null) java.nio.file.Files.write(target, original[0]); } catch (java.io.IOException ignored) { } });
-                            long now = server.getOverworld().getTime();
-                            c.assertTrue(journal.commitHomeRollForward(server, dormant, withStop(dormant, RootReason.ROOT_DISABLED, now)).committed(), "原艙停止原因已 checked latch");
-                            M5GameTestSupport.whenTicks(c, start + 1, 200, () -> fault.failures() >= 1, removalFailed -> {
-                                try {
-                                    var frozen = journal.allFlushedSessions().get(sid);
-                                    c.assertTrue(frozen instanceof HomeSessionRecord h && h.equals(journal.allSessions().get(sid)) && h.home().closeIntent() instanceof Close
-                                            && store.lookup(sid).orElseThrow().equals(h), "前提：收據已 exact 發佈、熱列移除失敗後 CLOSE 仍在：" + frozen);
-                                    original[0] = java.nio.file.Files.readAllBytes(target);
-                                    var tampered = variantReceipt((HomeSessionRecord) frozen);
-                                    java.nio.file.Files.write(target, tampered);
-                                    var tamperedSha = M7HomeClosurePhases.sha256(target);
-                                    var temps = publishTemps(p);
-                                    int attempts = probe.calls().size();
-                                    M5GameTestSupport.whenTicks(c, removalFailed + 1, 300, () -> probe.calls().size() > attempts, retried -> {
-                                        try {
-                                            assertMismatchKept(c, p, journal, sid, target, tamperedSha, "退避重試");
-                                            c.assertTrue(fault.ticks().size() == 1, "CROSS_FILE_REMOVAL_ATTEMPTED：收據與熱列不符時不得再嘗試移除熱列：" + fault.ticks());
-                                            c.assertTrue(publishTemps(p).equals(temps), "MISMATCH_TEMP_CREATED：收據不符時不得建立發佈暫存檔：" + publishTemps(p));
-                                            // 測試還原原本的收據（管理員處理），下一次重試才移除熱列。
-                                            java.nio.file.Files.write(target, original[0]);
-                                            M5GameTestSupport.whenTicks(c, retried + 1, 500, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), gone -> {
-                                                try {
-                                                    c.assertTrue(java.util.Arrays.equals(original[0], java.nio.file.Files.readAllBytes(target)), "還原後收據就是原本發佈的那一份");
-                                                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
-                                                    hooks.release();
-                                                    c.complete();
-                                                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
-                                            }, () -> "還原收據之後沒有移除熱列：row=" + journal.allSessions().get(sid) + " thresholds=" + closureThresholds(p, sid), hooks);
-                                        } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("收據讀取失敗：" + failure); }
-                                    }, () -> "收據不符後沒有退避重試：checkpoints=" + probe.calls() + " thresholds=" + closureThresholds(p, sid), hooks);
-                                } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("收據讀取失敗：" + failure); }
-                            }, () -> "熱列移除的受控失敗沒有發生：row=" + journal.allSessions().get(sid) + " faults=" + fault.ticks(), hooks);
-                        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
-                    }, hooks);
+                    var logs = M5GameTestSupport.captureLogs(hooks);
+                    // nativeSave 會翻轉 announceAdvancements 來核對 level.dat；結束時還原，不留給之後的 test。
+                    boolean announce = server.getGameRules().getBoolean(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS);
+                    hooks.add(() -> server.getGameRules().get(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS).set(announce, server));
+                    int start = (int) c.getTick();
+                    var fault = new M5GameTestSupport.FlushFault(server, "T4b2a GameTest 受控：回程熱列移除的 journal 寫出失敗", 1,
+                            state -> !state.allSessions().containsKey(sid) && state.allFlushedSessions().containsKey(sid));
+                    M5GameTestSupport.installFlushProbe(c, fault, hooks);
+                    var probe = M5GameTestSupport.installChunkCheckpointProbe(c, p.b.getRegistryKey(), 0, call -> "attempt=" + call, hooks);
+                    byte[][] original = {null};
+                    // 任何路徑收尾都先還原原本的收據，讓 dirty 的 journal 能寫出，不把收據不符留給之後的 test。
+                    hooks.add(() -> { try { if (original[0] != null) java.nio.file.Files.write(target, original[0]); } catch (java.io.IOException ignored) { } });
                     hooks.add(p::close);
+                    long now = server.getOverworld().getTime();
+                    c.assertTrue(journal.commitHomeRollForward(server, dormant, withStop(dormant, RootReason.ROOT_DISABLED, now)).committed(), "原艙停止原因已 checked latch");
+                    M5GameTestSupport.whenTicks(c, start + 1, 200, () -> fault.failures() >= 1, removalFailed -> {
+                        try {
+                            var frozen = journal.allFlushedSessions().get(sid);
+                            c.assertTrue(frozen instanceof HomeSessionRecord h && h.equals(journal.allSessions().get(sid)) && h.home().closeIntent() instanceof Close
+                                    && store.lookup(sid).orElseThrow().equals(h), "前提：收據已 exact 發佈、熱列移除失敗後 CLOSE 仍在：" + frozen);
+                            c.assertTrue(journal.isDirty(), "前提：熱列移除失敗（RESTORED）之後 journal 仍 dirty");
+                            original[0] = java.nio.file.Files.readAllBytes(target);
+                            var tampered = variantReceipt((HomeSessionRecord) frozen);
+                            java.nio.file.Files.write(target, tampered);
+                            var tamperedSha = M7HomeClosurePhases.sha256(target);
+                            var temps = publishTemps(p);
+                            int attempts = probe.calls().size();
+                            // T4 P1：不符而且 dirty 的期間正面觸發原生存檔（autosave 與 /save-all flush 的同一條原版路徑）。
+                            var autosave = nativeSave(p, () -> server.saveAll(true, false, false), false);
+                            c.assertTrue(autosave.thrown() == null, "NATIVE_AUTOSAVE_THREW：收據不符時原生 autosave 的例外傳進原版存檔鏈：" + autosave);
+                            c.assertTrue(autosave.othersSaved(), "NATIVE_AUTOSAVE_INCOMPLETE：原生 autosave 沒有存完其他 PersistentState 與 level.dat：" + autosave);
+                            c.assertTrue(!journal.isDirty() && frozen.equals(journal.allFlushedSessions().get(sid)) && frozen.equals(journal.allSessions().get(sid)),
+                                    "NATIVE_AUTOSAVE_JOURNAL_HELD：未變動、已在磁碟上的不符列不得擋下 journal 寫出：dirty=" + journal.isDirty());
+                            assertMismatchKept(c, p, journal, sid, target, tamperedSha, "原生 autosave 之後");
+                            // 再標 dirty 一次，讓 /save-all flush 也走到收據核對：ERROR 不得重記。
+                            journal.markDirty();
+                            var flush = nativeSave(p, () -> server.save(false, true, true), true);
+                            c.assertTrue(flush.thrown() == null, "NATIVE_SAVE_ALL_THREW：收據不符時 /save-all flush 的例外傳進原版存檔鏈：" + flush);
+                            c.assertTrue(flush.othersSaved() && flush.chunksSaved(), "NATIVE_SAVE_ALL_INCOMPLETE：/save-all flush 沒有存完其他 PersistentState、level.dat 與兩側世界的 chunk：" + flush);
+                            c.assertTrue(!journal.isDirty() && frozen.equals(journal.allFlushedSessions().get(sid)),
+                                    "NATIVE_SAVE_ALL_JOURNAL_HELD：未變動、已在磁碟上的不符列不得擋下 journal 寫出：dirty=" + journal.isDirty());
+                            assertMismatchKept(c, p, journal, sid, target, tamperedSha, "/save-all flush 之後");
+                            c.assertTrue(oneAdminError(adminErrors(logs, sid)), "MISMATCH_ERROR_COUNT：收據不符的管理員 ERROR 每個 instance 每個 SID 只記一次、帶 LOG_MARKER：" + adminErrors(logs, sid));
+                            M5GameTestSupport.whenTicks(c, removalFailed + 1, 300, () -> probe.calls().size() > attempts, retried -> {
+                                try {
+                                    assertMismatchKept(c, p, journal, sid, target, tamperedSha, "退避重試");
+                                    c.assertTrue(fault.ticks().size() == 1, "CROSS_FILE_REMOVAL_ATTEMPTED：收據與熱列不符時不得再嘗試移除熱列：" + fault.ticks());
+                                    c.assertTrue(publishTemps(p).equals(temps), "MISMATCH_TEMP_CREATED：收據不符時不得建立發佈暫存檔：" + publishTemps(p));
+                                    // 測試還原原本的收據（管理員處理），下一次重試才移除熱列。
+                                    java.nio.file.Files.write(target, original[0]);
+                                    M5GameTestSupport.whenTicks(c, retried + 1, 500, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), gone -> {
+                                        try {
+                                            c.assertTrue(java.util.Arrays.equals(original[0], java.nio.file.Files.readAllBytes(target)), "還原後收據就是原本發佈的那一份");
+                                            c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
+                                            c.assertTrue(oneAdminError(adminErrors(logs, sid)), "MISMATCH_ERROR_COUNT：收尾時管理員 ERROR 仍只有一則：" + adminErrors(logs, sid));
+                                            hooks.release();
+                                            c.complete();
+                                        } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                                    }, () -> "還原收據之後沒有移除熱列：row=" + journal.allSessions().get(sid) + " thresholds=" + closureThresholds(p, sid), hooks);
+                                } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("收據讀取失敗：" + failure); }
+                            }, () -> "收據不符後沒有退避重試：checkpoints=" + probe.calls() + " thresholds=" + closureThresholds(p, sid), hooks);
+                        } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("收據讀取失敗：" + failure); }
+                    }, () -> "熱列移除的受控失敗沒有發生：row=" + journal.allSessions().get(sid) + " faults=" + fault.ticks(), hooks);
                 } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /**
+     * 一次原生存檔的觀察（T4 P1）：呼叫前把 A、B 控制器所在的 chunk 標為待存、overworld 的 raids（另一個原版 PersistentState）標 dirty，並翻轉 gamerule
+     * {@code announceAdvancements}（存在 level.dat；不用 level.dat 的 hash，同一 tick 內兩次寫出的內容可能相同）；呼叫後看例外有沒有傳出、raids 是否已存（不再 dirty）、
+     * level.dat 的 gamerule 是否等於剛設的值，{@code flush} 時另看兩側 chunk 是否已存（不再待存）。呼叫端負責在結束時還原 gamerule。
+     */
+    private static NativeSave nativeSave(Projection p, Runnable save, boolean flush) throws java.io.IOException {
+        var server = p.f.server;
+        var level = server.getSavePath(WorldSavePath.LEVEL_DAT);
+        var a = server.getOverworld().getWorldChunk(p.frame.controllerPos());
+        var b = p.b.getWorldChunk(p.frame.controllerPos());
+        var raids = server.getOverworld().getRaidManager();
+        var announce = server.getGameRules().get(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS);
+        boolean expected = !announce.get();
+        a.setNeedsSaving(true); b.setNeedsSaving(true); raids.markDirty(); announce.set(expected, server);
+        RuntimeException thrown = null;
+        try { save.run(); } catch (RuntimeException failure) { thrown = failure; }
+        var rules = net.minecraft.nbt.NbtIo.readCompressed(level, net.minecraft.nbt.NbtSizeTracker.ofUnlimitedBytes()).getCompound("Data").getCompound("GameRules");
+        boolean raidsSaved = !raids.isDirty(), levelSaved = String.valueOf(expected).equals(rules.getString("announceAdvancements"));
+        boolean chunksSaved = !a.needsSaving() && !b.needsSaving();
+        if (thrown != null) WAIT_LOG.error("M7_T4P1_NATIVE_SAVE_THREW flush={}", flush, thrown);
+        return new NativeSave(thrown == null ? null : thrown.toString(), raidsSaved, levelSaved, chunksSaved);
+    }
+
+    /** {@link #nativeSave} 的結果；{@code thrown} 是傳出的例外（沒有時為 null）；{@code chunksSaved} 只在 flush 時有意義（autosave 有原版的每 chunk 節流）。 */
+    private record NativeSave(String thrown, boolean raidsSaved, boolean levelSaved, boolean chunksSaved) {
+        boolean othersSaved() { return raidsSaved && levelSaved; }
+    }
+
+    /**
+     * 本 SID 的 ERROR：訊息含 {@code session=<SID>} 的全部 ERROR（不分 marker），每則記成 {@code <marker>|<訊息>}。呼叫端核對恰一則，而且那一則帶
+     * {@code CollapseService.LOG_MARKER}（見 {@link #oneAdminError}）。
+     */
+    private static List<String> adminErrors(LogCapture logs, UUID sid) {
+        return logs.matching(org.apache.logging.log4j.Level.ERROR, "session=" + sid).stream()
+                .map(entry -> (entry.marker() == null ? "NO_MARKER" : entry.marker().getName()) + "|" + entry.message()).toList();
+    }
+
+    private static boolean oneAdminError(List<String> errors) {
+        return errors.size() == 1 && errors.getFirst().startsWith(CollapseService.LOG_MARKER.getName() + "|");
     }
 
     /** 收據不符時 owner 必須保鎖：收據檔不被覆寫或刪除、已凍結的 CLOSE 與熱列仍在（current＝flushed）、仍占用。 */
@@ -902,13 +966,22 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         return names;
     }
 
-    /** 同一列、closedAt 晚 5 tick 的合法收據（內容不同、SID 相同），以正式 {@link HomeReceiptStore} 發佈到另一個暫存的存檔根之後讀出 bytes。 */
-    private static byte[] variantReceipt(HomeSessionRecord frozen) throws java.io.IOException {
+    /**
+     * 同一列、closedAt 晚 5 tick 的合法收據（內容不同、SID 相同），以正式 {@link HomeReceiptStore} 發佈到另一個暫存的存檔根之後讀出 bytes；
+     * 讀出之後遞迴刪除那個暫存目錄（B2a 審查 M2）。
+     */
+    static byte[] variantReceipt(HomeSessionRecord frozen) throws java.io.IOException {
         var close = (Close) frozen.home().closeIntent();
         var variant = frozen.withClose(new Close(close.reason(), close.closedAtGameTime() + 5, close.doorGoal(), close.evidence()));
         var scratch = java.nio.file.Files.createTempDirectory("m7-b2a-receipt-variant");
-        new HomeReceiptStore(scratch).publishOrVerify(variant);
-        return java.nio.file.Files.readAllBytes(scratch.resolve("data").resolve("quantumchamber_home_receipts").resolve(frozen.sessionUuid() + ".dat"));
+        try {
+            new HomeReceiptStore(scratch).publishOrVerify(variant);
+            return java.nio.file.Files.readAllBytes(scratch.resolve("data").resolve("quantumchamber_home_receipts").resolve(frozen.sessionUuid() + ".dat"));
+        } finally {
+            try (var walk = java.nio.file.Files.walk(scratch)) {
+                for (var path : walk.sorted(Comparator.reverseOrder()).toList()) java.nio.file.Files.deleteIfExists(path);
+            }
+        }
     }
 
     /** N2 收尾：已確認的 DORMANT 以原艙停止 checked latch，由回程終局 owner 結案移除；之後釋放 hooks（含 Projection）。 */

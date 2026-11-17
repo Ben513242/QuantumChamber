@@ -20,6 +20,9 @@
       "dev.quantumchamber.persistence.M7HomeJournalTest.unknownFirstHomeRetainsParticipantChamberAndSlotUntilReconciliation",
       "dev.quantumchamber.persistence.M7HomeHistoryTest.everySchemaSixActiveSidMustAgreeWithItsHistory",
       "dev.quantumchamber.persistence.M7HomeHistoryTest.matchingTypedReceiptStillRequiresExactWrapperBeforeRemovingActive",
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.nativeSaveWritesOtherRowsWhileUnchangedRowMismatchesItsReceipt",
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.nativeSaveHoldsChangedRowThatMismatchesItsReceipt",
+      "dev.quantumchamber.persistence.M7HomeHistoryTest.checkedFlushStillFailsOnChangedRowThatMismatchesItsReceipt",
       "dev.quantumchamber.persistence.M7HomeJournalTest.uncheckedLeaseReleaseCannotDonateAnotherSidsSlotBoundsOrPlayer",
       "dev.quantumchamber.persistence.M7HomeJournalTest.permanentSealsRejectRootLatchWhileRestartOnlySealCanLatch",
       "dev.quantumchamber.persistence.M7HomeJournalTest.trackerDepthOrMalformedAuthorityDoesNotBecomeCapacityRetry",
@@ -116,7 +119,8 @@
       "restart-ready-stop-crossed",
       "restart-ready-low-no-root",
       "receipt-existing",
-      "receipt-player-closed"
+      "receipt-player-closed",
+      "receipt-mismatch-stop"
     ]
   },
   "ubuntu": {
