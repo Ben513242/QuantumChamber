@@ -812,7 +812,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
      * 保留占用；測試還原原本的收據之後，下一次重試才移除。單一 JVM 即可證明：比對都在同一個 server 內；
      * 開服載入與寫入時的不符由 JUnit {@code everySchemaSixActiveSidMustAgreeWithItsHistory}、移除前 exact 由 {@code matchingTypedReceiptStillRequiresExactWrapperBeforeRemovingActive} 證明。
      * <p>T4 P1（B2a-M6、t4b2a-review P1）：不再避開原生 autosave 的窗口，改成在「收據不符、journal dirty」期間正面觸發原生存檔——autosave 的同一條路徑
-     * {@code saveAll(true,false,false)}，以及 {@code /save-all flush} 的 {@code save(false,true,true)}。例外不得傳出原版存檔鏈；overworld 的其他 PersistentState
+     * {@code saveAll(true,false,false)}，以及 {@code /save-all flush} 的同一條路徑 {@code saveAll(true,true,true)}（原版 {@code SaveAllCommand}）。例外不得傳出原版存檔鏈；overworld 的其他 PersistentState
      * 與 level.dat 都要存到（flush 時兩側世界的 chunk 也要存到）；不符的那一列未變動、已在磁碟上，journal 照原樣寫出、不再 dirty；不符的 SID 仍保鎖（收據原件、
      * 熱列與占用不變）；管理員 ERROR（{@code CollapseService.LOG_MARKER}、{@code session=<SID>}）每個 instance 只記一次。跨 JVM 的停服面由原生列
      * {@code receipt-mismatch-stop} 證明。
@@ -867,7 +867,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                             assertMismatchKept(c, p, journal, sid, target, tamperedSha, "原生 autosave 之後");
                             // 再標 dirty 一次，讓 /save-all flush 也走到收據核對：ERROR 不得重記。
                             journal.markDirty();
-                            var flush = nativeSave(p, () -> server.save(false, true, true), true);
+                            var flush = nativeSave(p, () -> server.saveAll(true, true, true), true);
                             c.assertTrue(flush.thrown() == null, "NATIVE_SAVE_ALL_THREW：收據不符時 /save-all flush 的例外傳進原版存檔鏈：" + flush);
                             c.assertTrue(flush.othersSaved() && flush.chunksSaved(), "NATIVE_SAVE_ALL_INCOMPLETE：/save-all flush 沒有存完其他 PersistentState、level.dat 與兩側世界的 chunk：" + flush);
                             c.assertTrue(!journal.isDirty() && frozen.equals(journal.allFlushedSessions().get(sid)),

@@ -774,5 +774,5 @@ manifest 在 close 矩陣 39 列之後再接 6 列（B2a 的 5 列與 T4 P1 的 
 
 - 每列 reopen 收尾後，參與者以正式方塊互動（`BlockState.onUse` → `QuantumBulkheadBlock.onUse`）關 B 門，40 tick 內不得有事件、checkpoint 或收據變動。
 - runner 另核：crash／reopen 的事件序列與 outcome、各列 crash 當下的 journal／registry／收據／門狀態、開服掃描前的觀察（`early`）、收據的原因與 Evidence、收據檔案、checkpoint 範圍（含門 chunk）、移除前後的占用、零移動，以及每列必須成立的 Java 斷言名稱清單。`-SelfTest` 的逐列負控與 close 列相同（每列 8 個）。
-- 同 JVM 的子項（`M7HomeClosureGameTests`）：`checkpoint_failure_keeps_close_and_lock`（checkpoint 結果未知）、`existing_receipt_mismatch_keeps_lock`（發佈前目標已存在而內容不同）、`published_receipt_mismatch_keeps_lock`（收據與熱列跨檔不符；T4 P1 起不再避開原生 autosave 的窗口，改成在不符而且 journal dirty 的期間正面呼叫 `saveAll(true,false,false)`（autosave 的同一條路徑）與 `save(false,true,true)`（`/save-all flush`），斷言例外不傳出、raids 與 level.dat（flush 時另有兩側 chunk）都存到、journal 照原樣寫出、保鎖，管理員 ERROR 只記一次）。
+- 同 JVM 的子項（`M7HomeClosureGameTests`）：`checkpoint_failure_keeps_close_and_lock`（checkpoint 結果未知）、`existing_receipt_mismatch_keeps_lock`（發佈前目標已存在而內容不同）、`published_receipt_mismatch_keeps_lock`（收據與熱列跨檔不符；T4 P1 起不再避開原生 autosave 的窗口，改成在不符而且 journal dirty 的期間正面呼叫 `saveAll(true,false,false)`（autosave 的同一條路徑）與 `saveAll(true,true,true)`（`/save-all flush`，原版 `SaveAllCommand` 的同一條路徑），斷言例外不傳出、raids 與 level.dat（flush 時另有兩側 chunk）都存到、journal 照原樣寫出、保鎖，管理員 ERROR 只記一次）。
 - run-all、CI 接線與 `-VerifySummary` 的完整性檢查屬 T4 Phase B2b。
