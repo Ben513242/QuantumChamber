@@ -99,7 +99,8 @@ import net.minecraft.world.World;
  *     正式 {@code setEnabled(false)} 把根事件排進記憶體佇列）；reopen 在開服掃描之前 direct enable（必須 pending），掃描後 stop 必須已 checked，續行被拒，
  *     第二次 enable（A 修復）成功但本趟仍以 ROOT_DISABLED 收尾。</li>
  * <li>{@code restart-ready-stop-crossed}：READY、部分 Crossed、stop 已持久、A 已修復時 crash；reopen 以 ROOT_DISABLED（不是 RESTART_CLOSED）收尾，Crossed 保留。</li>
- * <li>{@code restart-ready-low-no-root}：READY、部分 Crossed、A 只是普通斷電（LOW）時 crash；reopen 開服掃描不 latch，以 RESTART_CLOSED 收尾，A 的 chunk 一直未載入。</li>
+ * <li>{@code restart-ready-low-no-root}：READY、部分 Crossed、A 只是普通斷電（LOW）時 crash；reopen 開服掃描不 latch，以 RESTART_CLOSED 收尾，A 的 chunk 一直未載入。
+ *     世界出生點移到遠離 A 的位置（T4 B2b-2），讓參與者登入時 vanilla 的出生搜尋在幾何上碰不到 A。</li>
  * <li>{@code receipt-existing}：收據已發佈、熱列移除失敗（journal flush 故障，RESTORED）時 crash；reopen 從 CLOSE 續做，只驗既有收據 exact、不覆寫、移除前不解鎖。</li>
  * <li>{@code receipt-player-closed}：成功收尾後玩家以正式方塊互動關 B 門、checkpoint 之後 crash；reopen 舊 SID 不重開門。</li>
  * <li>{@code receipt-mismatch-stop}（T4 P1）：同 {@code receipt-existing} 走到熱列移除失敗（RESTORED，journal dirty）之後，把收據換成同 SID、內容不同的合法收據，
@@ -121,6 +122,13 @@ final class M7HomeChainPhases {
     static final List<String> FROM_EXISTING = List.of("before-door", "after-door", "before-checkpoint", "after-checkpoint", M7HomeClosurePhases.VERIFY_EXISTING,
             "after-recheck", "before-remove", "after-remove");
     static final int READY_TICKS = 200, CUT_TICKS = 200, CLOSE_TICKS = 400, QUIET_TICKS = 40;
+    /**
+     * restart-ready-low-no-root 的世界出生點 XZ（T4 B2b-2）。reopen 時參與者登入，vanilla 1.21 的 {@code ServerPlayerEntity} 建構子以 overworld 呼叫
+     * {@code getWorldSpawnPos}：在出生點 ±i 內以不固定 seed 的亂數挑欄，交給 {@code SpawnLocating.findOverworldSpawn} 同步載入那一欄的 chunk（之後玩家資料才把人放回 B）。
+     * 原本出生點 (0,y,0) 時，方形與 A 的 chunk (0,0) 重疊，約 121/441 的欄會讓 A 在開服後第 1 個 tick 被暫時載入。移到這裡之後，方形在幾何上碰不到 A，
+     * 由 {@link Run#spawnSearchAvoidsA} 在 crash 與 reopen 兩端核對。
+     */
+    static final int LOW_SPAWN_X = -256, LOW_SPAWN_Z = -256;
 
     private M7HomeChainPhases() {}
 
@@ -474,6 +482,10 @@ final class M7HomeChainPhases {
                 // A（chunk 0,0）在 spawn (0,72,0) 的 spawn chunks 內；設為 0（寫進 level.dat），reopen 時 A 不會因 spawn ticket 而載入。
                 server.getGameRules().get(GameRules.SPAWN_CHUNK_RADIUS).set(0, server);
                 expect("spawnChunkRadiusZero", server.getGameRules().getInt(GameRules.SPAWN_CHUNK_RADIUS) == 0, () -> "radius 未改");
+                // T4 B2b-2：reopen 的登入出生搜尋也不得碰到 A（見 LOW_SPAWN_X）。出生點寫進 level.dat，由 ready() 的基線 checkpoint 落盤。
+                overworld.setSpawnPos(new BlockPos(LOW_SPAWN_X, overworld.getSpawnPos().getY(), LOW_SPAWN_Z), overworld.getSpawnAngle());
+                expect("spawnSearchAvoidsA", spawnSearchAvoidsA(), this::spawnSearchDetail);
+                proof.put("spawnSearch", spawnSearchFacts());
             }
             var setup = new LinkedHashMap<String, Object>();
             setup.put("chain", chain.row);
@@ -929,6 +941,9 @@ final class M7HomeChainPhases {
                     expect("scanNoLatchOnLow", Boolean.FALSE.equals(early.get("stopped")) && registryEnabled() && "RETURNING".equals(powerState()),
                             () -> "early=" + early + " power=" + powerState());
                     expect("aNotLoadedAtStart", Boolean.FALSE.equals(early.get("aLoaded")) && !aLoaded(overworld), () -> "early=" + early);
+                    // T4 B2b-2：登入之前，以 level.dat 載入的出生點與 spawnRadius 核對登入的出生搜尋在幾何上碰不到 A。
+                    expect("spawnSearchAvoidsA", spawnSearchAvoidsA(), this::spawnSearchDetail);
+                    proof.put("spawnSearch", spawnSearchFacts());
                     expect("inStartupSet", startupContains(), () -> "開服收尾集合沒有本列");
                     closingRowText = String.valueOf(current);
                 }
@@ -965,6 +980,8 @@ final class M7HomeChainPhases {
             participant = connect();
             pose = M7HomeClosurePhases.pose(participant.player());
             expect("participantLoginPose", JSON.toJsonTree(pose).equals(baseline.get("pose")), () -> "login=" + pose + " baseline=" + baseline.get("pose"));
+            // T4 B2b-2：登入本身（vanilla 的出生搜尋）不得載入 A；之後的收尾事件另由 aNeverLoadedDuringClose 核對。
+            if (chain == Chain.RESTART_READY_LOW) expect("aNotLoadedAfterLogin", !aLoaded(overworld), this::spawnSearchDetail);
             proof.put("start", snapshot());
             step = Step.AWAIT_CLOSE;
             stepTicks = 0;
@@ -1258,6 +1275,38 @@ final class M7HomeChainPhases {
             var record = ChamberRegistryState.get(server).registry().records().get(chamber);
             return record == null ? "ABSENT" : record.powerState().name();
         }
+
+        /**
+         * T4 B2b-2：玩家登入時 vanilla 出生搜尋可能同步載入的 overworld chunk 的上界。{@code ServerPlayerEntity.getWorldSpawnPos} 的半徑
+         * i＝max(0, {@code server.getSpawnRadius})，離世界邊界太近時縮小、≤1 時改成 1，所以 i ≤ max(1, spawnRadius)；候選欄都在出生點 ±i 的方形內，
+         * 每一欄只由 {@code SpawnLocating.findOverworldSpawn} 載入那一欄所在的 chunk（之後的 {@code isSpaceEmpty} 只檢查同一欄、寬 0.6 的方框），
+         * 全部失敗時退回出生點那一欄。回傳涵蓋這個方形的全部 chunk。
+         */
+        private Set<ChunkPos> spawnSearchChunks() {
+            var spawn = overworld.getSpawnPos();
+            int radius = Math.max(1, server.getSpawnRadius(overworld));
+            var chunks = new LinkedHashSet<ChunkPos>();
+            for (int x = Math.floorDiv(spawn.getX() - radius, 16); x <= Math.floorDiv(spawn.getX() + radius, 16); x++)
+                for (int z = Math.floorDiv(spawn.getZ() - radius, 16); z <= Math.floorDiv(spawn.getZ() + radius, 16); z++) chunks.add(new ChunkPos(x, z));
+            return chunks;
+        }
+
+        /** 登入的出生搜尋（上界）與 A 的 chunk 沒有交集：A 不可能因玩家登入而被載入。 */
+        private boolean spawnSearchAvoidsA() {
+            return spawnSearchChunks().stream().noneMatch(chunkSet()::contains);
+        }
+
+        private Map<String, Object> spawnSearchFacts() {
+            var spawn = overworld.getSpawnPos();
+            var facts = new LinkedHashMap<String, Object>();
+            facts.put("spawn", spawn.getX() + "," + spawn.getY() + "," + spawn.getZ());
+            facts.put("spawnRadius", server.getSpawnRadius(overworld));
+            facts.put("searchChunks", spawnSearchChunks().stream().map(pos -> pos.x + "," + pos.z).toList());
+            facts.put("aChunks", homeChunks);
+            return facts;
+        }
+
+        private String spawnSearchDetail() { return "spawnSearch=" + spawnSearchFacts(); }
 
         /** A（同 FRAME 的 homeChunks）是否有任一 chunk 已以 FULL 載入；只查詢、不載入。 */
         private boolean aLoaded(ServerWorld world) {

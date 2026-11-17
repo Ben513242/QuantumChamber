@@ -49,8 +49,8 @@ $extras=@(
         crashObserved=@($extraSetup+$readySetup+@('disableAcked','readyStopLatched','repairAcked','stopKeptAfterRepair','baselineRepaired','aDoorUnchanged'))
         reopenObserved=@($extraReopen+@('aDoorAtStart','playerClosedDoor','readyStopFromCrash','registryRepaired','inStartupSet','crossedKept'))}
     [pscustomobject]@{row='restart-ready-low-no-root';family='restart';door='passable';cut='low-saved';index=-1;crash=@();reopen=@($cuts);outcome=@('APPLIED')
-        crashObserved=@($extraSetup+$readySetup+@('spawnChunkRadiusZero','aPowered','poweredNoLatch','aLow','lowNoLatch','baselineLow','aDoorUnchanged'))
-        reopenObserved=@($extraReopen+@('playerClosedDoor','readyLowFromCrash','scanNoLatchOnLow','aNotLoadedAtStart','inStartupSet','crossedKept','aNeverLoadedDuringClose'))}
+        crashObserved=@($extraSetup+$readySetup+@('spawnChunkRadiusZero','spawnSearchAvoidsA','aPowered','poweredNoLatch','aLow','lowNoLatch','baselineLow','aDoorUnchanged'))
+        reopenObserved=@($extraReopen+@('playerClosedDoor','readyLowFromCrash','scanNoLatchOnLow','aNotLoadedAtStart','spawnSearchAvoidsA','aNotLoadedAfterLogin','inStartupSet','crossedKept','aNeverLoadedDuringClose'))}
     [pscustomobject]@{row='receipt-existing';family='receipt';door='ordinary';cut='remove-rejected';index=-1;crash=@($cuts[0..11]+@('remove-rejected'));reopen=$fromExisting;outcome=@('UNCHANGED')
         crashObserved=@($extraSetup+@('disableAcked','stopLatched'))
         reopenObserved=@($extraReopen+@('aDoorAtStart','playerClosedDoor','closeFromCrash','busyAtStart'))}
