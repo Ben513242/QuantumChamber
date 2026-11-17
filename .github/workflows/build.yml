@@ -131,6 +131,18 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: gradle/actions/setup-gradle@v6
+      - name: 記錄 Windows M7 原生分片 runner 環境
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          # summary 內記的是絕對路徑，彙總 job 要在同一個 workspace 路徑讀原件；記下本片的 workspace 與 runner image，供彙總比對（T4 B2b-4，B2b3-M3）。
+          if (-not $env:GITHUB_WORKSPACE) { throw 'M7_HOME_CI_RUNNER_WORKSPACE：沒有 GITHUB_WORKSPACE' }
+          $record = "build/m7-home-native/$env:M7_HOME_SHARD.runner.json"
+          if (Test-Path -LiteralPath $record) { throw "M7_HOME_CI_STALE_RUNNER：$record" }
+          New-Item -ItemType Directory -Path build/m7-home-native -Force | Out-Null
+          $runner = [ordered]@{ shard = $env:M7_HOME_SHARD; workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE); imageOS = "$env:ImageOS"; imageVersion = "$env:ImageVersion" }
+          $runner | ConvertTo-Json | Set-Content -LiteralPath $record -Encoding utf8
+          "M7_HOME_CI_RUNNER shard=$($runner.shard) workspace=$($runner.workspace) imageOS=$($runner.imageOS) imageVersion=$($runner.imageVersion)"
       - name: 執行 Windows M7 原生跨 JVM 分片
         timeout-minutes: 60
         shell: pwsh
@@ -173,6 +185,7 @@ jobs:
           include-hidden-files: true
           path: |
             build/m7-home-native/*.txt
+            build/m7-home-native/*.runner.json
             .superpowers/verification/m7-home-run-*.json
             .superpowers/verification/m7-home-*/**
             run/m7-home-*/preservation.json
@@ -199,22 +212,42 @@ jobs:
         shell: pwsh
         run: |
           # 四片的清單恰為 ordinary、passable、restart-receipt、sealed，合計 5 份 summary；summary 引用的原件都必須已下載到同一路徑。
+          # T4 B2b-4（B2b3-M3）：先比對各片記下的 workspace 絕對路徑與 runner image（M7_HOME_CI_AGGREGATE_WORKSPACE／IMAGE），再做原本的檢查；
+          # 任何錯誤都先把完整內容附加到上傳的 log，再原樣丟出（判定不變）。
           $log = 'build/m7-home-native-aggregate.log'
           New-Item -ItemType Directory -Path build -Force | Out-Null
           "M7_HOME_CI_AGGREGATE_START HEAD=$env:GITHUB_SHA" | Set-Content -LiteralPath $log -Encoding utf8
-          $lists = @(Get-ChildItem -LiteralPath build/m7-home-native -File -Filter '*.txt' | Sort-Object Name)
-          if (($lists.Name -join ',') -cne 'ordinary.txt,passable.txt,restart-receipt.txt,sealed.txt') { throw "M7_HOME_CI_AGGREGATE_LISTS：$($lists.Name -join ',')" }
-          $summaries = @($lists | ForEach-Object { Get-Content -LiteralPath $_.FullName } | Where-Object { $_ })
-          if ($summaries.Count -ne 5) { throw "M7_HOME_CI_AGGREGATE_INPUT：$($summaries.Count)" }
-          foreach ($path in $summaries) {
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "M7_HOME_CI_AGGREGATE_MISSING：$path" }
-            foreach ($row in @((Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).rows)) {
-              foreach ($file in @($row.preservation) + @($row.phases | ForEach-Object receipt)) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "M7_HOME_CI_AGGREGATE_MISSING：$file" } }
+          try {
+            $here = [ordered]@{ workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE); imageOS = "$env:ImageOS"; imageVersion = "$env:ImageVersion" }
+            "M7_HOME_CI_AGGREGATE_RUNNER workspace=$($here.workspace) imageOS=$($here.imageOS) imageVersion=$($here.imageVersion)" | Tee-Object -FilePath $log -Append
+            $lists = @(Get-ChildItem -LiteralPath build/m7-home-native -File -Filter '*.txt' | Sort-Object Name)
+            if (($lists.Name -join ',') -cne 'ordinary.txt,passable.txt,restart-receipt.txt,sealed.txt') { throw "M7_HOME_CI_AGGREGATE_LISTS：$($lists.Name -join ',')" }
+            foreach ($list in $lists) {
+              $record = Join-Path $list.DirectoryName ($list.BaseName + '.runner.json')
+              if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { throw "M7_HOME_CI_AGGREGATE_RUNNER：缺 $($list.BaseName) 的 runner 記錄：$record" }
+              $shard = Get-Content -LiteralPath $record -Raw | ConvertFrom-Json
+              "M7_HOME_CI_SHARD_RUNNER shard=$($shard.shard) workspace=$($shard.workspace) imageOS=$($shard.imageOS) imageVersion=$($shard.imageVersion)" | Tee-Object -FilePath $log -Append
+              $where = "shard=$($list.BaseName)（workspace=$($shard.workspace) imageOS=$($shard.imageOS) imageVersion=$($shard.imageVersion)）；彙總（workspace=$($here.workspace) imageOS=$($here.imageOS) imageVersion=$($here.imageVersion)）"
+              if ($shard.shard -cne $list.BaseName) { throw "M7_HOME_CI_AGGREGATE_RUNNER：runner 記錄的 shard 不符：$where" }
+              if ($shard.workspace -ne $here.workspace) { throw "M7_HOME_CI_AGGREGATE_WORKSPACE：分片與彙總的 workspace 絕對路徑不同，summary 內的絕對路徑對不上：$where" }
+              if ($shard.imageOS -cne $here.imageOS) { throw "M7_HOME_CI_AGGREGATE_IMAGE：分片與彙總的 runner image 不同：$where" }
+              if ($shard.imageVersion -cne $here.imageVersion) { "M7_HOME_CI_AGGREGATE_IMAGE_VERSION_DIFFERS $where（同一個 image 的版本不同，不影響路徑，只記錄）" | Tee-Object -FilePath $log -Append }
             }
+            $summaries = @($lists | ForEach-Object { Get-Content -LiteralPath $_.FullName } | Where-Object { $_ })
+            if ($summaries.Count -ne 5) { throw "M7_HOME_CI_AGGREGATE_INPUT：$($summaries.Count)" }
+            foreach ($path in $summaries) {
+              if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "M7_HOME_CI_AGGREGATE_MISSING：$path" }
+              foreach ($row in @((Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).rows)) {
+                foreach ($file in @($row.preservation) + @($row.phases | ForEach-Object receipt)) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "M7_HOME_CI_AGGREGATE_MISSING：$file" } }
+              }
+            }
+            & ./scripts/verification/m7-home-probe.ps1 -VerifyAggregate ($summaries -join ',') -ExpectedHead $env:GITHUB_SHA -SelfTest | Tee-Object -FilePath $log -Append | Tee-Object -Variable aggregateOutput
+            $complete = @($aggregateOutput | Where-Object { "$_" -cmatch ('^M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=46 phases=92 .* HEAD=' + [regex]::Escape($env:GITHUB_SHA) + '（') })
+            if ($complete.Count -ne 1) { throw 'M7_HOME_CI_AGGREGATE_NOT_COMPLETE' }
+          } catch {
+            @("M7_HOME_CI_AGGREGATE_FAIL $($_.Exception.Message)", '--- error record ---', ($_ | Out-String).TrimEnd(), '--- exception ---', $_.Exception.ToString(), '--- script stack ---', "$($_.ScriptStackTrace)") | Add-Content -LiteralPath $log -Encoding utf8
+            throw
           }
-          & ./scripts/verification/m7-home-probe.ps1 -VerifyAggregate ($summaries -join ',') -ExpectedHead $env:GITHUB_SHA -SelfTest | Tee-Object -FilePath $log -Append | Tee-Object -Variable aggregateOutput
-          $complete = @($aggregateOutput | Where-Object { "$_" -cmatch ('^M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=46 phases=92 .* HEAD=' + [regex]::Escape($env:GITHUB_SHA) + '（') })
-          if ($complete.Count -ne 1) { throw 'M7_HOME_CI_AGGREGATE_NOT_COMPLETE' }
       - name: 上傳 Windows M7 原生彙總結果
         if: always()
         timeout-minutes: 5
