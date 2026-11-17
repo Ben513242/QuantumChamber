@@ -5,7 +5,7 @@
 **目標（Goal）**　合法 COMPLETE 投影 B 的參與者走固定回家門，先回 B，再經 B 的膜以原座標回 A。旅程終局可安全解除同艙占用。
 **架構（Architecture）**　將既有 checked journal 擴充為能同存舊列與 HOME 列的單一權威。沿用走廊、回收、票額、原生移動與 chunk checkpoint，分別核對 Entry=B 與 Root=A。每 SID 的終局收據保留歷史，活躍列負責完成 B 的最後門狀態。
 **技術基線（Tech Stack）**　Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Loom 1.7.4、Java 21、Gradle 8.8、PowerShell 7。
-**對應規格（Spec）**　[v1.3 save邊界依新user澄清已窄確認](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `AA7909A6A8A70435532742052E165EF2304B50EFB21A48A6144027CC3F625820`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
+**對應規格（Spec）**　[v1.4 T4 ENTRY_STOPPED DISABLED 勘誤](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `1D2FDE0E21E831EE815E8C1E1A1DC19D94878DFBBFD3FF8A9F0C3BB099B7B093`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
 
 ## 2026-11-13 現行續行授權與止損
 
@@ -222,11 +222,30 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 
 **修改**　`P/QuantumSuperpositionMod.java`、`P/chamber/{ChamberLifecycleService,ChamberRegistry,ChamberRegistryState,ChamberProtectionService,ChamberMaintenanceInteraction,ChamberCollapsePort}.java`、`P/collapse/{OriginDoors,HomeEndpointAuthority}.java`、`P/persistence/SessionRecoveryState.java`、`P/superposition/SuperpositionSessionManager.java`、`G/M7HomeProbe.java`、`src/testmod/resources/{fabric.mod.json,quantumchamber-test.mixins.json}`、`S/{m7-inventory.json,m7-home-probe.ps1}`。
 
+**擴檔（2026-11-17，Phase A 實際改動，controller 補列）**　上列以外另改：
+- `P/persistence/SessionRecoveryManager.java`：HOME roll-forward 的唯一重試寫出者（Phase A 審查 I-1）。
+- `P/chamber/ChamberSessionGateway.java`：只補 `Presence.BUSY` 的 Javadoc。
+- `G/M7HomeAuthorityGameTests.java`（T3 fixture），共三次改動，授權來源各不相同：
+  - `550f12e`（Phase A 首輪，依連續授權，不是使用者裁示）：
+    - CLOSE 改由 T4 owner `HomeClosure.step` mint；
+    - 非停止分支從 PARTICIPANT_CLOSED 改成真到期的 EXPIRED；
+    - 新增「結案列不能由外部 caller 自宣完成」的斷言；
+    - 兩趟改用 continuation 串接。
+
+    這次改寫讓第二趟在第一趟的收尾回呼裡同步啟動，引入了 fastutil rehash 重跑。
+  - `bd84b8f`：第二趟的輪詢改為逐 tick 排程，依使用者第 1 題授權的「一次有界調查＋修正」。
+  - `62beae7`：開頭呼叫 `M7HomeClosureGameTests.requireCandidateStores`。這是 fix1 回歸途中發現的既有順序相依修正（新增 batch 後執行順序改變），依連續授權，不屬第 1 題授權。
+- 新增 `G/M7HomeFenceStartupProbe.java`：只在 M7 GameTest run 註冊的探針（審查 M5）。
+  - 在 `SERVER_STARTED` 事件裡、`HomeRootFence` 開服掃描所在的預設 phase 之前，用同一個 port 記錄一個不存在的艙能否 enable。
+  - 由 `fence_rejects_enable_before_startup_scan` 斷言被拒。
+
+上列中 Phase A 未改的檔（`ChamberRegistryState`、`HomeEndpointAuthority`、`M7HomeProbe`、`M7HomeClosurePhases`、`M7HomeCloseWindowMixin`、`quantumchamber-test.mixins.json`、`m7-home-probe.ps1`）留給 Phase B 或依需要再改。Phase A／B 的切分見 M7 note。
+
 **消費**　T2 的 `commitHomeRollForward/commitHomeRestore`、`HomeReceiptStore`、T3 exact Entry／global busy／票與既有 `ChamberDoorService`、`ChunkSaveCheckpoint`。
 
 **產出**　`HomeRootFence.bootstrap(MinecraftServer): void`、`onRootEvent(MinecraftServer,ChamberOriginAuthority,RootStatus,long): boolean`（true 限 stop 已確認或沒有需 latch 的旅程）、`permitsEnable(MinecraftServer,UUID): boolean`。透過 chamber port 安裝，不直接反向依賴 collapse。
 
-**交接**　`HomeClosure.step(MinecraftServer,HomeSessionRecord): void` 收斂已凍結 CLOSE，或由當下已核全跨／expiry／持久 root latch 決定原因。正式互動入口 `HomeClosure.onParticipantClose(MinecraftServer,HomeSessionRecord,ServerPlayerEntity actor,HomeClosure.DoorPhase phase,long observedAt): ChamberCollapsePort.DoorUse`，phase=PREPARE／PASSAGE；`HomeClosure.onEntryStopped(MinecraftServer,HomeSessionRecord,ServerWorld entry,HomeClosure.EntrySignal signal,long observedAt): void`，signal=LOW／DISABLED／INVALID。在事件 guard 內核 actor、cohort、phase、exact B、當時計時與真實 signal 再 mint Evidence；無事件的 step 不補造 actor 或時間。RESTART_CLOSED 只由 startup owner 持當次 instance UUID 與 startup READY 集合送出，不能由一般 tick 假造。journal 新 `finishHomeClose(MinecraftServer,HomeSessionRecord,HomeClosureProof): TerminalResult` 的 proof 為本 instance／該 SID／該列／B門及 checkpoint／exact receipt 的一次性權威，由 close owner 驗證，不讓外部 caller 自宣已完成。proof 型別放 `HomeClosure` 的巢狀 `HomeClosureProof`。
+**交接**　`HomeClosure.step(MinecraftServer,HomeSessionRecord): void` 收斂已凍結 CLOSE，或由當下已核全跨／expiry／持久 root latch 決定原因。正式互動入口 `HomeClosure.onParticipantClose(MinecraftServer,HomeSessionRecord,ServerPlayerEntity actor,HomeClosure.DoorPhase phase,long observedAt): ChamberCollapsePort.DoorUse`，phase=PREPARE／PASSAGE；`HomeClosure.onEntryStopped(MinecraftServer,HomeSessionRecord,ServerWorld entry,HomeClosure.EntrySignal signal,long observedAt): void`，signal=LOW／DISABLED／INVALID（DISABLED 不可達、一律拒絕，見 spec「T4 ENTRY_STOPPED DISABLED 勘誤」）。在事件 guard 內核 actor、cohort、phase、exact B、當時計時與真實 signal 再 mint Evidence；無事件的 step 不補造 actor 或時間。RESTART_CLOSED 只由 startup owner 持當次 instance UUID 與 startup READY 集合送出，不能由一般 tick 假造。journal 新 `finishHomeClose(MinecraftServer,HomeSessionRecord,HomeClosureProof): TerminalResult` 的 proof 為本 instance／該 SID／該列／B門及 checkpoint／exact receipt 的一次性權威，由 close owner 驗證，不讓外部 caller 自宣已完成。proof 型別放 `HomeClosure` 的巢狀 `HomeClosureProof`。
 
 
 **Windows native固定矩陣（T4的權威來源，不依賴已取消/可清除的T1 source）** `close-{ordinary|sealed|passable}-{cut}`；十三cut逐字為 `before-close,after-close,before-door,after-door,before-checkpoint,after-checkpoint,after-temp-force,before-publish,after-publish,after-readback,after-recheck,before-remove,after-remove`。三門態×十三cut=39列；每列唯一nonce/root/save，依序crash（預定halt77）→新獨立JVM reopen（正常stop0），保留實際原件。以M6 manifest/receipt/readonly+SelfTest做法精確比對此列表/phase/退出，不以單純總數39或改名窗口替代。這是原已採固定矩陣的移置，不新增高於M6的框架要求。
@@ -239,7 +258,7 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 
 - [ ] 新事件優先序：未確定 move／永久 TRR → pending journal 收斂 → 既有 CLOSE → root latch／queue → 普通終局。TRR、ENTRY_AUTHORITY_INVALID、AUTHORITY_CORRUPT 不可歸檔；未返完／有 lease 時停止旅行、保留 pending 給 T5 的返 B／清租約，不提前 CLOSE。普通缺載 B 保持 pending，不改 A。
 
-- [ ] 唯一 owner 依 §9.2 矩陣 mint 原因與 evidence：ALL_CROSSED、EXPIRED、PARTICIPANT_CLOSED（PREPARE/PASSAGE）、ENTRY_STOPPED（LOW/DISABLED/INVALID）、RESTART_CLOSED、四個 ROOT_*。要求 closed≥各原時間、actor 是本人、expiry 真到、來源 phase／observed exact。close latch 用 roll-forward，未確認不改門；checked 後列凍結。具名 `participantCloseKeepsActualActorAndPhase` 同一 READY 列分別由兩位參與者於獨立 fixture 操作，Evidence 各核原 actor／時間；無互動或錯 phase 不得由 step mint。加入非 startup 呼叫無法生成 RESTART_CLOSED。
+- [ ] 唯一 owner 依 §9.2 矩陣 mint 原因與 evidence：ALL_CROSSED、EXPIRED、PARTICIPANT_CLOSED（PREPARE/PASSAGE）、ENTRY_STOPPED（LOW/DISABLED/INVALID；DISABLED 不可達、一律拒絕，見 spec「T4 ENTRY_STOPPED DISABLED 勘誤」）、RESTART_CLOSED、四個 ROOT_*。要求 closed≥各原時間、actor 是本人、expiry 真到、來源 phase／observed exact。close latch 用 roll-forward，未確認不改門；checked 後列凍結。具名 `participantCloseKeepsActualActorAndPhase` 同一 READY 列分別由兩位參與者於獨立 fixture 操作，Evidence 各核原 actor／時間；無互動或錯 phase 不得由 step mint。加入非 startup 呼叫無法生成 RESTART_CLOSED。
 
 - [ ] 對 exact B，普通／sealed／passable 均實際套 DoorGoal，逐格驗門、所有 B 相關 chunks 原生 checkpoint，`publishOrVerify`、再驗 B 門＋checkpoint、checked remove（restore CAS）後放鎖。PARTICIPANT_CLOSED 防夾 CLOSE_IF_CLEAR_ELSE_OPEN，其餘 OPEN，不能以 ownerless membrane queue 代替。遇未知或錯配保原件與 busy；移除後不得修舊門。
 

@@ -1,8 +1,8 @@
-# M7 正規回程：binding spec（v1.3，save邊界依新user澄清已窄確認）
+# M7 正規回程：binding spec（v1.4，T4 ENTRY_STOPPED DISABLED 勘誤）
 
 日期：2026-11-13。基準工作樹：`codex/m7-return-home`，從 main `2255027` 開出。
 狀態：v1.0玩法/資料契約已第三輪C0/I0/M0採用，v1.1驗證平台勘誤亦曾採用。v1.2僅為使用者新裁示的T1 M6同等驗證收斂修訂，原同席C0/I0/M1後採用；玩法不改，本文不是實作/測試/人工/整合結果。
-v1.3狀態：2026-11-14真user巡檢明確canonical save邊界；僅本技術澄清/測試矩陣已原同席窄確認C0/I0/M1（門檻順序註記由文件同步），不重開其他已採用玩法或資料契約。來源原文見M7 note最上方「fix3只守canonical save內」。本文不代表fix3已實作/驗證。
+v1.3狀態：2026-11-14真user巡檢明確canonical save邊界；僅本技術澄清/測試矩陣已原同席窄確認C0/I0/M1（門檻順序註記由文件同步），不重開其他已採用玩法或資料契約。來源原文見M7 note最上方「fix3只守canonical save內」。本文不代表fix3已實作/驗證。v1.4狀態：2026-11-17 依使用者裁示，在文末加入「2026-11-17 T4 ENTRY_STOPPED DISABLED 勘誤」節，只把一個不可達的訊號標明為不產生，其他玩法與資料契約不變；勘誤放在文末，前面各節行號不變。一席文件審查（SDD `t4a-docs-review.md`）初審 C0/I2/M11，修正後原席窄複核 C0/I0/M1 後採用。
 範圍唯一來源：[M7 note](../../implementation-notes/2026-11-13-m7-return-home.md) 的使用者裁示。
 未明列改變的 M2／M4／M5／M6 契約維持；建議稿不是另一份 binding spec。
 
@@ -374,3 +374,12 @@ W10 preflight前照verification README重建producer並用UTF-8 console；不是
 | M1 | §8明列四種HOME outcome與move／rollback證據，V07補移動前拒絕與部分移動回滾。 |
 
 第二輪定向修正（待複審）：I1由§9.1開服重建root fence及V03跨檔窗口補足；I3由§5.1分階段lease預留及V01 remap負控補足；Minor在V05／V10補回B/B競爭、普通玩家拆A被拒與三個具名跨JVM移動／存檔窗口。沒有新增玩法待裁示。
+
+## 2026-11-17 T4 ENTRY_STOPPED DISABLED 勘誤（依使用者裁示）
+
+使用者的題目、選項與選項說明原文見 [M7 note「T3 結案；T4 Phase A 實作、審查清零」節](../../implementation-notes/2026-11-13-m7-return-home.md)。以下條文是 controller 依裁示寫成的技術契約，使用者原文以 note 為準。
+
+- §9.2 `ENTRY_STOPPED` 列（Signal 為 `"LOW"`、`"DISABLED"` 或 `"INVALID"`）中的 `DISABLED` 不可達：B 的投影艙沒有停用開關，`ChamberMaintenanceInteraction.toggleEnabled` 要求原艙身分。
+- 記錄格式保留 `DISABLED` 這個值，codec 照常讀寫；正式 owner 不產生它，`HomeClosure.onEntryStopped` 收到 `DISABLED` 一律拒絕、不 mint Evidence。
+- B 端的停止只有 `LOW`（斷電）與 `INVALID`（結構失效）兩種。plan Task 4 的交接段，以及「唯一 owner 依 §9.2 矩陣 mint」核取項中的「LOW／DISABLED／INVALID」，都依本節讀法。
+- 不新增投影艙停用開關；其他原因、Evidence 條件與資料契約不變。

@@ -1,8 +1,76 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2（見下節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 進行中（見下節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
-## 最新：Claude 接手，T3 fix2 審查清零，待完整回歸（2026-11-16）
+## 最新：T3 結案；T4 Phase A 實作、審查清零（2026-11-17）
+
+- **T3 CLOSED**（2026-11-17 00:58）：
+  - production pin `3aa493e`。本機完整回歸跑在文件 commit `6644fe9`，自然 `END ALL exit=0`，啟動器讀到的實際 ExitCode 是 0（JUnit 1164 案 0 failure，default 166、M5 60、M6 35 等全部 PASS）。
+  - 同 SHA CI 43898284110（head `6644fe9`）：M7 Ubuntu FAIL，原判保留、不 rerun；其他四個 job success。
+    - 失敗案例：`m7homespikegametests.checkpoint_capability_remains_rejected_on_ubuntu`，`NativeEntry` 寫死了世界數。T3 authority 測試物化的 U 留在同一個 server，污染了計數。
+    - 本機只跑 Windows，這條 Ubuntu 專用路徑只有 CI 會跑。
+  - fix3 `6944236`：只改 `M2CorridorGameTests.java`，改成比對 fixture 建立時的世界數。一席審查 C0/I0/M0。
+  - CI 43907694743（head `6944236`）attempt 1：五個 required job（build、windows-native、m6-native、M7 Windows、M7 Ubuntu）全部 success。
+- **T4 切成兩段**（controller 的派工安排，不是使用者裁示）：
+  - Phase A：正式 owner（`HomeRootFence`、`HomeClosure`）、JUnit `M7CloseMatrixTest` 與 GameTest `M7HomeClosureGameTests`。
+  - Phase B：plan Task 4 中 Phase A 還沒完成的全部核取項，至少包括：
+    - Windows 原生 39 列 `close-{ordinary|sealed|passable}-{cut}`，逐 phase 核兩側門格、region、識別、active 與歷史 hash、資源、零移動；
+    - `receipt-existing` 鏈，以及 checkpoint unknown、跨檔不符、已存 target 異值、成功後玩家主動關門；
+    - `restart-enable-before-entry` 跨 JVM 鏈，含 DORMANT、同 tick 復啟、部分 Crossed、stop 已落後 A 修復不復活、普通 LOW 無 latch，以及對已有 READY、沒有已確認 root 的 startup 只走 RESTART_CLOSED、不等待 A FULL；
+    - 超過 4096 個 SID；
+    - 日期解析：plan 的條件式 TODO，只有 runner 恢復使用該 `ParseExact` 呼叫時才做，屆時 format 集合要寫成 `[string[]]`（或依 M6 原解析做法，不新造框架），並補 3／6／9 位小數秒正例與錯格式負例；
+    - 上述全鏈與 SelfTest 的 focused 驗證。
+
+    runner 沿用 M6 probe-common。Phase B 再細分成 B0（N1、N2）、B1（runner 與 39 列）、B2（其餘鏈、>4096、日期、CI 分片與 run-all 接線），也是 controller 的派工安排。
+  - 兩段都完成，再跑完整回歸、push、同 SHA CI 全綠，T4 才結案。
+- **Phase A 首輪**（`550f12e`，未完成）：T3 的 `only_exact_complete_projection_resolves` 在收尾後仍 busy，implementer 依同 fixture 止損停下。
+- **使用者裁示**（2026-11-17，AskUserQuestion，題目與選項由 controller 撰寫；SDD 原文檔 `user-t4a-fixture-ruling-20261117.md`）：
+  - 第 1 題「T3 那個已止損的測試（收尾後「這座艙仍在使用中」）要怎麼處理？」，使用者選「授權一次有界調查＋修正（建議）」。選項說明原文：「允許在這個測試加只印資料的診斷（測試碼，不改正式程式），跑一次查出「收尾後是誰還佔著這座艙」，再依證據修正一次。可能是 T4 正式程式漏釋放，也可能是測試時序。修正後同一個測試再有任何非預期失敗，就再停下來問你。」
+  - 第 2 題「spec 的 ENTRY_STOPPED 列了 DISABLED 訊號，但 B 的投影艙沒有停用開關，這個訊號不會發生。怎麼定？」，使用者選「當成不會發生，寫成勘誤（建議）」。選項說明原文：「記錄格式保留這個值（舊資料相容），但正式程式不會產生它；B 端的停止只有「斷電」與「結構失效」兩種。在 spec 加一條勘誤說明。」
+  - 第 2 題已寫成 spec v1.4 的「T4 ENTRY_STOPPED DISABLED 勘誤」節。
+- **fix1**（`bd84b8f..a2c3222`）：
+  - 一次診斷查出根因：原版 `GameTestState.tickTests` 走訪 fastutil 表時先執行回呼、再移除項目。回呼裡大量排入 `runAtTick` 會讓表格 rehash，同一個回呼因此重跑。這是測試時序問題，production 沒有漏釋放。
+    - 這個時序問題是 `550f12e` 改寫 T3 測試時引入的：第二趟在第一趟的收尾回呼裡同步啟動，一次排入 201 筆 `runAtTick`。
+    - 修法 `bd84b8f`：改成逐 tick 排程。之後除了預定要被 fix1 M8 mutation 殺掉的那一次，其餘 fix1／fix2 gate 中這個案例都 PASS，沒有再出現非預期失敗。
+  - 其他修正：
+    - `86ed60b`：DISABLED 一律拒絕；
+    - `62beae7`：補 6 個 GameTest；T3 fixture 開頭加上前提 `requireCandidateStores`。後者是回歸途中發現的既有順序相依（新增 batch 後執行順序改變），屬一般測試修正，不在第 1 題授權範圍內；
+    - `a2c3222`：排隊案收尾時補做寫出。
+- **獨立審查**（spec 與 quality 同席，`6944236..a2c3222`）：spec ❌、quality Needs fixes，C0/I1/M8。
+  - I-1：HOME 回程的 roll-forward 寫出失敗後，沒有人負責重試。後果有三個：
+    - 停用一直 pending；
+    - 全伺服器的 `admitHome` 被擋；
+    - 開著 `/save-off` 時，autosave 也不會補寫。
+
+    原本的排隊 GameTest 用手動 flush，掩蓋了這個問題。
+  - M1–M5 在 fix2 修正，分別是：log marker、WARN 附 cause、首次排隊記 log、寫入放進 session operation guard、`SERVER_STARTING` 先放入未就緒的 fence。M6–M8 交給後續 task，見下方「帶到後續」。
+- **fix2**（`af8a899` production、`cc92b66` 測試）：
+  - I-1：`SessionRecoveryManager` 成為 HOME roll-forward 唯一的重試寫出者，沿用同一個 journal 退避（200→12000 ticks）。
+  - M4：三個入口與根事件的寫入都包進 `exclusiveOperation`。
+  - M5：fence 在 `SERVER_STARTING` 就先放入，開服掃描完成前一律拒絕 enable。
+  - 證據：RED 21 案恰好 5 案失敗，符合預測；5 個 direct mutation 全部 KILLED，並逐位元還原。final M7 gate 為 GameTest 21/21、JUnit 35/35，另 8 個既有 JUnit 類別 71 案全部通過。
+  - 途中 GREEN 第一次有非預期失敗，失敗的是 `root_event_queues_behind_unconfirmed_journal`：新寫的等待條件觀察不到中間狀態，production 行為是正確的。原件保留，修一次後通過。這不是第 1 題止損所指的 T3 fixture。
+- **增量審查**（`a2c3222..cc92b66`）：spec ✅、quality Approved，C0/I0/M2，I-1 與 M1–M5 都確認 ADDRESSED。新增兩項 Minor 排進 Phase B 的 Step 0：
+  - N1：呼叫端自己持有同 SID 的 guard 時，`onParticipantClose` 和 `onEntryStopped` 會靜默拒絕。
+  - N2：HOME 重試的退避沒有測試守住（spec §6 :186）。
+- **帶到後續**：
+  - 交 T5／T6：
+    - Phase A 審查 M6：選定後重驗 A 時，要呼叫 `checkRoot` 與 `onRootEvent(INVALID_STRUCTURE/IDENTITY_MISMATCH)`。目前沒有 production 呼叫端。
+    - 呼叫端限制：呼叫端自己持有同 SID 的 guard 時，參與者關門與 ENTRY_STOPPED 會被拒絕，根事件則改排隊。T6 的 B 門攔截不得包在同 SID 的 guard 內，GameTest 要走真實的門路徑驅動。`onEntryStopped` 的 LOW／INVALID 正式 mint 路徑目前沒有 GameTest 驅動，也沒有 mutation，只有 DISABLED 拒絕案。
+  - 測試隔離殘留（Phase A 審查 M7）：每個 Projection 案例都物化 U 而且不卸載。後續測試不得斷言絕對世界數。
+  - 交 T7（Phase A 審查 M8）：`ChamberMaintenanceInteraction` 的提示是 literal 字串，要改成 translatable key。
+  - 範圍外殘留：candidate 檔不健康時入場靜默拒絕，這是 M4 時期 `3d093b50` 的程式碼。建議日後加一則去重的 WARN。
+  - T3 帶來的 N2-M3（`OriginDoors` 套用時看不到 HOME BUSY）：Phase A 已修，套用前會再查一次 presence，具名 RED 是 `N2_M3_BUSY_DOOR_REWRITTEN`。
+  - T4 完整回歸與 CI 要特別確認兩件事（審查留給 controller 的未驗項）：
+    - 共用 setter（`setEnabled`、`removeOrigin`）語意改變後，舊流程沒有回歸；
+    - 新的 testmod 入口 `M7HomeFenceStartupProbe` 不會進 release 或 main-only，要看 artifact oracle 與 main-only gate。
+- **計數**：
+  - AccessDenied 重跑額度 1/1 已用完。
+  - 完整回歸啟動器歷史 2/3，下一次非預期的工具失敗就停。
+  - T3 fixture 依第 1 題裁示：修正後同一個測試再有任何非預期失敗，就停下來問使用者。
+- **下一步**：Phase B，先做 Step 0（N1、N2）。
+
+## 歷史：Claude 接手，T3 fix2 審查清零，待完整回歸（2026-11-16）
 
 - **接手**：使用者原話「codex冷卻中你繼續實作」。controller 改由 Claude 擔任，依 [T3 交接](../handoffs/2026-11-14-m7-t3-handoff.md) 續作，沒有重派 T1、T2。
   - 接手時核實：HEAD `a697eba`，tracked clean，比 origin（`9358368`）多 9 個 commit，沒有 java 行程。
@@ -23,7 +91,7 @@
   - 完整回歸的啟動器歷史為 2/3，下一次非預期的工具失敗就停。
   - 通過後正常 push，等同 SHA 五個 required CI 都成功，T3 才算結案。
 
-## 前一節：使用者要求收尾交接；T3 full兩JUnit FAIL未修（2026-11-14）
+## 歷史：使用者要求收尾交接；T3 full兩JUnit FAIL未修（2026-11-14）
 
 真user本輪原文「準備收尾交接」（primary root轉述，S/user-handoff-steering-20261114.md）；本輪停止新fix/runtime/full/push/T4，沒有取消整個既授M7範圍。精確交接：`docs/handoffs/2026-11-14-m7-t3-handoff.md`，接手先讀此檔，不沿下面歷史「現在進full」文字自行恢復。
 

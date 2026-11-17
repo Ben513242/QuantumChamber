@@ -119,7 +119,21 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-16 最新：Claude 接手續作 T3（使用者原話「codex冷卻中你繼續實作」）。fix2 的 production pin `3aa493e` 審查清零（N2 C0/I0/M3，增量 C0/I0/M0），下一步在本次文件 commit 上跑完整回歸。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「Claude 接手，T3 fix2 審查清零」節，再讀 `docs/handoffs/2026-11-14-m7-t3-handoff.md`。
+**2026-11-17 最新：T3 CLOSED；T4 Phase A 審查清零，下一步 Phase B。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「T3 結案；T4 Phase A 實作、審查清零」節。
+- T3：production pin `3aa493e`。本機 full 在 `6644fe9` END ALL 0。fix3 `6944236` 只改測試，同 SHA CI 43907694743 五個 required job 全部 success。
+- T4 Phase A：code 停在 `cc92b66`（`6944236..cc92b66`）。Phase A／B 是 controller 的派工切分，不是使用者裁示，Phase B 的內容見 note。
+  - 增量審查 C0/I0/M2，兩項 Minor（N1、N2）排進 Phase B 的 Step 0。
+  - 還沒跑完整回歸，T4 要等 Phase B 完成後一起跑。完整回歸與 CI 要特別確認：共用 setter（`setEnabled`、`removeOrigin`）沒有回歸；新 testmod 入口 `M7HomeFenceStartupProbe` 不進 release 或 main-only。
+- 使用者 2026-11-17 有兩項裁示，原文見 note：
+  - T3 fixture「授權一次有界調查＋修正（建議）」；
+  - DISABLED「當成不會發生，寫成勘誤（建議）」，已寫成 spec v1.4 的勘誤。
+- 計數保留：
+  - AccessDenied 1/1 已用完；
+  - 完整回歸啟動器歷史 2/3；
+  - T3 fixture 修正後再有任何非預期失敗就停下來問使用者。
+- T4 要 Phase B 完成、完整回歸、push、同 SHA 五個 required CI 全綠才結案。main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-16：Claude 接手續作 T3（使用者原話「codex冷卻中你繼續實作」）。fix2 的 production pin `3aa493e` 審查清零（N2 C0/I0/M3，增量 C0/I0/M0），下一步在本次文件 commit 上跑完整回歸。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「Claude 接手，T3 fix2 審查清零」節，再讀 `docs/handoffs/2026-11-14-m7-t3-handoff.md`。
 - fix2 修完整回歸的兩個 JUnit 失敗：
   - BUSY 不交接的測試期待；
   - `HomeRootTickets` 兩則 log 補 `LOG_MARKER`。
