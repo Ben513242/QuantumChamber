@@ -15,8 +15,15 @@ public final class HomeReceiptStore {
         // 呼叫者提供的世界根可經過短名或連結。只以這個已解析的存檔根作為收據邊界。
         this.save = save.toRealPath();
     }
+    /**
+     * 存檔根 {@code saveRoot} 底下 SID {@code sid} 的收據檔路徑（M7 spec §5.3：{@code <save>/data/quantumchamber_home_receipts/<canonical-lowercase-SID>.dat}）。
+     * 純計算：不碰檔案系統、不建立目錄、不解析連結，也不做 reparse 與 containment 檢查（那些由讀寫入口經 {@link #directory} 負責）。收據的讀寫與
+     * journal 的收據 ERROR（{@code SessionRecoveryState}）共用這一個來源，兩處不會各自組路徑（T4 B2b-2，P2-M5 第 4 點）。
+     */
+    static Path receiptPath(Path saveRoot, UUID sid) { return receiptDirectory(saveRoot).resolve(sid+".dat"); }
+    private static Path receiptDirectory(Path saveRoot) { return saveRoot.resolve("data").resolve("quantumchamber_home_receipts"); }
     private Path directory(boolean create) throws IOException {
-        Path target=save.resolve("data").resolve("quantumchamber_home_receipts");
+        Path target=receiptDirectory(save);
         Path cursor=save;
         for(Path component:save.relativize(target)) {
             cursor=cursor.resolve(component);
@@ -43,9 +50,8 @@ public final class HomeReceiptStore {
     }
     private record Receipt(NbtCompound wrapped,HomeSessionRecord row) {}
     private Optional<Receipt> read(UUID sid) throws IOException {
-        Path dir;
-        try { dir=directory(false); } catch(NoSuchFileException absent) { return Optional.empty(); }
-        Path target=dir.resolve(sid+".dat");
+        try { directory(false); } catch(NoSuchFileException absent) { return Optional.empty(); }
+        Path target=receiptPath(save,sid);
         try { Files.readAttributes(target,BasicFileAttributes.class,LinkOption.NOFOLLOW_LINKS); }
         catch(NoSuchFileException absent) { return Optional.empty(); }
         if(reparse(target) || !target.toRealPath().equals(target)) throw new IOException("收據檔案不是原生普通檔案");
@@ -87,7 +93,7 @@ public final class HomeReceiptStore {
         NbtIo.writeCompressed(expected,temporary);
         try(var channel=FileChannel.open(temporary,StandardOpenOption.WRITE)) { channel.force(true); }
         if(!SessionJournalStore.readReceipt(temporary).equals(expected)) throw new IOException("收據寫前驗讀不符");
-        var target=dir.resolve(frozen.sessionUuid()+".dat");
+        var target=receiptPath(save,frozen.sessionUuid());
         try { Files.createLink(target,temporary); }
         catch(FileAlreadyExistsException raced) { /* 同 SID 競爭只驗實際贏家。 */ }
         verify(read(frozen.sessionUuid()),expected);

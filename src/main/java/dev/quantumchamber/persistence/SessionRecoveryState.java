@@ -215,7 +215,8 @@ public final class SessionRecoveryState extends PersistentState {
     // 「讀回已確認之後才出現的例外」最近一次 WARN 的去重鍵（FailureText.dedupeKey），以 session 為單位；該 session 下一次乾淨的
     // 寫出（讀回確認、沒有例外）或終局成功時移除。
     private final Map<UUID, String> confirmedFailureWarnings = new HashMap<>();
-    // T4 P1／P2（P1-M1）：寫出前核對到收據不符（或無法核對）而已記過管理員 ERROR 的類別；每個 instance 每個 SID 的每一類只記一次。
+    // T4 P1／P2（P1-M1）：寫出前核對到收據不符（或無法核對）而已記過管理員 ERROR 的類別；同一段不符期間每個 SID 的每一類只記一次。
+    // T4 B2b-2（B2b1-M2）：這個 SID 的收據核對通過時清除它的鍵（見 clearReceiptReports），之後再發生仍會再記。
     private final java.util.Set<ReceiptReport> receiptMismatchReported = new HashSet<>();
     // T4 P1：目前這次 save 是否來自 checked flush（{@link #flush}）。不是時就是原版的原生存檔（autosave、/save-all、停服）。
     private boolean checkedWrite;
@@ -1165,7 +1166,8 @@ public final class SessionRecoveryState extends PersistentState {
      * <li>本次有變動的列（不等於 {@link #flushed}，或 target 不是上一次 checked 讀回的同一個檔）與收據不符時，回傳擋下這次寫出的原因：
      *     寫出的 bytes 永不含「本次有變動、而且與收據不符」的列。</li>
      * <li>未變動、已在 target 上的列與收據不符時不擋：照原樣重寫不會擴大不一致，其他 SID 的進度照常落盤。</li>
-     * <li>兩種情形都不改那一列與收據原件（熱列仍在，同艙仍占用），記管理員 ERROR（{@link #reportReceiptMismatch}；每個 instance 每個 SID 的每一類只記一次）。</li>
+     * <li>兩種情形都不改那一列與收據原件（熱列仍在，同艙仍占用），記管理員 ERROR（{@link #reportReceiptMismatch}；同一段不符期間每個 SID 的每一類只記一次，
+     *     這個 SID 的核對通過時清除，見 {@link #clearReceiptReports}）。</li>
      * </ul>
      * 無法建立收據 store（存檔根無法解析）時，每一列都當成無法核對處理。
      * @return 擋下寫出的原因；可以寫出時為 null
@@ -1182,7 +1184,7 @@ public final class SessionRecoveryState extends PersistentState {
         for (var row : rows.values()) {
             Exception failure = unavailable;
             if (store != null) {
-                try { store.verifyActive(row); continue; }
+                try { store.verifyActive(row); clearReceiptReports(row.sessionUuid()); continue; }
                 catch (IOException | RuntimeException mismatch) { failure = mismatch; }
             }
             var sid = row.sessionUuid();
@@ -1197,6 +1199,14 @@ public final class SessionRecoveryState extends PersistentState {
 
     /** 收據 ERROR 的去重鍵（T4 P2，P1-M1）：SID 加類別——收據讀得出而內容不符（{@code mismatch}）或無法核對、這一列未變動或本次有變動。 */
     private record ReceiptReport(UUID sid, boolean mismatch, boolean unchanged) {}
+
+    /**
+     * T4 B2b-2（B2b1-M2）：這個 SID 的收據核對通過（問題真的解除，例如收據已還原或移走）時，清除它全部類別的去重鍵；之後同一個 SID 再出問題會再記一則。
+     * 不以「寫出成功」清除：未變動的不符列每次存檔都照原樣寫出成功，那樣會每次存檔都重記。不符期間核對一直失敗，不會清除，所以仍只記一則；只清通過核對的那個 SID。
+     */
+    private void clearReceiptReports(UUID sid) {
+        if (!receiptMismatchReported.isEmpty()) receiptMismatchReported.removeIf(report -> report.sid().equals(sid));
+    }
 
     /**
      * {@link #receiptHold} 核對失敗之後才分類（不在成功路徑多讀檔）：再以 {@link HomeReceiptStore#lookup} 讀一次。讀得出、而且不是這一列的結案快照
@@ -1214,12 +1224,13 @@ public final class SessionRecoveryState extends PersistentState {
     }
 
     /**
-     * {@link #receiptHold} 的管理員 ERROR：帶 {@code CollapseService.LOG_MARKER} 與 {@code session=<SID>}，附收據檔路徑、處理方式與 cause；每個 instance 每個 SID 的
-     * 每一類（{@link ReceiptReport}）只記一次。本次有變動的那一類會擋下整份 journal 的寫出，訊息註明全服 journal 寫入已暫停。
+     * {@link #receiptHold} 的管理員 ERROR：帶 {@code CollapseService.LOG_MARKER} 與 {@code session=<SID>}，附收據檔路徑（{@link HomeReceiptStore#receiptPath}）、
+     * 處理方式與 cause；同一段不符期間每個 SID 的每一類（{@link ReceiptReport}）只記一次，這個 SID 的核對通過時清除（T4 B2b-2，B2b1-M2）。
+     * 本次有變動的那一類會擋下整份 journal 的寫出，訊息註明全服 journal 寫入已暫停。
      */
     private void reportReceiptMismatch(ReceiptReport report, Path saveRoot, Exception failure) {
         if (!receiptMismatchReported.add(report)) return;
-        var receipt = saveRoot.resolve("data").resolve("quantumchamber_home_receipts").resolve(report.sid() + ".dat").toAbsolutePath().normalize();
+        var receipt = HomeReceiptStore.receiptPath(saveRoot, report.sid()).toAbsolutePath().normalize();
         String kind = report.mismatch() ? "與熱列不符（外部竄改、損壞或備份錯拼）"
                 : "無法讀取或解析（例如檔案被其他程式鎖定、權限不足、路徑不是一般檔案、內容無法解析，或與這一列只差 DataVersion 等格式；"
                         + "可能只是讀取問題，也可能是損壞或其他版本寫出的收據）";
