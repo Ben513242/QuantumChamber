@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "portable": {
     "junit": [
       "dev.quantumchamber.persistence.M7BudgetSpikeTest.legalHomeAtAndBeyondTrackerLimit",
@@ -49,18 +49,7 @@
       "dev.quantumchamber.persistence.M7NativeSaveFailureTest.changedRowErrorsSeparateUnreadableFromMismatchAndSayWritesArePaused",
       "dev.quantumchamber.persistence.M7NativeSaveFailureTest.nativeErrorIsReportedAgainAfterASuccessfulWrite",
       "dev.quantumchamber.persistence.M7NativeSaveFailureTest.prepareFailureDuringNativeSaveSaysPrepareAndKeepsDirty",
-      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.receiptErrorIsReportedAgainAfterTheReceiptIsFixed",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock01Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock02Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock03Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock04Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock05Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock06Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock07Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock08Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock09Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock10Of10",
-      "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan"
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.receiptErrorIsReportedAgainAfterTheReceiptIsFixed"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",
@@ -152,5 +141,28 @@
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.checkpoint_capability_remains_rejected_on_ubuntu"
     ]
+  },
+  "scale": {
+    "portable": {
+      "junit": [
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock01Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock02Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock03Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock04Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock05Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock06Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock07Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock08Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock09Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.tripsBlock10Of10",
+        "dev.quantumchamber.persistence.M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan"
+      ]
+    },
+    "windows": {
+      "junit": []
+    },
+    "ubuntu": {
+      "junit": []
+    }
   }
 }

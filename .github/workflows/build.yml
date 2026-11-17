@@ -43,6 +43,16 @@ jobs:
         run: |
           # m7_home：同一份不可覆寫原XML/JUnit/log/JAR，不借另一root。
           & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
+      - name: 執行 M7 規模測試
+        shell: pwsh
+        run: |
+          # T4 B2b-5（使用者 2026-11-18 裁示）：M7HomeHistoryScaleTest 獨立一段，自己的 Gradle 呼叫與 root；Windows 經 Invoke-Gradle 總時限 600 秒、idle 90 秒。
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Scale -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-scale
+      - name: 確認 M7 規模測試精確集合
+        shell: pwsh
+        run: |
+          # m7_scale：同一份不可覆寫的原 JUnit XML，不借另一 root。
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Scale -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-scale
       - name: 上傳 M7 定向證據
         if: always()
         uses: actions/upload-artifact@v4
@@ -51,6 +61,14 @@ jobs:
           include-hidden-files: true
           path: |
             .superpowers/m7-own/**
+      - name: 上傳 M7 規模測試證據
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m7-scale-${{ matrix.platform }}
+          include-hidden-files: true
+          path: |
+            .superpowers/m7-scale/**
 
   m6-native:
     runs-on: windows-latest

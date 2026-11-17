@@ -275,6 +275,11 @@ Step 'm7-home' {
     & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Gradle $Gradle -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $startHead
     & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -SelfTest -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $startHead
 }
+# M7 T4 B2b-5（使用者 2026-11-18 裁示「規模測試獨立一段」）：M7HomeHistoryScaleTest 不在 m7-home 內，緊接著以自己的 Gradle 呼叫（總時限 600 秒、idle 90 秒）與 root 執行並自測。
+Step 'm7-scale' {
+    & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment Scale -Gradle $Gradle -OutputRoot (Join-Path $runRoot 'm7-scale') -ExpectedHead $startHead
+    & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment Scale -VerifyOnly -SelfTest -OutputRoot (Join-Path $runRoot 'm7-scale') -ExpectedHead $startHead
+}
 Step 'main' { & (Join-Path $PSScriptRoot 'm6-ci-main-only.ps1') -EvidenceRoot $runRoot -Gradle $Gradle -ExpectedHead $startHead }
 Step 'main-oracle' {
     $main=One 'gate-main-only-'
@@ -565,6 +570,9 @@ Step 'summary' {
         Tee-Object -FilePath (Join-Path $runRoot 'm6-native-verify.log')
     $m7Fresh=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_home'})
     if($m7Fresh.Count -ne 1 -or $m7Fresh[0].head -cne $head -or $m7Fresh[0].status -cne 'PASS'){throw 'M7_FINAL_PROOF'}
+    # T4 B2b-5：唯讀重驗 m7-scale step 的同一個 root（不再跑負控），結果寫進 summary.json 的 m7HomeScale。
+    $m7Scale=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment Scale -VerifyOnly -OutputRoot (Join-Path $runRoot 'm7-scale') -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_scale'})
+    if($m7Scale.Count -ne 1 -or $m7Scale[0].head -cne $head -or $m7Scale[0].status -cne 'PASS' -or -not @($m7Scale[0].junitCases).Count){throw 'M7_SCALE_FINAL_PROOF'}
     $m7Native=Get-M7HomeNativeProof $head
     $m7LiveHead=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
     if($LASTEXITCODE -ne 0 -or $m7LiveHead -cne $head -or $m7LiveHead -cne $startHead){throw 'M7_HEAD_CHANGED'}
@@ -575,10 +583,11 @@ Step 'summary' {
         m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count}
         m7Home=$m7Fresh[0]
         m7HomeNative=$m7Native
+        m7HomeScale=$m7Scale[0]
         m6Native=[ordered]@{summary=$nativeFile;sha256=Hash $nativeFile;mode='PER_CHAIN';phaseCount=$native.phaseCount;chains=$native.chains;functionalAssertionsRemainRed=$true}
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;normal=$normal;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}
     $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runRoot 'summary.json') -Encoding utf8
-    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) normal=$($normalCases.Count)/13 perTest=$fullReceipts+$normalReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:$(@($native.phases | Where-Object expectedMode -CEQ 'DIAGNOSTIC').Count),FUNCTIONAL:$(@($native.phases | Where-Object expectedMode -CEQ 'FUNCTIONAL').Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green']) m7native=$($m7Native.status):$($m7Native.rows)"
+    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) normal=$($normalCases.Count)/13 perTest=$fullReceipts+$normalReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:$(@($native.phases | Where-Object expectedMode -CEQ 'DIAGNOSTIC').Count),FUNCTIONAL:$(@($native.phases | Where-Object expectedMode -CEQ 'FUNCTIONAL').Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green']) m7native=$($m7Native.status):$($m7Native.rows) m7scale=$($m7Scale[0].status):$(@($m7Scale[0].junitCases).Count)"
 }
 Say "END ALL exit=0 HEAD=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())"

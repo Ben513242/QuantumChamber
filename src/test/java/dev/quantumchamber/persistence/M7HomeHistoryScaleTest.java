@@ -36,7 +36,8 @@ import org.junit.jupiter.api.io.TempDir;
  * CLOSE 列以 journal fixture 放進熱 journal，B 門、原生 checkpoint 與 proof 的部分由 M7 GameTest 與 Windows 原生 46 列負責。
  * <p>分段執行（T4 B2b-3，I-1）：{@value #TRIPS} 趟依序分成 {@value #BLOCKS} 個測試方法（每段 {@value #PER_BLOCK} 趟），共用同一個存檔目錄、probe、store
  * 與累積狀態（{@link TestInstance.Lifecycle#PER_CLASS} 加上 static {@link TempDir}），最後一個方法做 >4096 之後的 admission、抽樣讀回與磁碟計數。
- * 拆段只為了讓 Gradle testLogging 在段與段之間印出事件列，M7 gate 的「90 秒無輸出就判卡住」看得到進度；每一趟的步驟與斷言都和拆段前相同，
+ * 拆段只為了讓 Gradle testLogging 在段與段之間印出事件列，「90 秒無輸出就判卡住」看得到進度（T4 B2b-5 起本類別從 M7 gate 拆出，在獨立的 M7 規模段
+ * 執行，同樣是總時限 600 秒、idle 90 秒）；每一趟的步驟與斷言都和拆段前相同，
  * 也沒有減少趟數。每段開頭核對前面各段的趟數全部完成（{@code BLOCK_ORDER}），最後一個方法也先核對 {@value #TRIPS} 趟都完成：某一趟失敗之後，
  * 之後的各段與最後一段都以具名錯因失敗，不會在只完成一部分的狀態上通過。只跑其中一個方法同樣會以 {@code BLOCK_ORDER} 失敗。
  * <p>strict 趟抽樣（T4 B2b-4，B2b3-M1：M7 gate 的 600 秒總時限要留給後續 task）：admission（同名檔查詢與同卷探測）、CLOSE 列以正式 writer
@@ -104,7 +105,7 @@ class M7HomeHistoryScaleTest {
 
     private static String sha256(byte[] bytes) throws Exception { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
 
-    // 第 1～10 段：每段 PER_BLOCK 趟，依序執行（@Order），共用同一份累積狀態；方法名稱同步列在 m7-inventory.json 的 portable.junit。
+    // 第 1～10 段：每段 PER_BLOCK 趟，依序執行（@Order），共用同一份累積狀態；方法名稱同步列在 m7-inventory.json 的 scale.portable.junit（M7 規模段的 exact 集合）。
     @Order(1) @Test void tripsBlock01Of10() throws Exception { runBlock(0); }
     @Order(2) @Test void tripsBlock02Of10() throws Exception { runBlock(1); }
     @Order(3) @Test void tripsBlock03Of10() throws Exception { runBlock(2); }

@@ -14,13 +14,15 @@
 #   -Gradle        gradle.bat／gradlew.bat；預設 Gradle 8.8 wrapper dist，不存在時用 <repo>/gradlew.bat
 # M3 probe 的 evidence owner 由 testmod ProbeEvidenceOwner 固定為 <repo>/.superpowers/sdd/2026-09-21-m4-candidate-doors，不受 -EvidenceRoot 影響。
 param(
-    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','M4NormalGameTest','M5GameTest','Windows','M3','M6Compile','M6JUnit','M6GameTest','M7GameTest','M7Runtime')][string]$Mode,
+    [Parameter(Mandatory)][ValidateSet('Inventory','Main','GameTest','Full','Legacy','M4NormalGameTest','M5GameTest','Windows','M3','M6Compile','M6JUnit','M6GameTest','M7GameTest','M7Runtime','M7ScaleTest','M7ScaleRuntime')][string]$Mode,
     [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string]$Label='run',
     [ValidateSet('','universe','transfer')][string]$Only='',
     [string]$EvidenceRoot='',
     [string]$TestClass='',
     [string]$Batch='',
     [string]$M7Nonce='',
+    # M7Runtime／M7ScaleRuntime 的 JUnit class（T4 B2b-5）：由 m7-ci-gametest.ps1 依 m7-inventory.json 該段的 exact 集合傳入。
+    [string[]]$M7Tests=@(),
     [string]$Gradle=''
 )
 $ErrorActionPreference='Stop'
@@ -134,7 +136,7 @@ function Copy-Build([string]$dest) {
 function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[string]$stopMode='',[int]$timeout=600,[ValidateSet('minecraft','junit','compile-only')][string]$runtimeLogMode='minecraft',[ValidateRange(1,3600)][int]$idleSeconds=90) {
     # 只有明確不啟動 Minecraft 的 JUnit／編譯 invocation 可以豁免當次日誌；不可拿它略過任何 run task。
     if($runtimeLogMode -cne 'minecraft' -and @($tasks | Where-Object {($_ -split ':')[-1] -cmatch '^run'}).Count){throw '日誌不適用模式不可包含 run task'}
-    $m6Mode=$Mode -in @('M6Compile','M6JUnit','M6GameTest','M7Runtime')
+    $m6Mode=$Mode -in @('M6Compile','M6JUnit','M6GameTest','M7Runtime','M7ScaleRuntime')
     $m7Handles=@{}
     if($Mode -ceq 'M7Runtime'){
         $ownerTokens=$null;$ownerErrors=$null;$ownerAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'probe-common.ps1'),[ref]$ownerTokens,[ref]$ownerErrors);$ownerDef=@($ownerAst.FindAll({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-OwnedIdentity'},$false));if($ownerErrors.Count -or $ownerDef.Count -ne 1){throw 'M7_OWNER_HELPER'};Invoke-Expression $ownerDef[0].Extent.Text
@@ -266,6 +268,12 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
     return $exit
 }
 function Distinct-Count($items) { $set=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal); foreach($item in $items){[void]$set.Add($item)}; return $set.Count }
+# M7 T4 B2b-5：-M7Tests 轉成 Gradle 的 --tests 篩選；只接受不重複的 M7 JUnit class 全名（exact 集合本身由 m7-ci-gametest.ps1 核對）。
+function M7-TestFilter {
+    $classes=@($M7Tests)
+    if(-not $classes.Count -or (Distinct-Count $classes) -ne $classes.Count -or @($classes | Where-Object {$_ -cnotmatch '^dev\.quantumchamber\.[a-z0-9_.]+\.M7[A-Za-z0-9]*Test$'}).Count){throw 'M7_TEST_FILTER：-M7Tests 必須是不重複的 M7 JUnit class 全名'}
+    return @($classes | ForEach-Object {'--tests';$_})
+}
 # plan 決策 6 的 batch 前綴矩陣（與 testmod M4LegacyGameTestFilterMixin 相同）：m4_legacy_runtime 屬 legacy run，前綴 m5_universe 屬 M5 run，其餘屬 default run。
 function Batch-Scope([string]$batch) { if($batch.StartsWith('m7_home',[StringComparison]::Ordinal)){return 'm7_home'}; if($batch.StartsWith('m4_normal_',[StringComparison]::Ordinal)){return 'normal'}; if($batch -ceq 'm4_legacy_runtime'){return 'legacy'}; if($batch.StartsWith('m5_universe',[StringComparison]::Ordinal)){return 'm5'}; if($batch.StartsWith('m6_universe',[StringComparison]::Ordinal)){return 'm6'}; return 'default' }
 # testmod 原始碼宣告的全部 GameTest：XML testcase 名稱（class 小寫＋'.'＋方法名稱）、batchId（沒寫時是原版預設 defaultBatch）與所屬 run。
@@ -464,10 +472,18 @@ try {
         'M4NormalGameTest' {Fresh-Game $false 'normal'}
         'M5GameTest' {Fresh-Game $false 'm5'}
         'M7GameTest' { & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform $(if($IsWindows){'Windows'}else{'Ubuntu'}) -Gradle $Gradle -OutputRoot (Join-Path $gate 'm7'); if($LASTEXITCODE -ne 0){throw 'M7_GATE_FAILED'} }
+        # T4 B2b-5（使用者 2026-11-18 裁示）：規模測試獨立一段，自己的 Gradle 呼叫與 OutputRoot；M7GameTest 不再執行它。
+        'M7ScaleTest' { & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform $(if($IsWindows){'Windows'}else{'Ubuntu'}) -Segment Scale -Gradle $Gradle -OutputRoot (Join-Path $gate 'm7-scale'); if($LASTEXITCODE -ne 0){throw 'M7_SCALE_GATE_FAILED'} }
         'M7Runtime' {
             if($M7Nonce -cnotmatch '^[0-9a-f]{32}$'){throw 'M7_NONCE'}
             $runtime=Join-Path $repo "run/gametest-m7-$M7Nonce";Check-Path $runtime|Out-Null;if(Test-Path $runtime){throw 'M7_FRESH_ROOT_REQUIRED'}
-            try{$tasks=@('test','--tests','dev.quantumchamber.*.M7*Test','runGameTestM7','remapJar','remapSourcesJar',"-Pm7GameNonce=$M7Nonce","-Pm7Head=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())",'--rerun-tasks');$exit=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $runtime '' 600)[-1];if($exit -ne 0){throw "M7_RUNTIME_EXIT $exit"}}
+            try{$tasks=@('test')+@(M7-TestFilter)+@('runGameTestM7','remapJar','remapSourcesJar',"-Pm7GameNonce=$M7Nonce","-Pm7Head=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())",'--rerun-tasks');$exit=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $runtime '' 600)[-1];if($exit -ne 0){throw "M7_RUNTIME_EXIT $exit"}}
+            finally{Copy-Build (Join-Path $gate 'result-build')}
+        }
+        # 只跑 JUnit（不啟動 Minecraft），沿用 Invoke-Gradle 的 M6 deadline：總時限 600 秒、idle 90 秒。
+        'M7ScaleRuntime' {
+            if($M7Nonce){throw 'M7_NONCE：M7ScaleRuntime 沒有 GameTest'}
+            try{$tasks=@('test')+@(M7-TestFilter)+@('--rerun-tasks');$exit=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') (Join-Path $repo 'run/testworlds') -timeout 600 -runtimeLogMode junit -idleSeconds 90)[-1];if($exit -ne 0){throw "M7_SCALE_RUNTIME_EXIT $exit"}}
             finally{Copy-Build (Join-Path $gate 'result-build')}
         }
         'M6GameTest' {Fresh-Game $false 'm6'}

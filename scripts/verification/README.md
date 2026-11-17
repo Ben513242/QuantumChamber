@@ -790,12 +790,12 @@ manifest 在 close 矩陣 39 列之後再接 7 列（B2a 的 5 列、T4 P1 的 `
 
 ### >4096 趟回程歷史（T4 B2b-2，plan Task 4 :265、V10）
 
-`M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（JUnit，`m7-inventory.json` 的 `portable.junit`，兩平台都跑）：4100 個互異 SID 各自經 admission 的同名檔查詢與同卷探測、CLOSE 列進熱 journal、正式 `publishOrVerify` 發布、正式 checked 移除（`terminateHome`，`finishHomeClose` 核過 proof 後的同一個本體）。之後舊 SID（前、中、4096 邊界前後、最後）以「旅程識別碼已有歷史」拒絕重用、新 SID 仍可 admission；抽樣的舊收據 exact 讀回、位元組自發布後不變。禁止全目錄掃描以 instrumentation 證明：收據 store 建在委派預設檔案系統的 `ListingProbe` 上，記錄目錄列舉與碰到別的 SID 收據檔的每一次存取，整段必須都是 0；把 `read` 改成列舉目錄的 mutation 被 `RECEIPT_DIRECTORY_LISTED` 殺掉。不虛增歷史計數：每趟移除後 journal 位元組都回到同一份空 schema6，`data` 底下只有 journal 與收據目錄，收據目錄恰為 4100 個 `<sid>.dat`（事後從磁碟數出）。Windows 本機原本約 46～54 秒（每趟 11～13 ms）；T4 B2b-4 起 admission 與 CLOSE 列落盤／開服 strict 載入只在 strict 趟做（見下方「strict 趟抽樣」），約 28 秒（每趟約 7 ms）。限制：JUnit 拿不到 owner 的 mint／proof，CLOSE 列以 journal fixture 放入；B 門、原生 checkpoint 與 proof 由 M7 GameTest 與原生 46 列負責。
+`M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（JUnit，`m7-inventory.json` 的 `scale.portable.junit`，兩平台都跑；T4 B2b-5 起不在 M7 gate 內，改在獨立的規模段執行，見下方「規模測試獨立一段」）：4100 個互異 SID 各自經 admission 的同名檔查詢與同卷探測、CLOSE 列進熱 journal、正式 `publishOrVerify` 發布、正式 checked 移除（`terminateHome`，`finishHomeClose` 核過 proof 後的同一個本體）。之後舊 SID（前、中、4096 邊界前後、最後）以「旅程識別碼已有歷史」拒絕重用、新 SID 仍可 admission；抽樣的舊收據 exact 讀回、位元組自發布後不變。禁止全目錄掃描以 instrumentation 證明：收據 store 建在委派預設檔案系統的 `ListingProbe` 上，記錄目錄列舉與碰到別的 SID 收據檔的每一次存取，整段必須都是 0；把 `read` 改成列舉目錄的 mutation 被 `RECEIPT_DIRECTORY_LISTED` 殺掉。不虛增歷史計數：每趟移除後 journal 位元組都回到同一份空 schema6，`data` 底下只有 journal 與收據目錄，收據目錄恰為 4100 個 `<sid>.dat`（事後從磁碟數出）。Windows 本機原本約 46～54 秒（每趟 11～13 ms）；T4 B2b-4 起 admission 與 CLOSE 列落盤／開服 strict 載入只在 strict 趟做（見下方「strict 趟抽樣」），約 28 秒（每趟約 7 ms）。限制：JUnit 拿不到 owner 的 mint／proof，CLOSE 列以 journal fixture 放入；B 門、原生 checkpoint 與 proof 由 M7 GameTest 與原生 46 列負責。
 
 分段（T4 B2b-3，I-1）：Gradle 的 `test` task 原本執行期間不輸出任何東西，4100 趟集中在一個方法時，Windows CI 上整段 M7 JUnit 對 `M7Runtime` 的「90 秒無輸出就判卡住」是一段長靜默（CI 44097956125 以 `reason=idle` 失敗，idle 90.03 秒）。現在兩處一起處理，idle 90 秒與總時限 600 秒都不變：
 
 - `build.gradle` 的 `test` 開 `testLogging { events 'started', 'passed', 'failed' }`：Gradle console 即時印出每個案例的開始與結果。不開 `showStandardStreams`，測試自己的 stdout 仍只進 XML。全部 JUnit 的 gate 都會多出這些事件列。
-- `M7HomeHistoryScaleTest` 依序拆成 `tripsBlock01Of10`～`tripsBlock10Of10`（各 410 趟）與最後的 `moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（admission、讀回、磁碟計數），共 11 個方法，`m7-inventory.json` 的 `portable.junit` 同步列出。`@TestInstance(PER_CLASS)`＋`@TestMethodOrder(OrderAnnotation)` 共用同一份累積狀態，存檔目錄是 static `@TempDir`（非 static 的 `@TempDir` 欄位在 JUnit 5.10 每個方法都會重新注入）。拆段本身沒有改每一趟的步驟與斷言、4100 趟的數量（T4 B2b-4 的抽樣見下段）；每段開頭與最後一個方法都先核對前面的趟數全部完成（`BLOCK_ORDER`），一段失敗之後其餘各段都以具名錯因失敗，也不能只單獨跑其中一個方法。本機每段約 5 秒（T4 B2b-4 之後約 2.7 秒）。
+- `M7HomeHistoryScaleTest` 依序拆成 `tripsBlock01Of10`～`tripsBlock10Of10`（各 410 趟）與最後的 `moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（admission、讀回、磁碟計數），共 11 個方法，`m7-inventory.json` 同步列出（T4 B2b-5 起在 `scale.portable.junit`）。`@TestInstance(PER_CLASS)`＋`@TestMethodOrder(OrderAnnotation)` 共用同一份累積狀態，存檔目錄是 static `@TempDir`（非 static 的 `@TempDir` 欄位在 JUnit 5.10 每個方法都會重新注入）。拆段本身沒有改每一趟的步驟與斷言、4100 趟的數量（T4 B2b-4 的抽樣見下段）；每段開頭與最後一個方法都先核對前面的趟數全部完成（`BLOCK_ORDER`），一段失敗之後其餘各段都以具名錯因失敗，也不能只單獨跑其中一個方法。本機每段約 5 秒（T4 B2b-4 之後約 2.7 秒）。
 
 strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立 GameTest」step 耗時 491 秒（加入 scale 測試之前 115～235 秒），600 秒總時限的餘量偏緊。600 秒與 idle 90 秒依使用者裁示都不改，改為降低每趟成本：
 
@@ -803,6 +803,26 @@ strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立
 - 其餘 4014 趟：CLOSE 列以同一份 data NBT 在記憶體 strict decode（`SessionRecoveryState.fromNbt`）放進熱 state，不落盤、不重讀。
 - 不抽樣：4100 趟每一趟都走正式 `publishOrVerify` 與正式 checked 移除 `terminateHome`；每一趟之後的 REMOVED、熱列清空、移除時寫出的 journal 位元組等於空 schema6、列舉 0、碰到別的 SID 0 都照舊；最後一個方法的舊 SID 拒絕、新 admission、exact 讀回、磁碟計數不變，另核 strict 趟恰好全部執行（`STRICT_SAMPLE`）。「熱 journal 檔先有這一列、移除後回到空」的磁碟層級證據只在 strict 趟。
 - 本機（Windows）XML 總計 53.7 秒 → 約 28 秒。下限是正式發布與移除本身（剖析約每趟 6.3 ms，佔原本每趟成本約一半），所以剩下的成本無法再以抽樣降低。
+
+### 規模測試獨立一段（T4 B2b-5）
+
+使用者 2026-11-18 裁示「規模測試獨立一段」：CI 44117707536（`926425c`）的 Windows「執行 M7 獨立 GameTest」step 耗時 494 秒，其中 `M7HomeHistoryScaleTest` 204.5 秒、GameTest 177.4 秒，離 600 秒總時限只剩約 100 秒。`M7HomeHistoryScaleTest` 因此從 M7 gate 拆出、另外執行。M7 gate 與規模段的總時限都是 600 秒、idle 都是 90 秒，數值沒有改；測試內容不變（4100 趟、正式發布與移除、各項斷言、11 段順序）。
+
+- exact 集合（`m7-inventory.json` schema 4）：
+  - M7 gate（`m7-ci-gametest.ps1 -Segment Main`，預設）：`portable.junit`＋`<平台>.junit`（不含規模測試），GameTest 與兩個 JAR 照舊；
+  - 規模段（`-Segment Scale`）：`scale.portable.junit`＋`scale.<平台>.junit`，目前是 `M7HomeHistoryScaleTest` 的 11 個方法，兩平台都跑。
+  - Gradle 以 class 篩選，每一段的 `--tests` 直接由該段集合的 class 產生（不再用 `dev.quantumchamber.*.M7*Test`）。兩段的 class 必須互斥（`M7_JUNIT_SEGMENT_OVERLAP`）；兩段的聯集必須恰等於原始碼中 `M7*Test.java` 宣告的全部 `@Test`（`M7_JUNIT_DECLARATION_SET`）。新增 M7 JUnit 時要放進其中一段，漏列就以這兩個錯因失敗。
+- 執行：
+  - Windows：`m7-ci-gametest.ps1 -Segment Scale` 呼叫 `gates.ps1 -Mode M7ScaleRuntime`，以既有的 `Invoke-Gradle` 執行 `test --tests <規模段 class> --rerun-tasks`。總時限 600 秒、idle 90 秒，與 `M7Runtime` 用同一套 M6 deadline；只跑 JUnit（`runtimeLogMode junit`），不啟動 Minecraft。
+  - Ubuntu：與 Main 段相同，直接呼叫 Gradle（輸出在 `gradle.log`），腳本內沒有 600／90 判定，只受 job 的 90 分鐘限制。
+  - 本機 gate：`gates.ps1 -Mode M7ScaleTest -Label <唯一標籤>`（root 底下的 `m7-scale`）。`-Mode M7GameTest` 不再執行規模測試。
+- 證據與驗證：
+  - 格式與 Main 段相同：`raw/junit/*.xml`、`inputs.json`、`summary.json`。`inputs.json` 新增 `segment`（兩段都有）；`-VerifyOnly` 指定的 `-Segment` 與它不符時是 `M7_INPUT_IDENTITY`。
+  - 規模段只收 JUnit XML（同一個 `TEST-dev.quantumchamber.*.M7*.xml` glob）。有 GameTest XML、runtime log 或 JAR，XML 數量不符，或不是本次寫出的，都是 `M7_NOT_CURRENT`。summary 的 `scope` 是 `m7_scale`，欄位集合必須恰等於重算的結果（`M7_SAVED_SUMMARY`）。
+  - 規模段 SelfTest 的反例：`junit-drop`（`M7_JUNIT_SET`）、`junit-skip`（`M7_JUNIT_NOT_PASS`）、`wrong-segment` 與 `wrong-head`（`M7_INPUT_IDENTITY`）、`hash`（`M7_INPUT_HASH`）、`summary-junit-cases`（`M7_SAVED_JUNIT_CASES`）、`summary-scope` 與 `summary-extra-field`（`M7_SAVED_SUMMARY`），以及 `live-head-mismatch`。Main 段的 SelfTest 也多了 `wrong-segment`。
+  - 輸出行：`M7_SCALE_VERIFIED PASS platform=<平台> junit=11 launched=… HEAD=…`。
+- CI（`m7-validation`，Windows 與 Ubuntu matrix）：在原本的「確認 M7 精確集合與隔離」之後新增「執行 M7 規模測試」（`-Segment Scale -OutputRoot .superpowers/m7-scale`）與「確認 M7 規模測試精確集合」（`-VerifyOnly -SelfTest`），證據另存 artifact `m7-scale-<平台>`（`.superpowers/m7-scale/**`）。原本的 step 與 artifact `m7-validation-<平台>` 沒有改。
+- run-all：`m7-home` 之後緊接新 step `m7-scale`（執行，再 `-VerifyOnly -SelfTest`；root 是 `<run root>/m7-scale`）。`summary` step 在 `M7_FINAL_PROOF` 之後唯讀重驗同一個 root（不跑負控，`M7_SCALE_FINAL_PROOF`），結果寫進 `summary.json` 新增的 `m7HomeScale`（在 `m7HomeNative` 之後），`SUMMARY` 行尾加 `m7scale=PASS:11`。其他 step 與 `summary.json` 既有欄位沒有改；`m7Home` 的 `junitCases` 不再含規模測試，Windows 從 59 個變成 48 個。
 
 ### run-all 與 CI 接線（T4 B2b-3）
 
