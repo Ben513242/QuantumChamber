@@ -302,7 +302,8 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                 } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
                 finally { p.close(); hooks.release(); }
             }, () -> {
-                try { throw new GameTestException("PARTICIPANT_CLOSE_NOT_CLOSED_OUT door=" + p.doorSummary() + " row=" + journal.allSessions().get(sid)); }
+                try { throw new GameTestException("PARTICIPANT_CLOSE_NOT_CLOSED_OUT door=" + p.doorSummary() + " row=" + journal.allSessions().get(sid)
+                        + " thresholds=" + closureThresholds(p, sid)); }
                 finally { p.close(); hooks.release(); }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
@@ -698,6 +699,92 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             dev.quantumchamber.candidate.UniverseDiscoveryState.loadOrCreate(root);
             dev.quantumchamber.candidate.CandidateEntropyState.loadOrCreate(root, false);
         } catch (java.io.IOException failure) { throw new GameTestException("HOME fixture 的 candidate 前提建立失敗：" + failure); }
+    }
+
+    /**
+     * 逾時診斷（CI 43993912938 Ubuntu 的 participant_close_closes_door_when_doorway_clear）：回程終局 owner 在 step 與 converge 中不記 log 就等待的每一個門檻，
+     * 在呼叫當下的值。只讀、不改 production：公開 API 直接呼叫，package 可見或 private 的部分以測試內反射讀取；每一項各自讀，讀不到時記下例外、不中斷。
+     * 只放進失敗訊息，不參與判定。
+     */
+    static String closureThresholds(Projection p, UUID sid) {
+        var server = p.f.server;
+        var out = new LinkedHashMap<String, Object>();
+        diagnose(out, "serverTicks", server::getTicks);
+        diagnose(out, "gameTime", () -> server.getOverworld().getTime());
+        // HomeClosure.tick：journal 不健康時整個 tick 直接 return。
+        diagnose(out, "journalHealthy", () -> { SessionRecoveryState.get(server).requireHealthy(); return true; });
+        var journal = SessionRecoveryState.get(server);
+        Object current = null;
+        try {
+            current = journal.allSessions().get(sid);
+            out.put("current", current instanceof HomeSessionRecord row ? row.state() + "/" + (row.home().closeIntent() instanceof Close k
+                    ? k.reason() + "/" + k.doorGoal() : row.home().closeIntent().getClass().getSimpleName()) : String.valueOf(current));
+        } catch (RuntimeException failure) { out.put("current", "ERROR:" + failure); }
+        // step：settled（current＝flushed、非 roll-forward 待確認、沒有送出中的 attempt 帶這個 SID、未隔離）、根事件排隊、session operation guard。
+        var currentRow = current;
+        diagnose(out, "currentEqualsFlushed", () -> Objects.equals(currentRow, journal.allFlushedSessions().get(sid)));
+        diagnose(out, "rollForwardPending", () -> journal.rollForwardPending(sid));
+        diagnose(out, "pendingAttemptHasSid", () -> journal.pendingSessions().containsKey(sid));
+        diagnose(out, "pendingAttemptSessions", () -> journal.pendingSessions().keySet());
+        diagnose(out, "quarantined", () -> journal.quarantinedSessions().contains(sid));
+        diagnose(out, "queued", () -> invokeStatic("dev.quantumchamber.collapse.HomeRootFence", "queued", new Class<?>[]{MinecraftServer.class, UUID.class}, server, sid));
+        diagnose(out, "operationInProgress", () -> dev.quantumchamber.corridor.CorridorPageManager.forServer(server).operationInProgress(sid));
+        // converge：本 instance 的 context 與這個 SID 的退避、B 端點、exact B 世界、鄰域、門口 entity、原生 checkpoint 前置。
+        diagnose(out, "context", () -> {
+            var context = ((Map<?, ?>) M4CandidateTestAccess.get(HomeClosure.class, "CONTEXTS")).get(server);
+            if (context == null) return "ABSENT";
+            var backoff = (CollapseBackoff) ((Map<?, ?>) M4CandidateTestAccess.get(context, "backoff")).get(sid);
+            return "backoff=" + (backoff == null ? "NONE" : "delay:" + backoff.delayTicks() + ",retryAt:" + backoff.retryAtTick() + ",ready:" + backoff.ready(server.getTicks()))
+                    + " warned=" + ((Map<?, ?>) M4CandidateTestAccess.get(context, "warned")).get(sid)
+                    + " startup=" + ((Set<?>) M4CandidateTestAccess.get(context, "startup")).contains(sid);
+        });
+        diagnose(out, "inspectEntry", () -> HomeEndpointAuthority.inspectEntry(server, p.entry));
+        ServerWorld world = null;
+        try { world = server.getWorld(net.minecraft.registry.RegistryKey.of(net.minecraft.registry.RegistryKeys.WORLD, p.entry.worldKey())); }
+        catch (RuntimeException failure) { out.put("worldLoaded", "ERROR:" + failure); }
+        var entryWorld = world;
+        out.putIfAbsent("worldLoaded", entryWorld != null);
+        diagnose(out, "worldIsFixtureB", () -> entryWorld == p.b);
+        diagnose(out, "activeMatches", () -> entryWorld != null && UniverseLifecycleService.resolveActive(server, p.entry.universeId()).orElse(null) == entryWorld);
+        var target = entryWorld != null ? entryWorld : p.b;
+        diagnose(out, "neighborhoodLoaded", () -> invokeStatic("dev.quantumchamber.collapse.CollapseService", "neighborhoodLoaded",
+                new Class<?>[]{ServerWorld.class, ChamberFrame.class}, target, p.frame));
+        diagnose(out, "doorwayEntitiesLoaded", () -> invokeStatic("dev.quantumchamber.collapse.OriginDoors", "doorwayEntitiesLoaded",
+                new Class<?>[]{ServerWorld.class, ChamberFrame.class}, target, p.frame));
+        diagnose(out, "doorwayOccupied", () -> invokeStatic("dev.quantumchamber.collapse.OriginDoors", "doorwayOccupied",
+                new Class<?>[]{ServerWorld.class, ChamberFrame.class}, target, p.frame));
+        diagnose(out, "checkpoint", () -> {
+            @SuppressWarnings("unchecked")
+            var chunks = (Set<ChunkPos>) invokeStatic("dev.quantumchamber.collapse.PassageTransferPolicy", "homeChunks", new Class<?>[]{ChamberFrame.class}, p.frame);
+            var missing = new ArrayList<String>();
+            for (var pos : chunks) {
+                boolean block = target.getChunkManager().getWorldChunk(pos.x, pos.z) != null, entities = target.isChunkLoaded(pos.toLong());
+                if (!block || !entities) missing.add(pos.x + "," + pos.z + ":block=" + block + ",entities=" + entities);
+            }
+            return "ready=" + ChunkSaveCheckpoint.ready(target, chunks) + " chunks=" + chunks.size() + " notLoaded=" + missing;
+        });
+        diagnose(out, "receiptPublished", () -> {
+            try { return p.receipts().lookup(sid).isPresent(); }
+            catch (java.io.IOException failure) { return "ERROR:" + failure; }
+        });
+        diagnose(out, "door", p::doorSummary);
+        return out.toString();
+    }
+
+    private static void diagnose(Map<String, Object> out, String name, java.util.function.Supplier<Object> value) {
+        try { out.put(name, value.get()); }
+        catch (RuntimeException | LinkageError failure) { out.put(name, "ERROR:" + failure); }
+    }
+
+    /** 測試內反射：呼叫 production 的 package 可見 static 方法（只讀的查詢），依名稱與參數型別。 */
+    private static Object invokeStatic(String type, String name, Class<?>[] parameters, Object... args) {
+        try {
+            var method = Class.forName(type).getDeclaredMethod(name, parameters);
+            method.setAccessible(true);
+            return method.invoke(null, args);
+        } catch (java.lang.reflect.InvocationTargetException failure) {
+            throw new IllegalStateException(type + "." + name + " 丟出：" + failure.getCause(), failure.getCause());
+        } catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
     }
 
     /** 每 tick 檢查一次；{@code done} 成立時執行 {@code then}，用完 {@code remaining} 次仍不成立時執行 {@code timeout}。 */
