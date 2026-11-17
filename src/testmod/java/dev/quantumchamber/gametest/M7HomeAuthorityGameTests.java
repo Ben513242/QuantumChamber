@@ -281,7 +281,7 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
         c.assertTrue(!gate.claimProvisional(server,entry.chamberUuid(),UUID.randomUUID()),"CLOSE 持續占艙");
         c.assertTrue(!journal.terminateHome(server,ended).removed() && journal.allSessions().containsKey(sid),"結案列不能由外部 caller 自宣完成");
         hold.release();
-        M7HomeClosureGameTests.until(c,200,() -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid),() -> {
+        M7HomeClosureGameTests.until(c,checkStop?"only_exact_complete_projection_resolves/root_stop":"only_exact_complete_projection_resolves/expired",200,() -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid),() -> {
             try {
                 c.assertTrue(!gate.globalChamberBusy(server,entry.chamberUuid()),"checked 移除解鎖，歷史不重建占用");
                 try { c.assertTrue(ended.equals(new HomeReceiptStore(server.getSavePath(net.minecraft.util.WorldSavePath.ROOT)).lookup(sid).orElse(null)),"單 SID 收據 exact"); }

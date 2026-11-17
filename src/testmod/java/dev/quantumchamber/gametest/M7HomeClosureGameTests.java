@@ -25,6 +25,7 @@ import net.minecraft.util.math.Vec3d;
 /** T4 Phase A：回程終局 owner、B 門交接與原艙停用防線的同 JVM 驗證（M7 spec §5.3、§6、§9）。 */
 public final class M7HomeClosureGameTests implements FabricGameTest {
     private static final ChunkTicketType<ChunkPos> HOLD = ChunkTicketType.create("quantumchamber_m7_closure_test", Comparator.comparingLong(ChunkPos::toLong));
+    private static final org.slf4j.Logger WAIT_LOG = org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod");
 
     private static SuperpositionSessionManager gate() { return (SuperpositionSessionManager) ChamberSessions.gateway(); }
 
@@ -77,7 +78,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             long now = server.getOverworld().getTime();
             var stopped = withStop(dormant, RootReason.ROOT_DISABLED, now);
             c.assertTrue(journal.commitHomeRollForward(server, dormant, stopped).committed(), "原艙停止原因已 checked latch");
-            until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            until(c, "ordinary_closed_door_needs_native_checkpoint", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
                 try {
                     c.assertTrue("OPEN/NONE".equals(p.doorSummary()), "B 普通關門必須改為一般開門：" + p.doorSummary());
                     var calls = probe.calls();
@@ -117,7 +118,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             c.assertTrue(((HomeSessionRecord) journal.allFlushedSessions().get(first)).home().stoppedAtGameTime() == now, "latch 時間是事件當下");
             c.assertTrue(lifecycle.setOriginEnabled(p.root, true), "latch 持久後同 tick 可復啟");
             c.assertTrue(stopped(journal, first, RootReason.ROOT_DISABLED), "復啟不撤銷 latch");
-            until(c, 200, () -> !journal.allSessions().containsKey(first), () -> {
+            until(c, "root_disable_latches_before_ack_and_reenable/first", 200, () -> !journal.allSessions().containsKey(first), () -> {
                 try {
                     // 註冊已落 disabled、本趟停止尚未落盤：先 enable 也只能在 latch 之後生效。
                     var second = UUID.randomUUID();
@@ -126,7 +127,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                     c.assertTrue(lifecycle.setEnabled(p.chamber, true), "latch 完成後才放行 enable");
                     c.assertTrue(stopped(journal, second, RootReason.ROOT_DISABLED), "ENABLE_BEFORE_LATCH：enable 不得跳過尚未落盤的停止");
                     c.assertTrue(ChamberRegistryState.get(server).registry().records().get(p.chamber).enabled(), "registry 已復啟");
-                    until(c, 200, () -> !journal.allSessions().containsKey(second), () -> {
+                    until(c, "root_disable_latches_before_ack_and_reenable/second", 200, () -> !journal.allSessions().containsKey(second), () -> {
                         try {
                             // 開服 fence 掃描：只有持久 registry 的停用，沒有任何通知（含沒有 runtime 的 DORMANT）。
                             var third = UUID.randomUUID();
@@ -135,7 +136,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                             HomeRootFence.bootstrap(server);
                             c.assertTrue(stopped(journal, third, RootReason.ROOT_DISABLED), "BOOTSTRAP_SCAN_DORMANT：開服掃描必須 latch 無 runtime 的 DORMANT");
                             p.rawEnabled(true);
-                            until(c, 200, () -> !journal.allSessions().containsKey(third), () -> {
+                            until(c, "root_disable_latches_before_ack_and_reenable/third", 200, () -> !journal.allSessions().containsKey(third), () -> {
                                 try {
                                     c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "三趟都 checked 收尾後解鎖");
                                     c.complete();
@@ -213,7 +214,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             }, hooks);
             long now = server.getOverworld().getTime();
             c.assertTrue(journal.commitHomeRollForward(server, dormant, withStop(dormant, RootReason.ROOT_DISABLED, now)).committed(), "原艙停止原因已 checked latch");
-            until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            until(c, sealed ? "sealed_door_closes_out_as_ordinary_open" : "passable_door_closes_out_as_ordinary_open", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
                 try {
                     c.assertTrue("OPEN/NONE".equals(p.doorSummary()), "MEMBRANE_DOOR_KEPT：帶膜的 B 門結案後必須是一般開門：" + p.doorSummary());
                     var calls = probe.calls();
@@ -286,7 +287,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             c.assertTrue(HomeClosure.onParticipantClose(server, current, actor, phase, now) == ChamberCollapsePort.DoorUse.HANDLED, "參與者關門由回程終局 owner 處置");
             var store = p.receipts();
             String expected = passage ? "OPEN/NONE" : "CLOSED/NONE";
-            until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            until(c, passage ? "participant_close_keeps_door_open_when_doorway_occupied" : "participant_close_closes_door_when_doorway_clear", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
                 try {
                     c.assertTrue(expected.equals(p.doorSummary()), (passage ? "PINCH_DOOR_CLOSED：門口有人時結案必須開門：" : "CLEAR_DOOR_NOT_CLOSED：門口淨空時結案必須關門：")
                             + p.doorSummary());
@@ -341,10 +342,10 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             // 審查 I-1：前一筆只由 production 的唯一重試者（SessionRecoveryManager 的 HOME 分支，沿用同一個 journal 退避）收斂，測試不手動寫出。
             // 故障在同一個 tick 內就已解除，第一次重試沒有退避，所以有界等待 20 ticks。重試寫出確認後，同一個 END_SERVER_TICK 內防線就 latch、終局 owner 就結案
             // 並移除熱列（fix2 green 實測），所以只等「roll-forward 已確認」，不等中間狀態；之後的結果由收據驗。
-            until(c, 20, () -> !journal.rollForwardPending(sid), () -> {
+            until(c, "root_event_queues_behind_unconfirmed_journal/retry", 20, () -> !journal.rollForwardPending(sid), () -> {
                 try {
                     var store = p.receipts();
-                    until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                    until(c, "root_event_queues_behind_unconfirmed_journal/closeout", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
                         try {
                             var receipt = store.lookup(sid).orElseThrow();
                             c.assertTrue(receipt.home().stopReason().equals(Optional.of(RootReason.ROOT_DISABLED)) && receipt.home().stoppedAtGameTime() == eventAt
@@ -425,7 +426,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                     "GUARD_EVENT_NOT_QUEUED：同 SID 的操作進行中時，原艙停用只能排隊、不在 guard 外寫入、不回報成功：acked=" + acked[0] + " writes=" + writes);
             c.assertTrue(!reenabled[0] && !ChamberRegistryState.get(server).registry().records().get(p.chamber).enabled(), "GUARD_ENABLE_BLOCKED：排隊期間拒絕同根復啟");
             var store = p.receipts();
-            until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            until(c, "home_writes_hold_session_guard", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
                 try {
                     var receipt = store.lookup(sid).orElseThrow();
                     c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED
@@ -517,7 +518,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             c.assertTrue(HomeClosure.onParticipantClose(server, ready, actor, HomeClosure.DoorPhase.PASSAGE, server.getOverworld().getTime())
                     == ChamberCollapsePort.DoorUse.HANDLED, "guard 釋放後同一個參與者關門照常處置");
             var store = p.receipts();
-            until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            until(c, "caller_held_guard_refuses_participant_close_and_entry_stop", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
                 try {
                     var receipt = store.lookup(sid).orElseThrow();
                     c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.PARTICIPANT_CLOSED
@@ -530,7 +531,8 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
                 } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
                 finally { p.close(); hooks.release(); }
             }, () -> {
-                try { throw new GameTestException("GUARD_RELEASED_CLOSE_NOT_FINISHED row=" + journal.allSessions().get(sid) + " writes=" + writes); }
+                try { throw new GameTestException("GUARD_RELEASED_CLOSE_NOT_FINISHED row=" + journal.allSessions().get(sid) + " writes=" + writes
+                        + " thresholds=" + closureThresholds(p, sid)); }
                 finally { p.close(); hooks.release(); }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
@@ -787,13 +789,29 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         } catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
     }
 
-    /** 每 tick 檢查一次；{@code done} 成立時執行 {@code then}，用完 {@code remaining} 次仍不成立時執行 {@code timeout}。 */
-    static void until(TestContext c, int remaining, BooleanSupplier done, Runnable then, Runnable timeout) {
-        if (done.getAsBoolean()) { then.run(); return; }
-        if (remaining <= 0) { timeout.run(); return; }
+    /**
+     * 每 tick 檢查一次；{@code done} 成立時執行 {@code then}，用完 {@code bound} 次仍不成立時執行 {@code timeout}。
+     * 結束時先記一行 {@code M7_GT_WAIT used=<實際用掉的 tick 數> bound=<上限> case=<label>}（逾時另加 {@code timeout=true}），再執行回呼；
+     * used 是條件成立前經過的 {@code waitAndRun(1)} 次數（當下就成立為 0，逾時等於 bound）。只記錄各平台的等待餘量，不參與判定。
+     */
+    static void until(TestContext c, String label, int bound, BooleanSupplier done, Runnable then, Runnable timeout) {
+        untilStep(c, label, bound, bound, done, then, timeout);
+    }
+
+    private static void untilStep(TestContext c, String label, int bound, int remaining, BooleanSupplier done, Runnable then, Runnable timeout) {
+        if (done.getAsBoolean()) {
+            WAIT_LOG.info("M7_GT_WAIT used={} bound={} case={}", bound - remaining, bound, label);
+            then.run();
+            return;
+        }
+        if (remaining <= 0) {
+            WAIT_LOG.info("M7_GT_WAIT used={} bound={} case={} timeout=true", bound - remaining, bound, label);
+            timeout.run();
+            return;
+        }
         c.waitAndRun(1, () -> {
             // 原版只把 GameTestException 記為測試失敗；其他例外會讓整個 test server 崩潰（T4a RED 實測）。
-            try { until(c, remaining - 1, done, then, timeout); }
+            try { untilStep(c, label, bound, remaining - 1, done, then, timeout); }
             catch (GameTestException failure) { throw failure; }
             catch (RuntimeException | Error failure) { throw new GameTestException("回呼內例外：" + failure); }
         });
