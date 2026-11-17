@@ -17,6 +17,7 @@ public final class M7CapacityFixture {
     private M7CapacityFixture() {}
     public static HomeSessionRecord admit(MinecraftServer server,SessionRecoveryRecord old) {
         var journal=SessionRecoveryState.get(server);
+        requireNoPriorResidue(journal);
         var a=old.origin();
         var chamber=UUID.randomUUID(); var sid=UUID.randomUUID(); var u=UUID.randomUUID();
         var root=new ChamberOriginAuthority(chamber,World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,
@@ -39,6 +40,20 @@ public final class M7CapacityFixture {
         var actual=new HomeSessionRecord(sid,chamber,root,entry,List.of(person(player,snapshot,false)),List.of(held),SessionState.ARMING,home);
         if(!journal.admitHome(server,actual).committed()) throw new IllegalStateException("測試 HOME 預留未確認");
         return actual;
+    }
+    /**
+     * T4 B2b-1（P2-M3 修法 1）：{@link #admit} 的 padding 只扣掉本列的完成預留（{@code HomeJournalBudget.remaining}），前提是 journal 裡沒有其他 HOME 列
+     * （每一列 HOME 各自另有完成預留）、也沒有未確認的寫入（pending）。不成立時多半是前一個 test 失敗、沒收尾而留在共用 journal 的列：
+     * 明確以 {@code PRIOR_TEST_RESIDUE} 標示，不讓它誤報成容量問題（「測試 HOME 預留未確認」）。只讀，不改 journal。
+     */
+    private static void requireNoPriorResidue(SessionRecoveryState journal) {
+        var homes=new TreeSet<String>();
+        for(var rows:List.of(journal.allSessions(),journal.allFlushedSessions()))
+            rows.forEach((sid,row)->{ if(row instanceof HomeSessionRecord) homes.add(sid+"/"+row.state()); });
+        var pending=new TreeSet<String>(); journal.pendingSessions().keySet().forEach(sid->pending.add(sid.toString()));
+        if(!homes.isEmpty() || !pending.isEmpty())
+            throw new IllegalStateException("PRIOR_TEST_RESIDUE：共用 journal 有前一個 test 殘留的 HOME 列或未確認的寫入，容量 fixture 的前提不成立（不是容量問題）：home="
+                    +homes+" pending="+pending);
     }
     private static SessionRecoveryRecord.Participant person(UUID id,NbtCompound snap,boolean returned) {
         return new SessionRecoveryRecord.Participant(id,Vec3d.ZERO,Vec3d.ZERO,0,0,snap,returned);

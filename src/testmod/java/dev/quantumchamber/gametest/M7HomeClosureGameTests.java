@@ -910,8 +910,10 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
      * <li>同一個 tick 結束前，recovery 的 journal 退避重試也撞上故障（失敗一次）；解除故障之後，由它在退避期滿時自行收斂（不手動 flush）。</li>
      * </ol>
      * 收尾以原艙停止 checked latch，由回程終局 owner 結案移除。
+     * <p>T4 B2b-1（P2-M3）：開始之前先等 B 端就緒（{@link #whenEntryReady}，與 owner 收尾的前提相同），失敗路徑上 {@link Projection#close} 才能在 B 的區塊票
+     * 釋放之前由 owner 當場收掉本案的列，不留給之後的 test。前置等待最多 380 tick，tickLimit 依此由 2000 加到 2300（其後的等待與斷言都不變）。
      */
-    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_native_write",tickLimit=2000)
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_native_write",tickLimit=2300)
     public void native_save_write_failure_keeps_pending(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var p = new Projection(c, hooks);
@@ -925,51 +927,55 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             // nativeSave 會翻轉 announceAdvancements 來核對 level.dat；結束時還原，不留給之後的 test。
             boolean announce = server.getGameRules().getBoolean(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS);
             hooks.add(() -> server.getGameRules().get(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS).set(announce, server));
-            M5GameTestSupport.afterAutosaveClear(c, 1, "m7_t4p2_native_write", 800, (start, autosave) -> {
+            whenEntryReady(c, p, "native_save_write_failure_keeps_pending", 380, hooks, () -> {
                 try {
-                    var settled = p.settled(sid, 48);
-                    var dormant = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, settled.participants(), List.of(), SessionState.MEASURED, settled.home());
-                    var fault = M7NativeSaveFault.arm(target);
-                    // 任何路徑收尾都先解除故障並帶出尚未確認的寫出，不把全域 pending 留給之後的 test（hooks 後進先出；只在判定之後執行）。
-                    hooks.add(() -> { fault.close(); if (journal.rollForwardPending(sid) || !journal.pendingSessions().isEmpty()) journal.flush(server); });
-                    var before = M7HomeClosurePhases.sha256(target);
-                    var commit = journal.commitHomeRollForward(server, settled, dormant);
-                    c.assertTrue(commit.status() == SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING && journal.rollForwardPending(sid) && journal.isDirty()
-                            && dormant.equals(journal.pendingSessions().get(sid)) && fault.hits() == 1 && before.equals(M7HomeClosurePhases.sha256(target)),
-                            "前提：checked 寫出因 atomic move 失敗、結果不明（pending）、journal 檔不變：status=" + commit.status() + " hits=" + fault.hits()
-                                    + " pending=" + journal.pendingSessions().keySet());
-                    var autosaveResult = nativeSave(p, () -> server.saveAll(true, false, false), false);
-                    c.assertTrue(autosaveResult.thrown() == null, "NATIVE_AUTOSAVE_THREW：journal 寫出失敗時原生 autosave 的例外傳進原版存檔鏈：" + autosaveResult);
-                    c.assertTrue(autosaveResult.othersSaved(), "NATIVE_AUTOSAVE_INCOMPLETE：原生 autosave 沒有存完其他 PersistentState 與 level.dat：" + autosaveResult);
-                    assertPendingKept(c, journal, sid, settled, dormant, target, before, fault, 2, "原生 autosave 之後");
-                    var flush = nativeSave(p, () -> server.saveAll(true, true, true), true);
-                    c.assertTrue(flush.thrown() == null, "NATIVE_SAVE_ALL_THREW：journal 寫出失敗時 /save-all flush 的例外傳進原版存檔鏈：" + flush);
-                    c.assertTrue(flush.othersSaved() && flush.chunksSaved(), "NATIVE_SAVE_ALL_INCOMPLETE：/save-all flush 沒有存完其他 PersistentState、level.dat 與兩側世界的 chunk：" + flush);
-                    assertPendingKept(c, journal, sid, settled, dormant, target, before, fault, 3, "/save-all flush 之後");
-                    c.assertTrue(nativeSaveErrors(logs).size() == 1 && allNativeSaveErrors(logs) == 1,
-                            "NATIVE_ERROR_COUNT：原生存檔的寫出失敗每個 instance 只記一則 ERROR、帶 TICK_LOG_MARKER：" + nativeSaveErrors(logs) + " total=" + allNativeSaveErrors(logs));
-                    c.assertTrue(nativeSaveErrors(logs).getFirst().contains("寫入正式檔失敗") && nativeSaveErrors(logs).getFirst().contains(target.toAbsolutePath().normalize().toString()),
-                            "NATIVE_ERROR_TEXT：ERROR 說明失敗類別與 journal 路徑：" + nativeSaveErrors(logs));
-                    M5GameTestSupport.whenTicks(c, start + 1, 300, () -> fault.hits() >= 4, retried -> {
+                    M5GameTestSupport.afterAutosaveClear(c, (int) c.getTick() + 1, "m7_t4p2_native_write", 800, (start, autosave) -> {
                         try {
-                            // recovery 的 journal 退避重試在故障期間也失敗一次（同一個故障、同一份 pending），之後才解除故障。
-                            assertPendingKept(c, journal, sid, settled, dormant, target, before, fault, 4, "recovery 重試失敗之後");
-                            fault.disarm();
-                            M5GameTestSupport.whenTicks(c, retried + 1, 600, () -> !journal.rollForwardPending(sid), confirmed -> {
+                            var settled = p.settled(sid, 48);
+                            var dormant = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, settled.participants(), List.of(), SessionState.MEASURED, settled.home());
+                            var fault = M7NativeSaveFault.arm(target);
+                            // 任何路徑收尾都先解除故障並帶出尚未確認的寫出，不把全域 pending 留給之後的 test（hooks 後進先出；只在判定之後執行）。
+                            hooks.add(() -> { fault.close(); if (journal.rollForwardPending(sid) || !journal.pendingSessions().isEmpty()) journal.flush(server); });
+                            var before = M7HomeClosurePhases.sha256(target);
+                            var commit = journal.commitHomeRollForward(server, settled, dormant);
+                            c.assertTrue(commit.status() == SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING && journal.rollForwardPending(sid) && journal.isDirty()
+                                    && dormant.equals(journal.pendingSessions().get(sid)) && fault.hits() == 1 && before.equals(M7HomeClosurePhases.sha256(target)),
+                                    "前提：checked 寫出因 atomic move 失敗、結果不明（pending）、journal 檔不變：status=" + commit.status() + " hits=" + fault.hits()
+                                            + " pending=" + journal.pendingSessions().keySet());
+                            var autosaveResult = nativeSave(p, () -> server.saveAll(true, false, false), false);
+                            c.assertTrue(autosaveResult.thrown() == null, "NATIVE_AUTOSAVE_THREW：journal 寫出失敗時原生 autosave 的例外傳進原版存檔鏈：" + autosaveResult);
+                            c.assertTrue(autosaveResult.othersSaved(), "NATIVE_AUTOSAVE_INCOMPLETE：原生 autosave 沒有存完其他 PersistentState 與 level.dat：" + autosaveResult);
+                            assertPendingKept(c, journal, sid, settled, dormant, target, before, fault, 2, "原生 autosave 之後");
+                            var flush = nativeSave(p, () -> server.saveAll(true, true, true), true);
+                            c.assertTrue(flush.thrown() == null, "NATIVE_SAVE_ALL_THREW：journal 寫出失敗時 /save-all flush 的例外傳進原版存檔鏈：" + flush);
+                            c.assertTrue(flush.othersSaved() && flush.chunksSaved(), "NATIVE_SAVE_ALL_INCOMPLETE：/save-all flush 沒有存完其他 PersistentState、level.dat 與兩側世界的 chunk：" + flush);
+                            assertPendingKept(c, journal, sid, settled, dormant, target, before, fault, 3, "/save-all flush 之後");
+                            c.assertTrue(nativeSaveErrors(logs).size() == 1 && allNativeSaveErrors(logs) == 1,
+                                    "NATIVE_ERROR_COUNT：原生存檔的寫出失敗每個 instance 只記一則 ERROR、帶 TICK_LOG_MARKER：" + nativeSaveErrors(logs) + " total=" + allNativeSaveErrors(logs));
+                            c.assertTrue(nativeSaveErrors(logs).getFirst().contains("寫入正式檔失敗") && nativeSaveErrors(logs).getFirst().contains(target.toAbsolutePath().normalize().toString()),
+                                    "NATIVE_ERROR_TEXT：ERROR 說明失敗類別與 journal 路徑：" + nativeSaveErrors(logs));
+                            M5GameTestSupport.whenTicks(c, start + 1, 300, () -> fault.hits() >= 4, retried -> {
                                 try {
-                                    c.assertTrue(dormant.equals(journal.allFlushedSessions().get(sid)) && dormant.equals(journal.allSessions().get(sid))
-                                            && journal.pendingSessions().isEmpty() && !before.equals(M7HomeClosurePhases.sha256(target)),
-                                            "NATIVE_NOT_CONVERGED：解除故障後 journal 沒有收斂到待確認的那一份：flushed=" + journal.allFlushedSessions().get(sid));
-                                    c.assertTrue(confirmed - start >= CollapseBackoff.INITIAL_TICKS && fault.hits() == 4,
-                                            "NATIVE_CONVERGED_BY_OTHER：應由 recovery 的 journal 退避重試在退避期滿時收斂：start=" + start + " confirmed=" + confirmed + " hits=" + fault.hits());
-                                    c.assertTrue(nativeSaveErrors(logs).size() == 1, "NATIVE_ERROR_COUNT：收斂之後仍只有一則：" + nativeSaveErrors(logs));
-                                    closeOutDormant(c, p, dormant, confirmed, hooks);
-                                } catch (java.io.IOException failure) { throw new GameTestException("journal 讀取失敗：" + failure); }
-                            }, () -> "解除故障後沒有收斂：pending=" + journal.pendingSessions().keySet() + " rollForward=" + journal.rollForwardPending(sid), hooks);
-                        } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("journal 讀取失敗：" + failure); }
-                    }, () -> "recovery 的重試沒有撞上故障：hits=" + fault.hits(), hooks);
-                } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("故障武裝或 journal 讀取失敗：" + failure); }
-            }, hooks);
+                                    // recovery 的 journal 退避重試在故障期間也失敗一次（同一個故障、同一份 pending），之後才解除故障。
+                                    assertPendingKept(c, journal, sid, settled, dormant, target, before, fault, 4, "recovery 重試失敗之後");
+                                    fault.disarm();
+                                    M5GameTestSupport.whenTicks(c, retried + 1, 600, () -> !journal.rollForwardPending(sid), confirmed -> {
+                                        try {
+                                            c.assertTrue(dormant.equals(journal.allFlushedSessions().get(sid)) && dormant.equals(journal.allSessions().get(sid))
+                                                    && journal.pendingSessions().isEmpty() && !before.equals(M7HomeClosurePhases.sha256(target)),
+                                                    "NATIVE_NOT_CONVERGED：解除故障後 journal 沒有收斂到待確認的那一份：flushed=" + journal.allFlushedSessions().get(sid));
+                                            c.assertTrue(confirmed - start >= CollapseBackoff.INITIAL_TICKS && fault.hits() == 4,
+                                                    "NATIVE_CONVERGED_BY_OTHER：應由 recovery 的 journal 退避重試在退避期滿時收斂：start=" + start + " confirmed=" + confirmed + " hits=" + fault.hits());
+                                            c.assertTrue(nativeSaveErrors(logs).size() == 1, "NATIVE_ERROR_COUNT：收斂之後仍只有一則：" + nativeSaveErrors(logs));
+                                            closeOutDormant(c, p, dormant, confirmed, hooks);
+                                        } catch (java.io.IOException failure) { throw new GameTestException("journal 讀取失敗：" + failure); }
+                                    }, () -> "解除故障後沒有收斂：pending=" + journal.pendingSessions().keySet() + " rollForward=" + journal.rollForwardPending(sid), hooks);
+                                } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("journal 讀取失敗：" + failure); }
+                            }, () -> "recovery 的重試沒有撞上故障：hits=" + fault.hits(), hooks);
+                        } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("故障武裝或 journal 讀取失敗：" + failure); }
+                    }, hooks);
+                } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+            });
         } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
     }
 
@@ -1340,6 +1346,8 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         final ChamberOriginAuthority root;
         private Runnable release = () -> { };
         private boolean closed;
+        /** T4 B2b-1（P2-M3 修法 3）：本 fixture 經 {@link #settled}／{@link #dormant} 建立的 HOME SID；{@link #close} 時收掉仍留在 journal 的列。 */
+        private final List<UUID> owned = new ArrayList<>();
 
         Projection(TestContext c, M2CorridorGameTests.TestHooks hooks) {
             this.c = c;
@@ -1379,6 +1387,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
 
         /** 經正式 journal 入口走到已選定、全員返回、租約仍在的 MEASURED（下一步才清除租約）。 */
         HomeSessionRecord settled(UUID sid, int slot) {
+            owned.add(sid);
             var server = f.server;
             var journal = SessionRecoveryState.get(server);
             var actor = f.players.getFirst().player().getUuid();
@@ -1438,8 +1447,62 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         @Override public void close() {
             if (closed) return;
             closed = true;
-            try { release.run(); }
-            finally { f.close(); }
+            try { closeOutResidue(); }
+            finally {
+                try { release.run(); }
+                finally { f.close(); }
+            }
+        }
+
+        /**
+         * T4 B2b-1（P2-M3 修法 3）：test 在收尾前失敗時，本 fixture 建立的 HOME 列會留在共用 GT server 的 journal（production owner 不會自己結案沒有原因的
+         * DORMANT），連帶讓之後的 test（例如容量 fixture）失敗。這裡在釋放 B 的區塊票之前，以正式路徑收掉仍在的列：
+         * <ol>
+         * <li>已 checked、沒有待確認寫入、全員已返回但仍有租約的 MEASURED，比照 {@link #dormant} 以 checked roll-forward 清除租約；</li>
+         * <li>還沒有原艙停止原因、也還沒凍結 CLOSE 的，比照 {@code closeOutDormant} checked latch {@code ROOT_DISABLED}；</li>
+         * <li>呼叫回程終局 owner 的同一個推進 {@link HomeClosure#step}（每 tick 的 {@code HomeClosure.tick} 呼叫的就是它）：凍結 CLOSE、改 B 門、原生 checkpoint、
+         *     發收據、checked 移除熱列，都在 owner 內完成，測試不手寫 journal。</li>
+         * </ol>
+         * 成功路徑在 close 之前已移除這些列，這裡不做任何事。仍有未確認的寫入、owner 退避中、B 端尚未就緒（只有先等 B 就緒的 test 才能當場收掉），
+         * 或其他前提不成立時不強制，記 {@code M7_GT_LEFTOVER_HOME} WARN（附 thresholds）後照常釋放；收尾本身的例外只記 log，不遮蔽原失敗。
+         * 不在 test 結束之後另以 server tick 繼續等：那時下一個 batch 已經開始，owner 的收尾（含全伺服器存檔）會干擾它；殘留由容量 fixture 的
+         * {@code PRIOR_TEST_RESIDUE} 前置檢查明確標示。
+         */
+        private void closeOutResidue() {
+            if (owned.isEmpty()) return;
+            var server = f.server;
+            SessionRecoveryState journal;
+            try { journal = SessionRecoveryState.get(server); journal.requireHealthy(); }
+            catch (RuntimeException unhealthy) { WAIT_LOG.warn("M7_GT_LEFTOVER_HOME journal 不健康，無法收尾 sids={}", owned, unhealthy); return; }
+            for (var sid : owned) {
+                try {
+                    if (!journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid)) continue;
+                    HomeSessionRecord row = journal.allSessions().get(sid) instanceof HomeSessionRecord h ? h : null;
+                    if (row != null && settledRow(journal, row) && row.state() == SessionState.MEASURED && !row.spaceLeases().isEmpty()
+                            && row.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned)) {
+                        var cleared = new HomeSessionRecord(sid, row.chamberUuid(), row.rootAnchor(), row.entryEndpoint(), row.participants(), List.of(),
+                                SessionState.MEASURED, row.home());
+                        if (journal.commitHomeRollForward(server, row, cleared).committed()) row = cleared;
+                    }
+                    if (row != null && settledRow(journal, row) && row.home().closeIntent() instanceof None && row.home().stopReason().isEmpty()) {
+                        var stopped = withStop(row, RootReason.ROOT_DISABLED, server.getOverworld().getTime());
+                        if (journal.commitHomeRollForward(server, row, stopped).committed()) row = stopped;
+                    }
+                    if (row != null && settledRow(journal, row)) HomeClosure.step(server, row);
+                    if (journal.allSessions().containsKey(sid) || journal.allFlushedSessions().containsKey(sid))
+                        WAIT_LOG.warn("M7_GT_LEFTOVER_HOME sid={} row={} thresholds={}", sid, journal.allSessions().get(sid), closureThresholds(this, sid));
+                    else WAIT_LOG.info("M7_GT_RESIDUE_CLOSED sid={}：test 收尾前失敗留下的 HOME 列已由回程終局 owner checked 移除", sid);
+                } catch (RuntimeException | Error failure) {
+                    WAIT_LOG.warn("M7_GT_LEFTOVER_HOME sid={} 收尾丟出例外", sid, failure);
+                }
+            }
+        }
+
+        /** current＝flushed、沒有待確認的 roll-forward、沒有送出中的 attempt 帶這個 SID、沒有隔離（與 owner 推進的前提相同）。 */
+        private static boolean settledRow(SessionRecoveryState journal, HomeSessionRecord row) {
+            var sid = row.sessionUuid();
+            return row.equals(journal.allSessions().get(sid)) && row.equals(journal.allFlushedSessions().get(sid)) && !journal.rollForwardPending(sid)
+                    && !journal.pendingSessions().containsKey(sid) && !journal.quarantinedSessions().contains(sid);
         }
     }
 }

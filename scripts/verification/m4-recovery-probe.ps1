@@ -65,6 +65,7 @@ function Invoke-M4Phase([string]$Nonce, [string]$Phase, [string]$Root) {
 # 唯一預期停寫 phase：不產生／接受正常 final.json。T4 P2 起（使用者 2026-11-17 裁示「改 M4 測試，一律不崩潰」）停寫不再以例外表達：
 # 原生 save 不丟出、不寫入（journal hash 不變），PENDING 類 ERROR 恰一則（需要重啟伺服器才能收斂）；checked flush 照舊丟出；停服正常完成
 # （SERVER_STOPPED、Gradle 與 JVM 都是 0、pending-stopped.json），磁碟上仍是那份 exact attempt。其餘檢查與 T4 P2 之前相同、不放寬。
+# T4 B2b-1（P2-M4）另核 pending-stopped.json 的 stopSaveCalls≥1（停服存檔確實進入 journal save）與 universeUnchanged（停服不改 Universe catalog／world keys）。
 function Complete-M4Pending($State,[string]$Nonce) {
     $e=$State.PhaseEvidence;$root=$State.Root;$java=$State.JavaProcess
     if(-not $java.HasExited -or $State.Launcher.ExitCode -ne 0 -or $java.ExitCode -ne 0){throw "M4_PENDING_EXIT：停服必須正常完成（gradle=$($State.Launcher.ExitCode) java=$($java.ExitCode)）"}
@@ -77,6 +78,9 @@ function Complete-M4Pending($State,[string]$Nonce) {
     $stopped=Get-Content -LiteralPath (Join-Path $e 'pending-stopped.json') -Raw|ConvertFrom-Json -DateKind String
     if($stopped.status -cne 'PENDING_STOPPED' -or $stopped.phase -cne 'readback-fault' -or $stopped.nonce -cne $Nonce -or $stopped.pid -ne $State.JavaId -or $stopped.startupNonce -cne $State.StartupNonce -or @($stopped.failures).Count -ne 0 -or
         $stopped.stoppingSeen -ne $true -or $stopped.stoppedSeen -ne $true -or $stopped.journalHashAfterStop -cne $pre.journalHash -or $stopped.exactAttemptKept -ne $true -or $stopped.pendingKept -ne $true -or $stopped.levelSaved -ne $true -or $stopped.nativeErrorsAfterStop -ne 1){throw 'M4_PENDING_STOPPED：停服後的 exact attempt、pending 或 level.dat 不符'}
+    # T4 B2b-1（P2-M4）：停服存檔確實進入 journal save（ERROR 已去重，不能代替）；停服不得改 Universe catalog／world keys（同一般停服路徑）。
+    if($stopped.PSObject.Properties.Name -cnotcontains 'stopSaveCalls' -or $stopped.stopSaveCalls -lt 1){throw "M4_PENDING_STOP_SAVE：停服存檔沒有進入 journal save（stopSaveCalls=$($stopped.stopSaveCalls)）"}
+    if($stopped.universeUnchanged -ne $true){throw 'M4_PENDING_UNIVERSE：停服改了 Universe catalog／world keys'}
     $events=@(Get-Content -LiteralPath (Join-Path $e 'events.jsonl') | ForEach-Object {$_|ConvertFrom-Json})
     if(($events.event -join ',') -cne 'initialized,pending-prestop,pending-stopped' -or @($events|Where-Object {$_.pid -ne $State.JavaId -or $_.startupNonce -cne $State.StartupNonce}).Count){throw 'M4_PENDING_EVENTS：非預期生命週期'}
     $aux=Copy-OwnedLogs -State $State

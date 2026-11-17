@@ -63,6 +63,11 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
      */
     private LogCapture pendingLogs;
     private static final String NATIVE_SAVE_ERROR="原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗";
+    /**
+     * T4 B2b-1（P2-M4）：readback-fault 停服（SERVER_STOPPING 之後）真正進入 {@code SessionRecoveryState.save} 本體的 journal 存檔次數（save HEAD，見
+     * {@link #suppressJournalSave}；被凍結取消的不算）。停服存檔不再丟出、ERROR 也已去重，所以以它正面證明停服存檔確實走到 journal 的拒寫柵欄。
+     */
+    private int stopSaveCalls;
     private UUID chamber2,sid2;
     private List<?> runtimeBeforeSecond;
 
@@ -418,6 +423,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     /**
      * T4 P2：readback-fault 的停服已完成（SERVER_STOPPED；停服存檔把 journal 的例外丟進原版鏈時不會走到這裡）。只讀檔案：磁碟上仍是那份 exact attempt（hash 與 NBT 都不變）、
      * 記憶體仍 dirty 並保留 pending、level.dat 已寫出停服前改的 gamerule、停服時的存檔沒有重記 ERROR。寫 {@code pending-stopped.json}（不產生正常 final.json）。
+     * T4 B2b-1（P2-M4）另核：停服存檔確實進入 journal save 至少一次（{@code stopSaveCalls}），以及 Universe catalog／world keys 與開服時相同（與一般停服路徑的檢查相同）。
      */
     private void pendingStopped() {
         var stopped=new LinkedHashMap<String,Object>();
@@ -437,6 +443,13 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
             stopped.put("levelSaved",level); if(!level) problems.add("M4_PENDING_LEVEL：停服沒有寫出 level.dat");
             int errors=pendingLogs==null ? -1 : pendingLogs.matching(org.apache.logging.log4j.Level.ERROR,NATIVE_SAVE_ERROR).size();
             stopped.put("nativeErrorsAfterStop",errors); if(errors!=1) problems.add("M4_PENDING_NATIVE_ERROR：停服時的存檔不得重記 ERROR："+errors);
+            // T4 B2b-1（P2-M4）：正面證明停服存檔確實進入 journal save（之後由 pending 柵欄拒寫：hash 不變、pending 與 dirty 保留）；ERROR 已去重，不能代替這項。
+            stopped.put("stopSaveCalls",stopSaveCalls);
+            if(stopSaveCalls<1) problems.add("M4_PENDING_STOP_SAVE：停服存檔沒有進入 journal save，無法證明走到 journal 的拒寫柵欄："+stopSaveCalls);
+            // T4 B2b-1（P2-M4）：與一般停服路徑（stopped）相同，正常停服不得改 Universe catalog／world keys；停服現在會完整存檔，這是新的寫出面。
+            var universe=universeEvidence(); stopped.put("universeStopped",universe);
+            boolean same=proof.get("universeBefore").equals(universe); stopped.put("universeUnchanged",same);
+            if(!same) problems.add("M4_PENDING_UNIVERSE：正常停止不得改 Universe catalog／world keys");
         } catch(Exception | AssertionError failure) { problems.add("M4_PENDING_STOPPED："+failure); }
         finally { if(pendingLogs!=null) pendingLogs.close(); }
         stopped.put("failures",problems);
@@ -726,7 +739,11 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     }
     public static boolean suppressJournalSave(Path path) {
         var probe=active;
-        return probe!=null && probe.freezeSave && path.toAbsolutePath().normalize().equals(probe.data("quantumchamber_sessions.dat").toAbsolutePath().normalize());
+        if(probe==null || !path.toAbsolutePath().normalize().equals(probe.data("quantumchamber_sessions.dat").toAbsolutePath().normalize())) return false;
+        if(probe.freezeSave) return true;
+        // T4 B2b-1（P2-M4）：readback-fault 的停服存檔進入 journal save 本體（沒有被凍結取消）才計數。
+        if(probe.config.phase().equals("readback-fault") && Boolean.TRUE.equals(probe.proof.get("stoppingSeen"))) probe.stopSaveCalls++;
+        return false;
     }
     private void verifyDirty() throws Exception {
         require(original.equals(record()) && journal.isDirty(),"dirty window 必須保留上一份 flushed authority");

@@ -46,7 +46,9 @@
       "dev.quantumchamber.persistence.M7NativeSaveFailureTest.unhealthyJournalNativeSaveDoesNotThrowOrWrite",
       "dev.quantumchamber.persistence.M7NativeSaveFailureTest.legacyWriteFailureDuringNativeSaveKeepsDirtyAndTheNextSaveConverges",
       "dev.quantumchamber.persistence.M7NativeSaveFailureTest.unchangedMismatchErrorNamesTheReceiptAndHowToRecover",
-      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.changedRowErrorsSeparateUnreadableFromMismatchAndSayWritesArePaused"
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.changedRowErrorsSeparateUnreadableFromMismatchAndSayWritesArePaused",
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.nativeErrorIsReportedAgainAfterASuccessfulWrite",
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.prepareFailureDuringNativeSaveSaysPrepareAndKeepsDirty"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",
