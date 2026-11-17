@@ -606,9 +606,10 @@ final class OriginDoors {
         if (world == null) return;
         boolean loaded = CollapseService.neighborhoodLoaded(world, door.frame);
         // M7 spec :212、§6 :190：排入之後同艙另一端的回程才開始（collapse view 只看舊列，看不到 HOME），套用前再查一次 presence；BUSY 時門屬於那趟旅程。
+        // presence 不帶 SID，這則 INFO 不屬於任何 session：與同流程的排入、正規化完成相同，帶 TICK_LOG_MARKER（CollapseService.LOG_MARKER 的規則）。
         if (loaded && service.sessions.presence(service.server, door.chamber) == ChamberSessionGateway.Presence.BUSY) {
             doors.remove(door.chamber);
-            LOGGER.info(LOG_MARKER, "同艙另一端的回程擁有這座艙（BUSY），不再正規化找不到所屬 session 的量子膜：chamber={}", door.chamber);
+            LOGGER.info(TICK_LOG_MARKER, "同艙另一端的回程擁有這座艙（BUSY），不再正規化找不到所屬 session 的量子膜：chamber={}", door.chamber);
             return;
         }
         var owner = loaded ? collapseOwner(door.chamber) : null;

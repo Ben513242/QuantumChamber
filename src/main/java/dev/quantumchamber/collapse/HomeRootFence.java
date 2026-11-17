@@ -10,6 +10,7 @@ import dev.quantumchamber.chamber.ChamberRecord;
 import dev.quantumchamber.chamber.ChamberRegistry;
 import dev.quantumchamber.chamber.ChamberRegistryState;
 import dev.quantumchamber.chamber.ChamberSessions;
+import dev.quantumchamber.corridor.CorridorPageManager;
 import dev.quantumchamber.persistence.HomeSessionRecord;
 import dev.quantumchamber.persistence.HomeSessionRecord.Home;
 import dev.quantumchamber.persistence.HomeSessionRecord.None;
@@ -37,9 +38,11 @@ import org.slf4j.LoggerFactory;
  * <ul>
  * <li><b>提交點通知</b>：{@link ChamberRegistry} 的停用（直接 setter、維護入口都經它）與真正移除，經 {@link ChamberCollapsePort.Roots} 同步呼叫
  *     {@link #onRootEvent}；每個已選定、CloseIntent=NONE、尚未停止、非永久封存的 HOME 列各自 first-wins checked latch 不可清除的 StopReason。
- *     journal 尚未收斂時先排入本 server 的佇列，回報 pending，並拒絕同根復啟。普通斷電不是根事件；UNKNOWN 不 mint ROOT。</li>
+ *     latch 寫在該 SID 的 session operation guard 內；journal 尚未收斂或同 SID 已有進行中的操作時先排入本 server 的佇列，回報 pending，並拒絕同根復啟。
+ *     普通斷電不是根事件；UNKNOWN 不 mint ROOT。</li>
  * <li><b>開服重建</b>（{@link #bootstrap}）：journal strict 載入與 registry／ownership 完成後、任何維護 enable 之前，掃描全部 active selected HOME 列
- *     （含沒有 B runtime 的 DORMANT；不掃收據），把持久 registry 已確認的停用、移除或身分撤銷重建為同一 latch。</li>
+ *     （含沒有 B runtime 的 DORMANT；不掃收據），把持久 registry 已確認的停用、移除或身分撤銷重建為同一 latch。{@code SERVER_STARTING} 已先放入未就緒的 fence，
+ *     掃描完成前一律拒絕 enable。</li>
  * <li><b>A 保護</b>：同艙另一端的回程從暫占起到 checked 終局，一般拆除被拒（{@link ChamberCollapsePort.Roots#permitsRemoval}）；管理員停用仍可。</li>
  * </ul>
  * 只在 server thread 執行；log 一律帶塌縮流程的 marker。
@@ -58,11 +61,17 @@ public final class HomeRootFence {
 
     private HomeRootFence(MinecraftServer server) { this.server = server; }
 
-    /** 註冊 port、開服接手與每 tick 推進。{@code QuantumSuperpositionMod} 在 {@code CollapseService.initialize()} 之後呼叫，所以開服時 journal 與 M5 authority 已就緒。 */
+    /**
+     * 註冊 port、開服接手與每 tick 推進。{@code QuantumSuperpositionMod} 在 {@code CollapseService.initialize()} 之後呼叫，所以開服時 journal 與 M5 authority 已就緒。
+     * <p>{@code SERVER_STARTING}（世界載入之前）先放入未就緒的 fence（M7 spec §9.1 :246）：從世界載入到 {@code SERVER_STARTED} 的 {@link #bootstrap} 完成之前，
+     * port 已能辨認這個 server，{@link #permitsEnable} 一律回 false，任何 enable 都不能繞過尚未完成的開服掃描。只放入記憶體物件，不讀 journal 或 registry，
+     * 不改變其他開服流程的順序。
+     */
     public static synchronized void initialize() {
         if (initialized) return;
         initialized = true;
         ChamberCollapsePort.installRoots(new Port());
+        ServerLifecycleEvents.SERVER_STARTING.register(server -> FENCES.computeIfAbsent(server, HomeRootFence::new));
         ServerLifecycleEvents.SERVER_STARTED.register(server -> { HomeClosure.startup(server); bootstrap(server); });
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             var fence = FENCES.get(server);
@@ -162,30 +171,54 @@ public final class HomeRootFence {
         }
     }
 
-    /** 一個 SID 的根事件：journal 已收斂就立即 checked latch，否則（或 latch 未 checked）first-wins 排隊；同一 SID 只在第一次排隊時記 WARN。 */
+    /**
+     * 一個 SID 的根事件：journal 已收斂而且取得這個 SID 的 session operation guard 時，在 guard 內立即 checked latch（M7 spec §9.1 :249）；否則（journal 尚未收斂、
+     * 同 SID 已有進行中的操作或 guard 尚不可用、latch 未 checked）first-wins 排隊，下一個 tick 再試。同一 SID 只在第一次排隊時記 WARN。
+     */
     private void event(SessionRecoveryState journal, HomeSessionRecord row, RootReason reason, long observedAt) {
         var sid = row.sessionUuid();
         var first = queued.get(sid);
-        if (first != null) { reason = first.reason(); observedAt = first.observedAt(); }
+        var latched = first != null ? first.reason() : reason;
+        if (first != null) observedAt = first.observedAt();
         var selected = ((Selected) row.home().selection()).selectedAtGameTime();
         // StoppedAt 必須 ≥ 選定時間；世界時間被調回時以選定時間為下限，不接受外部時間。
         long stoppedAt = Math.max(observedAt, selected);
-        if (settled(journal, row)) {
-            var h = row.home();
-            var next = new HomeSessionRecord(sid, row.chamberUuid(), row.rootAnchor(), row.entryEndpoint(), row.participants(), row.spaceLeases(),
-                    row.state(), new Home(h.selection(), h.committedAtGameTime(), h.passageOpenedAtGameTime(), h.passageExpiresAtGameTime(),
-                    h.crossed(), h.recoveryRequired(), Optional.of(reason), stoppedAt, h.closeIntent(), h.sealedReason()));
-            var result = journal.commitHomeRollForward(server, row, next);
-            if (result.committed()) {
-                queued.remove(sid);
-                LOGGER.info(LOG_MARKER, "原艙根事件已 checked latch，本趟停止旅行、保留選擇（{}，tick {}）：session={} chamber={}", reason, stoppedAt,
-                        sid, row.chamberUuid());
-                return;
-            }
-            if (first == null) LOGGER.warn(LOG_MARKER, "原艙根事件的 latch 尚未 checked（{}），排隊重試並拒絕復啟：session={} chamber={}", result.status(), sid,
+        var pages = guard(sid);
+        // 前置 current=flushed=expected 與寫入都在 guard 內；未收斂時回 null，不寫入。
+        var result = pages == null ? null
+                : pages.exclusiveOperation(sid, () -> settled(journal, row) ? journal.commitHomeRollForward(server, row, withStop(row, latched, stoppedAt)) : null);
+        if (result != null && result.committed()) {
+            queued.remove(sid);
+            LOGGER.info(LOG_MARKER, "原艙根事件已 checked latch，本趟停止旅行、保留選擇（{}，tick {}）：session={} chamber={}", latched, stoppedAt,
+                    sid, row.chamberUuid());
+            return;
+        }
+        // 審查 M3：最常見的「journal 尚未收斂」與 guard 忙碌也在第一次排隊時記 WARN，與上方 Javadoc 一致。
+        if (first == null) {
+            if (pages == null) LOGGER.warn(LOG_MARKER, "原艙根事件遇到同一 session 有進行中的操作（或走廊 authority 尚未就緒），先排隊並拒絕復啟，之後的 tick 再 checked latch（{}）："
+                    + "session={} chamber={}", latched, sid, row.chamberUuid());
+            else if (result == null) LOGGER.warn(LOG_MARKER, "原艙根事件遇到 journal 尚未收斂，先排隊並拒絕復啟，收斂後再 checked latch（{}）：session={} chamber={}", latched, sid,
+                    row.chamberUuid());
+            else LOGGER.warn(LOG_MARKER, "原艙根事件的 latch 尚未 checked（{}），排隊重試並拒絕復啟：session={} chamber={}", result.status(), sid,
                     row.chamberUuid(), result.failure().orElse(null));
         }
-        queued.putIfAbsent(sid, new Event(reason, observedAt));
+        queued.putIfAbsent(sid, new Event(latched, observedAt));
+    }
+
+    /** 同 state 單步寫入不可清除的停止原因與時間，其餘欄位不變（M7 spec §9.1 :243）。 */
+    private static HomeSessionRecord withStop(HomeSessionRecord row, RootReason reason, long stoppedAt) {
+        var h = row.home();
+        return new HomeSessionRecord(row.sessionUuid(), row.chamberUuid(), row.rootAnchor(), row.entryEndpoint(), row.participants(), row.spaceLeases(),
+                row.state(), new Home(h.selection(), h.committedAtGameTime(), h.passageOpenedAtGameTime(), h.passageExpiresAtGameTime(),
+                h.crossed(), h.recoveryRequired(), Optional.of(reason), stoppedAt, h.closeIntent(), h.sealedReason()));
+    }
+
+    /** 這個 SID 可取得的 session operation guard；走廊 authority 尚未 attach（開服掃描之前）或同 SID 已有進行中的操作時為 null。 */
+    private CorridorPageManager guard(UUID sid) {
+        CorridorPageManager pages;
+        try { pages = CorridorPageManager.forServer(server); }
+        catch (RuntimeException unavailable) { return null; }
+        return pages.operationInProgress(sid) ? null : pages;
     }
 
     /** 這座原艙所有 HOME 列都沒有排隊事件，而且已 latch 的停止都已 checked。 */

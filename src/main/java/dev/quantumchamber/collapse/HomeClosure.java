@@ -61,7 +61,8 @@ import org.slf4j.LoggerFactory;
  *     → 同一 tick 再確定門仍是目標 → 以一次性 {@link HomeClosureProof} checked 移除熱列 → 釋放原艙票。任何一步未知或錯配都保留 CLOSE 與 busy，下一個 tick 再試；
  *     不操作 A，也不掃歷史。</li>
  * </ul>
- * 只在 server thread 執行；每一則 log 都帶 {@link CollapseService#LOG_MARKER}（不屬於任何 session 的帶 {@link CollapseService#TICK_LOG_MARKER}）。
+ * 只在 server thread 執行；三個入口（{@link #step}、{@link #onParticipantClose}、{@link #onEntryStopped}）的核對與寫入都在該 SID 的 session operation guard 內
+ * （M7 spec §9.1 :249），同 SID 已有進行中的操作時不寫入。每一則 log 都帶 {@link CollapseService#LOG_MARKER}（不屬於任何 session 的帶 {@link CollapseService#TICK_LOG_MARKER}）。
  */
 public final class HomeClosure {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
@@ -140,7 +141,7 @@ public final class HomeClosure {
         for (var row : List.copyOf(journal.allSessions().values())) {
             if (!(row instanceof HomeSessionRecord home)) continue;
             try { step(server, home); }
-            catch (RuntimeException failure) { warn(server, home, "推進", "回程終局推進丟出例外，下一個 tick 重試：" + FailureText.describe(failure)); }
+            catch (RuntimeException failure) { warn(server, home, "推進", "回程終局推進丟出例外，下一個 tick 重試：" + FailureText.describe(failure), failure); }
         }
     }
 
@@ -197,12 +198,21 @@ public final class HomeClosure {
 
     // ---- 事件與推進 ----
 
-    /** 無事件的推進：收斂已凍結的 CLOSE，或由已核的全跨、到期、開服收尾與持久原艙 latch 決定原因。 */
+    /**
+     * 無事件的推進：收斂已凍結的 CLOSE，或由已核的全跨、到期、開服收尾與持久原艙 latch 決定原因。決策、凍結與交接都在這個 SID 的 session operation guard 內
+     * （M7 spec §9.1 :249）；同 SID 已有進行中的操作時不推進，下一個 tick 再試。
+     */
     public static void step(MinecraftServer server, HomeSessionRecord row) {
         if (!server.isOnThread()) throw new IllegalStateException("回程終局只在 server thread 推進");
         var journal = SessionRecoveryState.get(server);
+        if (!settled(journal, row)) return;
+        var pages = CorridorPageManager.forServer(server);
+        if (pages.operationInProgress(row.sessionUuid())) return;
+        pages.exclusiveOperation(row.sessionUuid(), () -> { stepInGuard(server, journal, row); return null; });
+    }
+
+    private static void stepInGuard(MinecraftServer server, SessionRecoveryState journal, HomeSessionRecord row) {
         var sid = row.sessionUuid();
-        if (!settled(journal, row) || CorridorPageManager.forServer(server).operationInProgress(sid)) return;
         if (row.home().closeIntent() instanceof Close) { converge(server, journal, row); return; }
         if (HomeRootFence.queued(server, sid)) return;
         var context = CONTEXTS.get(server);
@@ -215,10 +225,20 @@ public final class HomeClosure {
         if (latched != null) converge(server, journal, latched);
     }
 
-    /** 正式互動入口：參與者在 exact B 關門（PREPARE 或 PASSAGE）。在 guard 內核 actor 是在線、存活、非旁觀、位於 exact B 的 cohort 成員。 */
+    /**
+     * 正式互動入口：參與者在 exact B 關門（PREPARE 或 PASSAGE）。在這個 SID 的 session operation guard 內（M7 spec §9.1 :249）核 actor 是在線、存活、非旁觀、
+     * 位於 exact B 的 cohort 成員，再凍結與交接；同 SID 已有進行中的操作（包括呼叫端自己持有這個 guard）時回 REFUSED、不寫入。
+     */
     public static ChamberCollapsePort.DoorUse onParticipantClose(MinecraftServer server, HomeSessionRecord row, ServerPlayerEntity actor,
             DoorPhase phase, long observedAt) {
         if (!server.isOnThread()) return ChamberCollapsePort.DoorUse.REFUSED;
+        var pages = CorridorPageManager.forServer(server);
+        if (pages.operationInProgress(row.sessionUuid())) return ChamberCollapsePort.DoorUse.REFUSED;
+        return pages.exclusiveOperation(row.sessionUuid(), () -> participantCloseInGuard(server, row, actor, phase, observedAt));
+    }
+
+    private static ChamberCollapsePort.DoorUse participantCloseInGuard(MinecraftServer server, HomeSessionRecord row, ServerPlayerEntity actor,
+            DoorPhase phase, long observedAt) {
         var journal = SessionRecoveryState.get(server);
         if (!settled(journal, row) || HomeRootFence.queued(server, row.sessionUuid()) || actor == null || actor.getServer() != server
                 || actor.isRemoved() || !actor.isAlive() || actor.isSpectator()) return ChamberCollapsePort.DoorUse.REFUSED;
@@ -237,9 +257,16 @@ public final class HomeClosure {
      * B 端的停止只有 {@link EntrySignal#LOW}（斷電）與 {@link EntrySignal#INVALID}（結構失效）。{@link EntrySignal#DISABLED} 依使用者 2026-11-17 裁示
      * 當成不會發生，一律拒絕、不 mint：投影艙沒有停用開關（{@code ChamberMaintenanceInteraction.toggleEnabled} 要求原艙身分）。記錄格式仍保留
      * {@code HomeSessionRecord.Signal.DISABLED}，只為舊資料相容。
+     * <p>核對與寫入都在這個 SID 的 session operation guard 內（M7 spec §9.1 :249）；同 SID 已有進行中的操作（包括呼叫端自己持有這個 guard）時不 mint、不寫入。
      */
     public static void onEntryStopped(MinecraftServer server, HomeSessionRecord row, ServerWorld entry, EntrySignal signal, long observedAt) {
         if (!server.isOnThread() || row.state() != SessionState.PASSAGE_READY || signal == null || signal == EntrySignal.DISABLED) return;
+        var pages = CorridorPageManager.forServer(server);
+        if (pages.operationInProgress(row.sessionUuid())) return;
+        pages.exclusiveOperation(row.sessionUuid(), () -> { entryStoppedInGuard(server, row, entry, signal, observedAt); return null; });
+    }
+
+    private static void entryStoppedInGuard(MinecraftServer server, HomeSessionRecord row, ServerWorld entry, EntrySignal signal, long observedAt) {
         var journal = SessionRecoveryState.get(server);
         if (!settled(journal, row) || HomeRootFence.queued(server, row.sessionUuid()) || entry == null || exactEntry(server, row) != entry) return;
         var h = row.home();
@@ -279,7 +306,7 @@ public final class HomeClosure {
         var result = journal.latchHomeClose(server, new CloseMint(server, row, next));
         if (!result.committed()) {
             warn(server, row, "凍結", "回程結案尚未 checked（" + result.status() + "），只收斂、不改門："
-                    + result.failure().map(FailureText::describe).orElse("無原因"));
+                    + result.failure().map(FailureText::describe).orElse("無原因"), result.failure().orElse(null));
             return null;
         }
         LOGGER.info(LOG_MARKER, "回程已 checked 凍結結案（{}，DoorGoal={}）：session={} chamber={}", close.reason(), close.doorGoal(),
@@ -296,7 +323,7 @@ public final class HomeClosure {
         var close = (Close) row.home().closeIntent();
         var status = HomeEndpointAuthority.inspectEntry(server, row.entryEndpoint());
         if (status != HomeEndpointAuthority.EntryStatus.VALID) {
-            if (status != HomeEndpointAuthority.EntryStatus.UNKNOWN) warn(server, row, "B", "B 端點不是 exact 合法投影（" + status + "），保留結案與占用");
+            if (status != HomeEndpointAuthority.EntryStatus.UNKNOWN) warn(server, row, "B", "B 端點不是 exact 合法投影（" + status + "），保留結案與占用", null);
             return;
         }
         var world = exactEntry(server, row);
@@ -313,7 +340,7 @@ public final class HomeClosure {
             var doors = new ChamberDoorService();
             var applied = doors.applyTarget(world, frame, target);
             if (!applied.succeeded()) {
-                warn(server, row, "門", "B 門尚未改為結案目標（" + applied.outcome() + "），退避後重試");
+                warn(server, row, "門", "B 門尚未改為結案目標（" + applied.outcome() + "），退避後重試", null);
                 backoff.failed(server.getTicks());
                 return;
             }
@@ -324,12 +351,12 @@ public final class HomeClosure {
             var removed = journal.finishHomeClose(server, row, new HomeClosureProof(server, row));
             if (!removed.removed()) {
                 warn(server, row, "移除", "回程熱列尚未 checked 移除（" + removed.status() + "），保留占用："
-                        + removed.failure().map(FailureText::describe).orElse("無原因"));
+                        + removed.failure().map(FailureText::describe).orElse("無原因"), removed.failure().orElse(null));
                 backoff.failed(server.getTicks());
                 return;
             }
         } catch (IOException | RuntimeException failure) {
-            warn(server, row, "交接", "回程收尾失敗，保留結案、收據原件與占用，退避後重試：" + FailureText.describe(failure));
+            warn(server, row, "交接", "回程收尾失敗，保留結案、收據原件與占用，退避後重試：" + FailureText.describe(failure), failure);
             backoff.failed(server.getTicks());
             return;
         }
@@ -339,11 +366,11 @@ public final class HomeClosure {
                 sid, row.chamberUuid());
     }
 
-    /** 同一 SID 同一原因只記一次 WARN。 */
-    private static void warn(MinecraftServer server, HomeSessionRecord row, String kind, String message) {
+    /** 同一 SID 同一原因只記一次 WARN；{@code cause} 是實際的失敗（沒有時為 null），有時附上 stack。 */
+    private static void warn(MinecraftServer server, HomeSessionRecord row, String kind, String message, Throwable cause) {
         var context = CONTEXTS.get(server);
         var key = kind + ":" + message;
         if (context != null && key.equals(context.warned.put(row.sessionUuid(), key))) return;
-        LOGGER.warn(LOG_MARKER, "{}：session={} chamber={}", message, row.sessionUuid(), row.chamberUuid());
+        LOGGER.warn(LOG_MARKER, "{}：session={} chamber={}", message, row.sessionUuid(), row.chamberUuid(), cause);
     }
 }

@@ -38,6 +38,8 @@ public final class SessionRecoveryManager {
     // 第一次失敗後 200 ticks 才重試，之後加倍到 12000；任何一次寫出讀回確認、或已沒有尚未確認的 roll-forward 時清除。新 instance 沒有退避。
     private final dev.quantumchamber.collapse.CollapseBackoff journalRetry=new dev.quantumchamber.collapse.CollapseBackoff();
     private int journalRetryFailedTick=Integer.MIN_VALUE;
+    // M7 HOME 列 roll-forward 重試寫出的 WARN 去重鍵（FailureText.dedupeKey）；寫出確認或已沒有待確認的 HOME roll-forward 時清除。
+    private String homeRetryWarning;
     // 凍結中位置修正的節流：玩家 → 最近一次修正的 server tick。過期的項目與不存在等價，每個 recovery tick 清掉，
     // 所以只留最近 CORRECTION_INTERVAL_TICKS 內修正過的玩家；斷線或 session 結束後最多再留一個間隔。
     private final Map<UUID,Integer> corrections=new HashMap<>();
@@ -174,8 +176,36 @@ public final class SessionRecoveryManager {
                             FailureText.describe(failure),failure);
             }
         }
+        // M7 HOME 列（root latch、CLOSE latch 與其他 roll-forward）不在上面的 legacy 迴圈：寫出失敗後同樣只由這裡重試同一份寫出，
+        // 沿用同一個 journal 退避（同一個 tick 只算一次失敗）。HomeRootFence 與 HomeClosure 在未確認時只排隊／收斂，不自行重寫。
+        if(retryHomeRollForward(owner,now)) rollForwardOutstanding=true;
         // 已沒有尚未確認的 roll-forward（本 tick 的寫出已確認，或其他寫出、原生 autosave 已帶出）：清除 journal 的退避。
         if(!rollForwardOutstanding) { journalRetry.reset(); journalRetryFailedTick=Integer.MIN_VALUE; }
+    }
+
+    /**
+     * HOME 列的 roll-forward 尚未確認時，在 journal 退避允許的 tick 重試寫出同一份 current（審查 T4a I-1）。寫出失敗沿用 {@link #journalRetry}
+     * 的退避（200→12000 ticks），WARN 以 {@link FailureText#dedupeKey} 去重並附 cause；寫出確認後清除去重鍵。
+     * @return 呼叫前仍有待確認的 HOME roll-forward（本 tick 是否寫出成功都算，與 legacy 的 RETRY_FLUSH 一致）
+     */
+    private boolean retryHomeRollForward(MinecraftServer owner,int now) {
+        var pending=new ArrayList<UUID>();
+        for(var row : journal.allSessions().values())
+            if(row instanceof HomeSessionRecord && journal.rollForwardPending(row.sessionUuid())) pending.add(row.sessionUuid());
+        if(pending.isEmpty()) { homeRetryWarning=null; return false; }
+        if(!journalRetry.ready(now)) return true;
+        try {
+            journal.flush(owner);
+            homeRetryWarning=null;
+        } catch(RuntimeException failure) {
+            if(journalRetryFailedTick!=now) { journalRetry.failed(now); journalRetryFailedTick=now; }
+            var key=FailureText.dedupeKey(failure);
+            if(!key.equals(homeRetryWarning))
+                org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("HOME roll-forward 的重試寫出失敗，保留 pending 並依 journal 退避重試：sessions={}：{}",pending,
+                        FailureText.describe(failure),failure);
+            homeRetryWarning=key;
+        }
+        return true;
     }
 
     /** recovery tick 對一筆 flushed record 要做的事。 */
@@ -187,6 +217,8 @@ public final class SessionRecoveryManager {
      * <p>三個塌縮狀態只要有尚未確認的 roll-forward（返還與清 lease 進度、進入 SEALED、Crossed 等），一律只重試寫出同一份 current
      * （RETRY_FLUSH，以 journal 為單位退避，見 {@link #tick}），不從 flushed 疊寫新進度（spec §6 收斂共通第 2 點、§7；疊寫會讓已返還者倒退，
      * 被 sameAuthority 拒絕）。這是所有 roll-forward 唯一的重試者：塌縮流程與走廊清理在 roll-forward 未確認時只暫停，不自行重寫。
+     * M7 的 HOME 列不經這個 switch（{@code flushedRecords()} 只列舊列），由 {@link #tick} 的 HOME 分支以同一個 journal 退避重試；
+     * 回程停用防線與終局 owner（{@code HomeRootFence}、{@code HomeClosure}）在 roll-forward 未確認時同樣只排隊或等待，不自行重寫。
      * PASSAGE_READY 與 SEALED 全員已返還、沒有 lease，沒有返還工作。
      */
     static RecoveryWork recoveryWork(SessionRecoveryState journal,SessionRecoveryRecord record,boolean measuredRecoveryRequested) {
@@ -273,7 +305,7 @@ public final class SessionRecoveryManager {
         requireServer(owner); joinTicks.clear(); disconnected.clear(); disconnectWarnings.clear(); failures.clear(); returnTicks.clear(); moveWarnings.clear();
         landingWarnings.clear();
         corrections.clear(); converging.clear(); convergenceFailures.clear(); convergenceWarning=null; convergenceWarningText=null;
-        journalRetry.reset(); journalRetryFailedTick=Integer.MIN_VALUE; if(active==this) active=null;
+        journalRetry.reset(); journalRetryFailedTick=Integer.MIN_VALUE; homeRetryWarning=null; if(active==this) active=null;
     }
 
     private void recover(SessionRecoveryRecord initial) throws IOException {
