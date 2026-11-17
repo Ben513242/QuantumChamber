@@ -765,7 +765,7 @@ pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifyAggregate <c
   - 單份 summary 只有「選擇 all、列恰為 `windows.native` 全部 46 列、treeClean=true」才輸出 `M7_HOME_VERIFIED_COMPLETE PASS`（T4 完整 PASS）。`-Only`、`-DoorState`、`-Family` 的 summary 驗過內容也只輸出 `M7_HOME_VERIFIED_SHARD PASS`（分片 PASS），兩個名稱不同，不能只看 exit 0；加 `-RequireComplete` 時分片以 `M7_HOME_NOT_COMPLETE` 失敗。
   - `-VerifyAggregate` 彙總多份分片：只接受 `-DoorState` 與 `-Family` 分片（`only`、`all` 以 `M7_HOME_AGGREGATE_SHARD` 拒絕）；至少兩份（`M7_HOME_AGGREGATE_INPUT`）；每份 treeClean（`M7_HOME_AGGREGATE_TREE`）、同一個 HEAD（`M7_HOME_AGGREGATE_HEAD`）、各自通過單份驗證（`M7_HOME_AGGREGATE_MEMBER`）；分片與列都不得重複（`M7_HOME_AGGREGATE_OVERLAP`）；列的聯集恰為 `windows.native`（`M7_HOME_AGGREGATE_UNION`）。合法組合只有「三個門態分片（13,13,13）＋restart＋receipt」與「close＋restart＋receipt」，最後再明確比對（`M7_HOME_AGGREGATE_COMBINATION`）。PASS 輸出 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState|family`，這也算 T4 完整 PASS。
   - `-SelfTest` 另補：每份 summary 加 `tree-dirty`；分片另加「選擇改成 all」（`M7_HOME_SAVED_SELECTION`）與「分片不能通過完整性判定」（`M7_HOME_NOT_COMPLETE`）；彙總另有缺片、重複成員、不同 HEAD、treeClean=false、成員自稱 all、only 成員、只給一份、列從一片搬到另一片（聯集不變但成員不符）8 個，並對每一份成員跑單份負控。總數上限 479（與 M6 同），超過以 `M7_HOME_SELFTEST_BUDGET` 失敗；46 列時為 376（單份完整：8＋8×46）、406（family 三份：8＋10×3＋368）、426（門態五份：8＋10×5＋368）。
-- run-all 與 CI 接線屬 T4 Phase B2b-3，這裡不納入。
+- run-all 與 CI 接線見下方「run-all 與 CI 接線（T4 B2b-3）」。
 
 ### B2a：其餘跨 JVM 鏈（`M7HomeChainPhases.java`）
 
@@ -786,7 +786,7 @@ manifest 在 close 矩陣 39 列之後再接 7 列（B2a 的 5 列、T4 P1 的 `
 - 同 JVM 的子項（`M7HomeClosureGameTests`）：`checkpoint_failure_keeps_close_and_lock`（checkpoint 結果未知）、`existing_receipt_mismatch_keeps_lock`（發佈前目標已存在而內容不同）、`published_receipt_mismatch_keeps_lock`（收據與熱列跨檔不符；T4 P1 起不再避開原生 autosave 的窗口，改成在不符而且 journal dirty 的期間正面呼叫 `saveAll(true,false,false)`（autosave 的同一條路徑）與 `saveAll(true,true,true)`（`/save-all flush`，原版 `SaveAllCommand` 的同一條路徑），斷言例外不傳出、raids 與 level.dat（flush 時另有兩側 chunk）都存到、journal 照原樣寫出、保鎖，管理員 ERROR 只記一次）；T4 P2 的 `native_save_write_failure_keeps_pending`（`M7NativeSaveFault` 讓 journal 正式寫出的 atomic move 失敗：checked 寫出與故障期間的兩次原生存檔都不得把例外傳出、journal 檔不變、保留 dirty／pending／待確認的 roll-forward、原生存檔的 ERROR 恰一則帶 `TICK_LOG_MARKER`；解除故障後由 recovery 的 journal 退避重試自行收斂）與 `native_save_skips_unhealthy_journal`（journal 不健康時原生存檔不丟出、不寫 journal，其他資料照常存到，恢復健康後照常寫出）。M4 recovery 的 `readback-fault` 自 T4 P2 起預期正常停服：原生 save 不丟出、不寫入、journal hash 不變，PENDING 類 ERROR 恰一則（訊息寫明需要重啟伺服器才能收斂），停服完成（SERVER_STOPPED、JVM exit 0）、磁碟上仍是那份 exact attempt；`recover`、`verify` 照舊。T4 B2b-1（P2-M4）起 `pending-stopped.json` 另記 `stopSaveCalls`（SERVER_STOPPING 之後真正進入 journal save 本體的次數，save HEAD 計數、被凍結取消的不算；ERROR 已去重，不能代替）與 `universeUnchanged`（與一般停服路徑相同，停服不得改 Universe catalog／world keys），Java 與 `m4-recovery-probe.ps1` 都要求 `stopSaveCalls≥1`、`universeUnchanged=true`。
 - 共用 GT server 的殘留收尾（T4 B2b-1，P2-M3）：`M7HomeClosureGameTests.Projection` 記下 `settled()`／`dormant()` 建立的 SID，`close()` 時在釋放 B 區塊票之前，以正式路徑收掉仍在 journal 的列（必要時 checked 清租約、checked latch `ROOT_DISABLED`，再呼叫回程終局 owner 的 `HomeClosure.step`），成功記 `M7_GT_RESIDUE_CLOSED`，收不掉記 `M7_GT_LEFTOVER_HOME`（附 thresholds）；不在 test 結束後另等（下一個 batch 已開始）。`native_save_write_failure_keeps_pending` 因此先等 B 端就緒（`whenEntryReady`，最多 380 tick，tickLimit 2000→2300）。`M7CapacityFixture.admit` 先檢查共用 journal 沒有其他 HOME 列與 pending，不成立時以 `PRIOR_TEST_RESIDUE` 失敗，不誤報成容量問題。
 - 原生存檔 ERROR 的去重（T4 B2b-1，P2-M2）：同一段失敗期間每一類只記一則；讀回確認的成功寫出結束這段期間，之後再發生同類失敗仍再記一則。收據 ERROR 的去重（SID×類別）在這個 SID 的收據核對（`verifyActive`）通過時清除（T4 B2b-2，B2b1-M2）：不符期間核對一直失敗，仍只記一則；修好之後同一個 SID 再犯會再記。不以「寫出成功」清除，因為未變動的不符列每次存檔都照原樣寫出成功。收據檔路徑由 `HomeReceiptStore.receiptPath` 單一來源計算，收據讀寫與這則 ERROR 共用（P2-M5 第 4 點）。
-- `-VerifySummary` 的完整性檢查與 `-VerifyAggregate` 已在 T4 B2b-2 完成（見上方「完整性」）；run-all、CI 接線屬 T4 Phase B2b-3。
+- `-VerifySummary` 的完整性檢查與 `-VerifyAggregate` 已在 T4 B2b-2 完成（見上方「完整性」）；run-all、CI 接線見下方「run-all 與 CI 接線（T4 B2b-3）」。
 
 ### >4096 趟回程歷史（T4 B2b-2，plan Task 4 :265、V10）
 
@@ -796,3 +796,19 @@ manifest 在 close 矩陣 39 列之後再接 7 列（B2a 的 5 列、T4 P1 的 `
 
 - `build.gradle` 的 `test` 開 `testLogging { events 'started', 'passed', 'failed' }`：Gradle console 即時印出每個案例的開始與結果。不開 `showStandardStreams`，測試自己的 stdout 仍只進 XML。全部 JUnit 的 gate 都會多出這些事件列。
 - `M7HomeHistoryScaleTest` 依序拆成 `tripsBlock01Of10`～`tripsBlock10Of10`（各 410 趟）與最後的 `moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（admission、讀回、磁碟計數），共 11 個方法，`m7-inventory.json` 的 `portable.junit` 同步列出。`@TestInstance(PER_CLASS)`＋`@TestMethodOrder(OrderAnnotation)` 共用同一份累積狀態，存檔目錄是 static `@TempDir`（非 static 的 `@TempDir` 欄位在 JUnit 5.10 每個方法都會重新注入）。每一趟的步驟與斷言、4100 趟的數量都沒有改；每段開頭與最後一個方法都先核對前面的趟數全部完成（`BLOCK_ORDER`），一段失敗之後其餘各段都以具名錯因失敗，也不能只單獨跑其中一個方法。本機每段約 5 秒。
+
+### run-all 與 CI 接線（T4 B2b-3）
+
+run-all 新 step `m7-home-native`（在 `m6-native` 之後）：
+
+- 以 `-EvidenceRoot <run root>` 一次跑完整 46 列（本機約 30 分鐘：46 列×約 38 秒）。run root 內必須恰好一份 `m7-home-run-<12 hex>.json`（`M7_HOME_RUNALL_SUMMARY`）。
+- 再以 `-VerifySummary <那一份> -ExpectedHead <run-all 開始時的 HEAD> -RequireComplete -SelfTest` 驗證，輸出必須恰好一行 `M7_HOME_VERIFIED_COMPLETE PASS rows=46 phases=92 … selection=all HEAD=<同一個 HEAD>`（`M7_HOME_RUNALL_NOT_COMPLETE`）。分片 summary 會被 `-RequireComplete` 以 `M7_HOME_NOT_COMPLETE` 拒絕，不能冒充完整。
+- run-all 的其他 step（含最後的 `summary`）沒有改，`summary.json` 不另記這一段；結果看 console.log 的 `BEGIN／END m7-home-native` 與 run root 內的 summary。
+- `summary` step 的 M4 recovery `readback-fault` 分支另外直接核 `pending-stopped.json` 的 `stopSaveCalls≥1` 與 `universeUnchanged=true`（B2b1-M4，與 `m4-recovery-probe.ps1` 對齊）。
+
+CI（`.github/workflows/build.yml`）新增兩個 job，其他 job 不變：
+
+- `m7-home-native`（windows-latest，matrix 四片，`fail-fast: false`）：`ordinary`、`sealed`、`passable` 各以 `-DoorState` 跑 13 列；`restart-receipt` 依序以 `-Family restart`、`-Family receipt` 跑 3＋4 列。每次 runner 輸出的 `M7_HOME_SUMMARY=` 恰一行，路徑依序寫進 `build/m7-home-native/<shard>.txt`。驗證 step 對每一份跑 `-VerifySummary -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為該選擇的 `M7_HOME_VERIFIED_SHARD PASS … selection=doorState:<門態>|family:<族> HEAD=$GITHUB_SHA`（單份驗證對分片也是 exit 0，所以不只看 exit code）。artifact `m7-home-native-<shard>`：清單、summary、phase 證據（`.superpowers/verification/m7-home-*/**`）、各 root 的 `preservation.json`、`server.properties`、`world/data/**`。
+- `m7-home-native-aggregate`（`needs: m7-home-native`，windows-latest）：以 `merge-multiple` 把四片 artifact 下載回 workspace 根目錄。summary 內記的是絕對路徑，所以彙總也必須在 windows-latest（workspace 路徑與分片 job 相同）；先核四個清單恰為 `ordinary,passable,restart-receipt,sealed`、合計 5 份 summary、每份 summary 引用的 `preservation.json` 與 phase receipt 都已下載（`M7_HOME_CI_AGGREGATE_*`），再跑 `-VerifyAggregate … -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=46 phases=92 … HEAD=$GITHUB_SHA`。結果另存 artifact `m7-home-aggregate`。
+- timeout：分片 job 90 分鐘、執行 step 60 分鐘、驗證 10 分鐘；彙總 job 30 分鐘。依據：本機門態分片 450～572 秒、restart 約 103 秒、receipt 約 130 秒；同 runner 上 M6 原生鏈本機約 8 分鐘、CI job 24～31 分鐘（約 3～3.9 倍），M7 JUnit 約 3～3.5 倍，估門態分片在 CI 約 30～40 分鐘（含第一個 phase 的冷編譯）。
+- 這些 step 目前沒有 `ci-rule-check.ps1` 的 fixture；T4 B2b-3 以 SDD 內一次性的 harness 逐字抽出 step 原文實跑驗證（見 SDD `t4b2b3-report.md`）。

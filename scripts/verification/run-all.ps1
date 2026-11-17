@@ -273,6 +273,15 @@ Step 'm3' { & $gates -Mode M3 -Label m3 -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'recovery' { & (Join-Path $PSScriptRoot 'm4-recovery-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm5-collapse' { & (Join-Path $PSScriptRoot 'm5-collapse-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm6-native' { & (Join-Path $PSScriptRoot 'm6-universe-probe.ps1') -AllEnabled -EvidenceRoot $runRoot -Gradle $Gradle }
+# M7 T4 B2b-3：Windows 原生 M7 回程終局跨 JVM 鏈，完整 46 列一次跑完；唯一一份 summary 必須是 T4 完整 PASS（-RequireComplete：分片 PASS 不算），並跑全部負控。
+Step 'm7-home-native' {
+    & (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle
+    $m7Summaries=@(Get-ChildItem -LiteralPath $runRoot -File | Where-Object {$_.Name -cmatch '^m7-home-run-[0-9a-f]{12}\.json$'})
+    if($m7Summaries.Count -ne 1){throw "M7_HOME_RUNALL_SUMMARY：run root 必須恰一份 m7-home-run summary（$($m7Summaries.Count)）"}
+    $m7Verify=@(& (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -VerifySummary $m7Summaries[0].FullName -ExpectedHead $startHead -RequireComplete -SelfTest)
+    $m7Verify
+    if(@($m7Verify | Where-Object {"$_" -cmatch ('^M7_HOME_VERIFIED_COMPLETE PASS rows=46 phases=92 .* selection=all HEAD='+[regex]::Escape($startHead)+'（')}).Count -ne 1){throw 'M7_HOME_RUNALL_NOT_COMPLETE：沒有恰一行 46 列的 M7_HOME_VERIFIED_COMPLETE PASS'}
+}
 Step 'ci-rule' {
     $normal=One 'gate-m4-normal-'; $full=One 'gate-full-'; $m5=One 'gate-m5-gametest-'
     $xml=Join-Path $full 'result-build/gametest-results.xml'; $junit=Join-Path $full 'result-build/test-results/test'
@@ -452,6 +461,8 @@ Step 'summary' {
             $stopped=Read-Json (Join-Path $pendingRoot 'pending-stopped.json')
             if($stopped.status -cne 'PENDING_STOPPED' -or $stopped.pid -ne $phase.javaPid -or $stopped.startupNonce -cne $phase.startupNonce -or @($stopped.failures).Count -ne 0 -or $stopped.stoppedSeen -ne $true -or $stopped.stoppingSeen -ne $true -or
                 $stopped.journalHashAfterStop -cne $receipt.journalHash -or $stopped.exactAttemptKept -ne $true -or $stopped.pendingKept -ne $true -or $stopped.levelSaved -ne $true -or $stopped.nativeErrorsAfterStop -ne 1){throw 'M4_PENDING_SUMMARY：停服後的 exact attempt 或停寫不符'}
+            # T4 B2b-3（B2b1-M4）：與 m4-recovery-probe.ps1 對齊，summary 也直接核停服存檔確實進入 journal save、停服沒有改 Universe catalog／world keys。
+            if($stopped.PSObject.Properties.Name -cnotcontains 'stopSaveCalls' -or $stopped.stopSaveCalls -lt 1 -or $stopped.universeUnchanged -ne $true){throw "M4_PENDING_SUMMARY：停服存檔沒有進入 journal save 或停服改了 Universe（stopSaveCalls=$($stopped.stopSaveCalls) universeUnchanged=$($stopped.universeUnchanged)）"}
             $exact=Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-exact-stack.txt') -Raw
             if($exact -notmatch 'CandidateDoorInteraction.failSession' -or $exact -notmatch 'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED'){throw 'M4_PENDING_SUMMARY：首次exact拒寫缺失'}
             foreach($kind in @('native-refusal','other-refusal')) {
