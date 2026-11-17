@@ -33,6 +33,7 @@ import dev.quantumchamber.superposition.SessionState;
 import dev.quantumchamber.universe.UniverseLifecycleService;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -62,7 +63,7 @@ import org.slf4j.LoggerFactory;
  *     不操作 A，也不掃歷史。</li>
  * </ul>
  * 只在 server thread 執行；三個入口（{@link #step}、{@link #onParticipantClose}、{@link #onEntryStopped}）的核對與寫入都在該 SID 的 session operation guard 內
- * （M7 spec §9.1 :249），同 SID 已有進行中的操作時不寫入。每一則 log 都帶 {@link CollapseService#LOG_MARKER}（不屬於任何 session 的帶 {@link CollapseService#TICK_LOG_MARKER}）。
+ * （M7 spec §9.1 :249），同 SID 已有進行中的操作時不寫入（參與者關門與 B 停止訊號另記一則 WARN）。每一則 log 都帶 {@link CollapseService#LOG_MARKER}（不屬於任何 session 的帶 {@link CollapseService#TICK_LOG_MARKER}）。
  */
 public final class HomeClosure {
     private static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber");
@@ -78,6 +79,8 @@ public final class HomeClosure {
         final Set<UUID> startup;
         final Map<UUID, CollapseBackoff> backoff = new HashMap<>();
         final Map<UUID, String> warned = new HashMap<>();
+        /** 因同 SID 已有進行中的操作而拒絕過的入口（{@link #refusedUnderGuard}）；與 {@link #warned} 分開，不和其他原因共用去重鍵。 */
+        final Map<UUID, Set<String>> guardRefused = new HashMap<>();
         Context(Set<UUID> startup) { this.startup = Set.copyOf(startup); }
     }
 
@@ -227,13 +230,14 @@ public final class HomeClosure {
 
     /**
      * 正式互動入口：參與者在 exact B 關門（PREPARE 或 PASSAGE）。在這個 SID 的 session operation guard 內（M7 spec §9.1 :249）核 actor 是在線、存活、非旁觀、
-     * 位於 exact B 的 cohort 成員，再凍結與交接；同 SID 已有進行中的操作（包括呼叫端自己持有這個 guard）時回 REFUSED、不寫入。
+     * 位於 exact B 的 cohort 成員，再凍結與交接；同 SID 已有進行中的操作（包括呼叫端自己持有這個 guard）時回 REFUSED、不寫入，並記一則 WARN
+     * （同一 SID 只記一次）。
      */
     public static ChamberCollapsePort.DoorUse onParticipantClose(MinecraftServer server, HomeSessionRecord row, ServerPlayerEntity actor,
             DoorPhase phase, long observedAt) {
         if (!server.isOnThread()) return ChamberCollapsePort.DoorUse.REFUSED;
         var pages = CorridorPageManager.forServer(server);
-        if (pages.operationInProgress(row.sessionUuid())) return ChamberCollapsePort.DoorUse.REFUSED;
+        if (refusedUnderGuard(server, pages, row, "參與者關門被拒")) return ChamberCollapsePort.DoorUse.REFUSED;
         return pages.exclusiveOperation(row.sessionUuid(), () -> participantCloseInGuard(server, row, actor, phase, observedAt));
     }
 
@@ -257,12 +261,13 @@ public final class HomeClosure {
      * B 端的停止只有 {@link EntrySignal#LOW}（斷電）與 {@link EntrySignal#INVALID}（結構失效）。{@link EntrySignal#DISABLED} 依使用者 2026-11-17 裁示
      * 當成不會發生，一律拒絕、不 mint：投影艙沒有停用開關（{@code ChamberMaintenanceInteraction.toggleEnabled} 要求原艙身分）。記錄格式仍保留
      * {@code HomeSessionRecord.Signal.DISABLED}，只為舊資料相容。
-     * <p>核對與寫入都在這個 SID 的 session operation guard 內（M7 spec §9.1 :249）；同 SID 已有進行中的操作（包括呼叫端自己持有這個 guard）時不 mint、不寫入。
+     * <p>核對與寫入都在這個 SID 的 session operation guard 內（M7 spec §9.1 :249）；同 SID 已有進行中的操作（包括呼叫端自己持有這個 guard）時不 mint、不寫入，
+     * 並記一則 WARN（同一 SID 只記一次）。
      */
     public static void onEntryStopped(MinecraftServer server, HomeSessionRecord row, ServerWorld entry, EntrySignal signal, long observedAt) {
         if (!server.isOnThread() || row.state() != SessionState.PASSAGE_READY || signal == null || signal == EntrySignal.DISABLED) return;
         var pages = CorridorPageManager.forServer(server);
-        if (pages.operationInProgress(row.sessionUuid())) return;
+        if (refusedUnderGuard(server, pages, row, "B 停止訊號被拒")) return;
         pages.exclusiveOperation(row.sessionUuid(), () -> { entryStoppedInGuard(server, row, entry, signal, observedAt); return null; });
     }
 
@@ -361,9 +366,22 @@ public final class HomeClosure {
             return;
         }
         HomeRootTickets.release(server, sid);
-        if (context != null) { context.backoff.remove(sid); context.warned.remove(sid); }
+        if (context != null) { context.backoff.remove(sid); context.warned.remove(sid); context.guardRefused.remove(sid); }
         LOGGER.info(LOG_MARKER, "回程已收尾：B 門 {}、原生 checkpoint、收據與熱列移除都已 checked（{}）：session={} chamber={}", target, close.reason(),
                 sid, row.chamberUuid());
+    }
+
+    /**
+     * 正式入口的拒絕條件：同 SID 已有進行中的操作（包括呼叫端自己持有這個 guard，例如把門處理包進同 SID 的 {@code exclusiveOperation}）時回 true，
+     * 本次不寫入。拒絕時記一則 WARN，與一般拒絕區分（T4 Phase A fix2 審查 N1）；同一 SID、同一入口只記一次，去重與 {@link #warn} 的其他原因分開。
+     */
+    private static boolean refusedUnderGuard(MinecraftServer server, CorridorPageManager pages, HomeSessionRecord row, String entry) {
+        if (!pages.operationInProgress(row.sessionUuid())) return false;
+        var context = CONTEXTS.get(server);
+        if (context == null || context.guardRefused.computeIfAbsent(row.sessionUuid(), ignored -> new HashSet<>()).add(entry))
+            LOGGER.warn(LOG_MARKER, "{}：同一 session 已有進行中的操作（呼叫端可能自己持有 guard），本次不寫入：session={} chamber={}", entry,
+                    row.sessionUuid(), row.chamberUuid());
+        return true;
     }
 
     /** 同一 SID 同一原因只記一次 WARN；{@code cause} 是實際的失敗（沒有時為 null），有時附上 stack。 */

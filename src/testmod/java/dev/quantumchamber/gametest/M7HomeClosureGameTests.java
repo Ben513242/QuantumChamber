@@ -456,6 +456,198 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         c.complete();
     }
 
+    /**
+     * T4 Phase B0 N1：呼叫端自己持有同 SID 的 session operation guard 時，參與者關門與 B 停止訊號都拒絕、不寫入（M7 spec §9.1 :249），並各記一則
+     * WARN（同一 SID、同一入口只記一次；WARN 以 GREEN log 為證，這裡不斷言 log）。B 斷電，所以沒有 guard 時同一個 LOW 訊號會 mint ENTRY_STOPPED；
+     * 兩個入口交錯各呼叫兩次。guard 釋放後同一個參與者關門照常結案。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_guard_refused",tickLimit=600)
+    public void caller_held_guard_refuses_participant_close_and_entry_stop(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new Projection(c, hooks);
+        try {
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            var pages = dev.quantumchamber.corridor.CorridorPageManager.forServer(server);
+            var sid = UUID.randomUUID();
+            var dormant = p.dormant(sid, 45);
+            var h = dormant.home();
+            long time = server.getOverworld().getTime();
+            var collapse = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.COLLAPSING,
+                    new Home(h.selection(), time, -1, -1, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
+            c.assertTrue(journal.commitHomeRestore(server, dormant, collapse).committed(), "checked COLLAPSING");
+            var ready = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.PASSAGE_READY,
+                    new Home(h.selection(), time, time, time + 1200, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
+            c.assertTrue(journal.commitHomeRestore(server, collapse, ready).committed(), "checked READY");
+            c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, ChamberDoorService.DoorState.passable(p.frame.outwardFacing())).succeeded(),
+                    "B 的門是可通行膜");
+            c.assertTrue(!p.b.isReceivingRedstonePower(p.frame.controllerPos()), "前提：B 斷電，沒有 guard 時 LOW 訊號成立");
+            var writes = guardWitness(c, p, sid, hooks);
+            var actor = p.f.players.getFirst().player();
+            var spot = Vec3d.ofBottomCenter(ChamberGeometry.localToWorld(p.frame, 3, 1, 3));
+            c.assertTrue(actor.teleport(p.b, spot.x, spot.y, spot.z, Set.of(), 0, 0) && actor.getServerWorld() == p.b, "參與者在 exact B");
+            long now = server.getOverworld().getTime();
+            BooleanSupplier unchanged = () -> ready.equals(journal.allSessions().get(sid)) && ready.equals(journal.allFlushedSessions().get(sid))
+                    && !journal.rollForwardPending(sid);
+            // 依呼叫順序記錄每次呼叫的結果與之後 journal 是否改變；失敗訊息以第一個偏差的呼叫命名（後面的呼叫看到的改變可能是前一個呼叫寫的）。
+            var calls = new ArrayList<String>();
+            pages.exclusiveOperation(sid, () -> {
+                for (int round = 1; round <= 2; round++) {
+                    try {
+                        var use = HomeClosure.onParticipantClose(server, ready, actor, HomeClosure.DoorPhase.PASSAGE, now);
+                        calls.add("participant#" + round + "=" + use + (unchanged.getAsBoolean() ? "" : "/WRITTEN"));
+                    } catch (RuntimeException failure) { calls.add("participant#" + round + "=THREW:" + failure); }
+                    try {
+                        HomeClosure.onEntryStopped(server, ready, p.b, HomeClosure.EntrySignal.LOW, now);
+                        calls.add("entry#" + round + (unchanged.getAsBoolean() ? "" : "=WRITTEN"));
+                    } catch (RuntimeException failure) { calls.add("entry#" + round + "=THREW:" + failure); }
+                }
+                return null;
+            });
+            var expectedCalls = List.of("participant#1=REFUSED", "entry#1", "participant#2=REFUSED", "entry#2");
+            int first = 0;
+            while (first < calls.size() && first < expectedCalls.size() && calls.get(first).equals(expectedCalls.get(first))) first++;
+            boolean entryFirst = first < calls.size() && calls.get(first).startsWith("entry");
+            c.assertTrue(calls.equals(expectedCalls), (entryFirst
+                    ? "GUARD_HELD_ENTRY_WROTE：呼叫端持有同 SID 的 guard 時，B 停止訊號不得 mint、journal 不變（第一個偏差在 B 停止訊號）："
+                    : "GUARD_HELD_PARTICIPANT_WROTE：呼叫端持有同 SID 的 guard 時，參與者關門必須回 REFUSED、journal 不變（第一個偏差在參與者關門）：")
+                    + calls);
+            c.assertTrue(writes.isEmpty(), "GUARD_HELD_WRITES：持有 guard 期間不得有 journal 寫出或 B 門 checkpoint：" + writes);
+            c.assertTrue(HomeClosure.onParticipantClose(server, ready, actor, HomeClosure.DoorPhase.PASSAGE, server.getOverworld().getTime())
+                    == ChamberCollapsePort.DoorUse.HANDLED, "guard 釋放後同一個參與者關門照常處置");
+            var store = p.receipts();
+            until(c, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                try {
+                    var receipt = store.lookup(sid).orElseThrow();
+                    c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.PARTICIPANT_CLOSED
+                            && k.evidence().equals(new ParticipantClosed(actor.getUuid(), HomeSessionRecord.Phase.PASSAGE, now)),
+                            "guard 釋放後以參與者關門結案：" + receipt.home().closeIntent());
+                    c.assertTrue(!writes.isEmpty() && writes.stream().allMatch(write -> write.endsWith("guard=true")),
+                            "GUARD_WRITE_OUTSIDE：guard 釋放後的結案寫出與 B 門 checkpoint 都必須在 session operation guard 內：" + writes);
+                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
+                    c.complete();
+                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                finally { p.close(); hooks.release(); }
+            }, () -> {
+                try { throw new GameTestException("GUARD_RELEASED_CLOSE_NOT_FINISHED row=" + journal.allSessions().get(sid) + " writes=" + writes); }
+                finally { p.close(); hooks.release(); }
+            });
+        } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /**
+     * T4 Phase B0 N2：HOME 列 roll-forward 的寫出持續失敗時，唯一重試者 SessionRecoveryManager 沿用 journal 退避（M7 spec §6 :186）。寫入當下 1 次、
+     * 同一個 tick 的重試 1 次都失敗；之後 200 ticks 內不再寫出，第 200 個 tick 才重試（仍失敗）；下一次間隔是 400（每個失敗的 tick 只算一次）。
+     * 原生 autosave 不經過 flush 探針，所以先等到接下來 800 個 tick 內不會有 autosave，確認時稽核窗口內每一次寫出都經過探針、只帶本案的 session。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_backoff",tickLimit=2000)
+    public void home_roll_forward_retry_follows_journal_backoff(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new Projection(c, hooks);
+        try {
+            hooks.add(p::close);
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            var sid = UUID.randomUUID();
+            M5GameTestSupport.afterAutosaveClear(c, 1, "m7_home_retry_backoff", 800, (start, autosave) -> {
+                var settled = p.settled(sid, 47);
+                var dormant = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, settled.participants(), List.of(), SessionState.MEASURED, settled.home());
+                var fault = new M5GameTestSupport.FlushFault(server, "T4b0 GameTest 受控：HOME roll-forward 的 journal 寫出持續失敗", Integer.MAX_VALUE,
+                        state -> !Objects.equals(state.allSessions().get(sid), state.allFlushedSessions().get(sid)));
+                M5GameTestSupport.installFlushProbe(c, fault, hooks);
+                // 任何路徑收尾都先解除故障並帶出尚未確認的寫出，不把全域 pending 留給之後的 test（hooks 後進先出）；只在判定之後執行。
+                hooks.add(() -> { fault.disarm(); if (journal.rollForwardPending(sid)) journal.flush(server); });
+                c.assertTrue(journal.commitHomeRollForward(server, settled, dormant).status() == SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING
+                        && journal.rollForwardPending(sid), "前提：HOME roll-forward 的寫出受控失敗、待確認");
+                // 第三次寫出（第一次失敗後的第一次重試）之後才解除故障，讓下一次重試確認。
+                M5GameTestSupport.whenTicks(c, start + 1, 400, () -> fault.ticks().size() >= 3, retried -> {
+                    fault.disarm();
+                    M5GameTestSupport.whenTicks(c, retried + 1, 800, () -> !journal.rollForwardPending(sid), confirmed -> {
+                        var attempts = fault.ticks();
+                        var journalWrites = autosave.journalWrites(server, attempts, Set.of(sid));
+                        c.assertTrue(journalWrites.onlyProbed(), "窗口內每一次 journal 寫出都經過探針、只帶本案的 session：" + journalWrites.problems());
+                        c.assertTrue(attempts.size() == 4 && attempts.stream().filter(attempts.getFirst()::equals).count() == 2,
+                                "HOME_RETRY_ATTEMPTS：寫入當下與同一個 tick 的重試各一次，之後恰好兩次重試：" + attempts);
+                        c.assertTrue(attempts.get(2) - attempts.get(1) == CollapseBackoff.INITIAL_TICKS,
+                                "HOME_RETRY_IGNORED_BACKOFF：第一次失敗後 200 ticks 內不得再寫出，第 200 個 tick 才重試：" + attempts);
+                        c.assertTrue(attempts.get(3) - attempts.get(2) == 2 * CollapseBackoff.INITIAL_TICKS,
+                                "HOME_RETRY_DOUBLE_COUNTED：每個失敗的 tick 只算一次，下一次退避是 400：" + attempts);
+                        closeOutDormant(c, p, dormant, confirmed, hooks);
+                    }, () -> "HOME roll-forward 的重試沒有確認：attempts=" + fault.ticks() + " pending=" + journal.rollForwardPending(sid), hooks);
+                }, () -> "HOME roll-forward 沒有重試：attempts=" + fault.ticks() + " pending=" + journal.rollForwardPending(sid), hooks);
+            }, hooks);
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /**
+     * T4 Phase B0 N2：legacy 列與 HOME 列在同一個 tick 都寫出失敗時，journal 退避只算一次失敗（M7 spec §6 :186）。legacy COLLAPSING 進入 SEALED
+     * 與 HOME roll-forward 在同一個 callback 內都受控失敗；同一個 tick 的 recovery 只重試一次（legacy 的 RETRY_FLUSH 失敗後 HOME 分支不再寫）；
+     * 之後 200 ticks 內不再寫出，第 200 個 tick 重試（仍失敗），下一次退避是 400，不是 800。legacy fixture 暫停塌縮流程，收尾以終局 API 移除。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_backoff_shared",tickLimit=2000)
+    public void legacy_and_home_failing_in_one_tick_count_once(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new Projection(c, hooks);
+        try {
+            hooks.add(p::close);
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            var sid = UUID.randomUUID();
+            var owned = new ArrayList<UUID>();
+            hooks.add(() -> M5GameTestSupport.cleanupFixtures(server, owned));
+            var far = c.getAbsolutePos(net.minecraft.util.math.BlockPos.ORIGIN).add(6000, 70, 6000);
+            M5GameTestSupport.afterAutosaveClear(c, 1, "m7_home_legacy_same_tick", 800, (start, autosave) -> {
+                var legacy = M5GameTestSupport.collapseFixtureOwnedBy(server, M4CandidateTestAccess.origin(UUID.randomUUID(), far),
+                        Map.of(UUID.randomUUID(), true), List.of(), true, SessionState.COLLAPSING, true, owned);
+                var legacySid = legacy.sessionUuid();
+                var sealed = legacy.withCollapse(SessionState.SEALED, legacy.collapse().sealed(SealedReason.PROJECTION_FAILED));
+                var settled = p.settled(sid, 46);
+                var dormant = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, settled.participants(), List.of(), SessionState.MEASURED, settled.home());
+                var fault = new M5GameTestSupport.FlushFault(server, "T4b0 GameTest 受控：legacy 與 HOME 的 journal 寫出持續失敗", Integer.MAX_VALUE,
+                        state -> !Objects.equals(state.allSessions().get(sid), state.allFlushedSessions().get(sid))
+                                || !Objects.equals(state.allSessions().get(legacySid), state.allFlushedSessions().get(legacySid)));
+                M5GameTestSupport.installFlushProbe(c, fault, hooks);
+                hooks.add(() -> { fault.disarm(); if (journal.rollForwardPending(sid) || journal.rollForwardPending(legacySid)) journal.flush(server); });
+                c.assertTrue(journal.commitRollForward(server, legacy, sealed).status() == SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING
+                        && journal.rollForwardPending(legacySid), "前提：legacy 進入 SEALED 的寫出受控失敗、待確認");
+                c.assertTrue(journal.commitHomeRollForward(server, settled, dormant).status() == SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING
+                        && journal.rollForwardPending(sid), "前提：同一個 tick 的 HOME roll-forward 寫出也受控失敗、待確認");
+                M5GameTestSupport.whenTicks(c, start + 1, 400, () -> fault.ticks().size() >= 4, retried -> {
+                    fault.disarm();
+                    M5GameTestSupport.whenTicks(c, retried + 1, 800, () -> !journal.rollForwardPending(sid) && !journal.rollForwardPending(legacySid), confirmed -> {
+                        var attempts = fault.ticks();
+                        var journalWrites = autosave.journalWrites(server, attempts, Set.of(sid, legacySid));
+                        c.assertTrue(journalWrites.onlyProbed(), "窗口內每一次 journal 寫出都經過探針、只帶本案的 session：" + journalWrites.problems());
+                        c.assertTrue(attempts.size() == 5 && attempts.stream().filter(attempts.getFirst()::equals).count() == 3,
+                                "SAME_TICK_SINGLE_RETRY：兩個寫入當下各一次，同一個 tick 的 recovery 只重試一次，之後恰好兩次重試：" + attempts);
+                        c.assertTrue(attempts.get(3) - attempts.get(2) == CollapseBackoff.INITIAL_TICKS,
+                                "SAME_TICK_IGNORED_BACKOFF：第一次失敗後 200 ticks 內不得再寫出，第 200 個 tick 才重試：" + attempts);
+                        c.assertTrue(attempts.get(4) - attempts.get(3) == 2 * CollapseBackoff.INITIAL_TICKS,
+                                "SAME_TICK_DOUBLE_COUNTED：legacy 與 HOME 同一個 tick 失敗只算一次，下一次退避是 400、不是 800：" + attempts);
+                        c.assertTrue(sealed.equals(journal.flushedRecords().get(legacySid)) && dormant.equals(journal.allFlushedSessions().get(sid)),
+                                "同一次重試確認 legacy 與 HOME 兩列");
+                        closeOutDormant(c, p, dormant, confirmed, hooks);
+                    }, () -> "重試沒有確認：attempts=" + fault.ticks() + " home=" + journal.rollForwardPending(sid) + " legacy=" + journal.rollForwardPending(legacySid),
+                            hooks);
+                }, () -> "沒有重試：attempts=" + fault.ticks(), hooks);
+            }, hooks);
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /** N2 收尾：已確認的 DORMANT 以原艙停止 checked latch，由回程終局 owner 結案移除；之後釋放 hooks（含 Projection）。 */
+    private static void closeOutDormant(TestContext c, Projection p, HomeSessionRecord dormant, int tick, M2CorridorGameTests.TestHooks hooks) {
+        var server = p.f.server;
+        var journal = SessionRecoveryState.get(server);
+        var sid = dormant.sessionUuid();
+        c.assertTrue(journal.commitHomeRollForward(server, dormant, withStop(dormant, RootReason.ROOT_DISABLED, server.getOverworld().getTime())).committed(),
+                "收尾：原艙停止 checked latch");
+        M5GameTestSupport.whenTicks(c, tick + 1, 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), gone -> {
+            c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "收尾：checked 移除後解鎖");
+            hooks.release();
+            c.complete();
+        }, () -> "收尾：原艙停止後沒有結案移除：row=" + journal.allSessions().get(sid), hooks);
+    }
+
     /** 記下每一次 journal 寫出與 B 門原生 checkpoint 當下，這個 SID 的 session operation guard 是否持有（M7 spec §9.1 :249）。 */
     private static List<String> guardWitness(TestContext c, Projection p, UUID sid, M2CorridorGameTests.TestHooks hooks) {
         var writes = new ArrayList<String>();
