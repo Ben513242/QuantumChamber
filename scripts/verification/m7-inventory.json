@@ -60,7 +60,10 @@
       "quantumchamber:m1_empty|m7homeclosuregametests.fence_rejects_enable_before_startup_scan",
       "quantumchamber:m1_empty|m7homeclosuregametests.caller_held_guard_refuses_participant_close_and_entry_stop",
       "quantumchamber:m1_empty|m7homeclosuregametests.home_roll_forward_retry_follows_journal_backoff",
-      "quantumchamber:m1_empty|m7homeclosuregametests.legacy_and_home_failing_in_one_tick_count_once"
+      "quantumchamber:m1_empty|m7homeclosuregametests.legacy_and_home_failing_in_one_tick_count_once",
+      "quantumchamber:m1_empty|m7homeclosuregametests.checkpoint_failure_keeps_close_and_lock",
+      "quantumchamber:m1_empty|m7homeclosuregametests.existing_receipt_mismatch_keeps_lock",
+      "quantumchamber:m1_empty|m7homeclosuregametests.published_receipt_mismatch_keeps_lock"
     ]
   },
   "windows": {
@@ -108,7 +111,12 @@
       "close-passable-after-readback",
       "close-passable-after-recheck",
       "close-passable-before-remove",
-      "close-passable-after-remove"
+      "close-passable-after-remove",
+      "restart-enable-before-entry",
+      "restart-ready-stop-crossed",
+      "restart-ready-low-no-root",
+      "receipt-existing",
+      "receipt-player-closed"
     ]
   },
   "ubuntu": {

@@ -122,10 +122,17 @@ final class M7HomeClosurePhases {
 
     private M7HomeClosurePhases() {}
 
-    /** 39 列的名稱，依門態、cut 的順序。 */
-    static List<String> rows() {
+    /** close 矩陣 39 列的名稱，依門態、cut 的順序。 */
+    static List<String> closeRows() {
         var rows = new ArrayList<String>();
         for (var door : DOORS) for (var cut : CUTS) rows.add("close-" + door + "-" + cut);
+        return List.copyOf(rows);
+    }
+
+    /** probe 的完整列表（receipt 的 {@code rowTable}）：close 矩陣 39 列，之後是 B2a 的其餘鏈（{@link M7HomeChainPhases#NAMES}）。 */
+    static List<String> rows() {
+        var rows = new ArrayList<>(closeRows());
+        rows.addAll(M7HomeChainPhases.NAMES);
         return List.copyOf(rows);
     }
 
@@ -212,7 +219,7 @@ final class M7HomeClosurePhases {
     }
 
     /** probe 的設定（{@code quantumchamber.m7home.*}）；全部缺席時回 null（probe 關閉），部分存在或不合法時丟出。 */
-    record Configuration(String nonce, Row row, String phase, String startupNonce, Path root, Path evidence) {
+    record Configuration(String nonce, String row, String phase, String startupNonce, Path root, Path evidence) {
         static final String PREFIX = "quantumchamber.m7home.";
 
         static Configuration read() {
@@ -221,9 +228,9 @@ final class M7HomeClosurePhases {
             if (values.stream().allMatch(Objects::isNull)) return null;
             require(values.stream().allMatch(value -> value != null && !value.isBlank()), "M7_HOME_CONFIG_MISSING_PROPERTY " + values);
             String nonce = values.get(0), phase = values.get(1), startup = values.get(2);
-            var matcher = Pattern.compile("[0-9a-f]{12}-(close-[a-z]+-[a-z-]+)").matcher(nonce);
-            require(matcher.matches(), "M7_HOME_CONFIG_NONCE " + nonce);
-            var row = M7HomeClosurePhases.row(matcher.group(1));
+            var matcher = Pattern.compile("[0-9a-f]{12}-([a-z]+(?:-[a-z]+)+)").matcher(nonce);
+            require(matcher.matches() && rows().contains(matcher.group(1)), "M7_HOME_CONFIG_NONCE " + nonce);
+            var row = matcher.group(1);
             require(PHASES.contains(phase), "M7_HOME_CONFIG_PHASE " + phase);
             require(startup.matches("[0-9a-f]{32}"), "M7_HOME_CONFIG_STARTUP_NONCE");
             for (var property : System.getProperties().stringPropertyNames())
@@ -253,7 +260,7 @@ final class M7HomeClosurePhases {
     private enum Step { SETUP, READY, AWAIT_CUT, AWAIT_CLOSE, QUIET, DONE }
 
     /** 一個 phase 的 runner：生命週期、cut 事件、halt／final receipt 與斷言。只在 server thread 執行（cut 事件由正式 owner 在 server thread 呼叫）。 */
-    static final class Run {
+    static final class Run implements M7HomeProbe.Phase {
         private static final Identifier AFTER = Identifier.of("quantumchamber:m7_home_after");
         private static final Identifier BEFORE = Identifier.of("quantumchamber:m7_home_before");
         final Configuration config;
@@ -282,12 +289,12 @@ final class M7HomeClosurePhases {
 
         Run(Configuration config) {
             this.config = config;
-            this.row = config.row();
+            this.row = row(config.row());
         }
 
         private boolean crashPhase() { return config.phase().equals("crash"); }
 
-        void start() {
+        @Override public void start() {
             proof.put("producer", "M7HomeProbe");
             proof.put("m7ProbeSchema", 1);
             proof.put("row", row.name());
@@ -502,7 +509,7 @@ final class M7HomeClosurePhases {
         }
 
         /** 正式 owner 的 cut 事件（{@link M7HomeProbe#reached}）。 */
-        void reached(String name, UUID session, Object detail) {
+        @Override public void reached(String name, UUID session, Object detail) {
             if (server == null || !server.isOnThread()) { failures.add("eventOffThread：" + name); return; }
             try {
                 var record = new LinkedHashMap<String, Object>();
@@ -697,7 +704,7 @@ final class M7HomeClosurePhases {
         }
 
         /** M5 collapse probe 的原艙寫法（{@code M5CollapseFixture.placeChamber}），不放紅石塊：A 不供電，只登記。 */
-        private static void placeChamber(ServerWorld world) {
+        static void placeChamber(ServerWorld world) {
             for (int x = -1; x <= 7; x++) for (int y = 0; y <= 9; y++) for (int z = -6; z < 0; z++)
                 world.setBlockState(ChamberSpaceCoordinates.block(FRAME, x, y, z), Blocks.AIR.getDefaultState(), 3);
             ChamberProtectionService.get().authorizedMutation(() -> {
@@ -800,7 +807,7 @@ final class M7HomeClosurePhases {
             return facts;
         }
 
-        private static Map<String, Object> closeFacts(CloseIntent intent) {
+        static Map<String, Object> closeFacts(CloseIntent intent) {
             var facts = new LinkedHashMap<String, Object>();
             if (intent instanceof Close close) {
                 facts.put("kind", "CLOSE");
@@ -865,10 +872,10 @@ final class M7HomeClosurePhases {
 
     @FunctionalInterface interface Checked { void run() throws Exception; }
 
-    private static SuperpositionSessionManager gate() { return (SuperpositionSessionManager) ChamberSessions.gateway(); }
+    static SuperpositionSessionManager gate() { return (SuperpositionSessionManager) ChamberSessions.gateway(); }
 
     /** 正式 owner 用的 B 相關 chunks（{@code PassageTransferPolicy.homeChunks}，package 可見，反射呼叫、只讀），依 {@code x,z} 排序。 */
-    private static List<String> homeChunks() {
+    static List<String> homeChunks() {
         try {
             var method = Class.forName("dev.quantumchamber.collapse.PassageTransferPolicy").getDeclaredMethod("homeChunks", ChamberFrame.class);
             method.setAccessible(true);
@@ -901,7 +908,7 @@ final class M7HomeClosurePhases {
         return seen;
     }
 
-    private static Map<String, Object> pose(ServerPlayerEntity player) {
+    static Map<String, Object> pose(ServerPlayerEntity player) {
         var pose = new LinkedHashMap<String, Object>();
         pose.put("world", player.getServerWorld().getRegistryKey().getValue().toString());
         pose.put("x", Double.toString(player.getX()));
@@ -912,7 +919,7 @@ final class M7HomeClosurePhases {
         return pose;
     }
 
-    private static Object describe(Object detail) {
+    static Object describe(Object detail) {
         if (detail == null) return "NONE";
         if (detail instanceof Enum<?> value) return value.name();
         if (detail instanceof ChamberDoorService.DoorState door) return (door.open() ? "OPEN" : "CLOSED") + "/" + door.membrane().name();
@@ -937,14 +944,14 @@ final class M7HomeClosurePhases {
         return files;
     }
 
-    private static List<String> names(List<Map<String, Object>> files) { return files.stream().map(file -> (String) file.get("name")).toList(); }
+    static List<String> names(List<Map<String, Object>> files) { return files.stream().map(file -> (String) file.get("name")).toList(); }
 
     static String sha256(Path path) throws IOException {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))); }
         catch (java.security.NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
 
-    private static Object field(Class<?> type, Object owner, String name) throws ReflectiveOperationException {
+    static Object field(Class<?> type, Object owner, String name) throws ReflectiveOperationException {
         var field = type.getDeclaredField(name);
         field.setAccessible(true);
         return field.get(owner);
