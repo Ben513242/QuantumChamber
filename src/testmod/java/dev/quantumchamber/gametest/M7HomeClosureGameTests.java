@@ -61,42 +61,46 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var p = new Projection(c, hooks);
         try {
-            var sid = UUID.randomUUID();
-            var dormant = p.dormant(sid, 59);
-            var server = p.f.server;
-            var journal = SessionRecoveryState.get(server);
-            c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, ChamberDoorService.DoorState.CLOSED).succeeded(), "B 的門是普通關門");
-            c.assertTrue(!ChamberPowerCoordinator.doorHasMembrane(p.b, p.frame), "B 的門沒有量子膜");
-            var store = p.receipts();
-            var probe = M5GameTestSupport.installChunkCheckpointProbe(c, p.b.getRegistryKey(), 0, call -> {
-                var row = journal.allFlushedSessions().get(sid);
-                String close = row instanceof HomeSessionRecord h && h.home().closeIntent() instanceof Close k ? k.reason().name() : "NONE";
-                boolean receipt;
-                try { receipt = store.lookup(sid).isPresent(); } catch (java.io.IOException failure) { return "receipt=ERROR"; }
-                return "door=" + p.doorSummary() + " close=" + close + " receipt=" + receipt;
-            }, hooks);
-            long now = server.getOverworld().getTime();
-            var stopped = withStop(dormant, RootReason.ROOT_DISABLED, now);
-            c.assertTrue(journal.commitHomeRollForward(server, dormant, stopped).committed(), "原艙停止原因已 checked latch");
-            until(c, "ordinary_closed_door_needs_native_checkpoint", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            whenEntryReady(c, p, "ordinary_closed_door_needs_native_checkpoint", 380, hooks, () -> {
                 try {
-                    c.assertTrue("OPEN/NONE".equals(p.doorSummary()), "B 普通關門必須改為一般開門：" + p.doorSummary());
-                    var calls = probe.calls();
-                    c.assertTrue(!calls.isEmpty() && calls.getFirst().chunks().containsAll(p.doorChunks()),
-                            "移除前必須涵蓋 B 門的原生 checkpoint：" + calls);
-                    c.assertTrue("door=OPEN/NONE close=ROOT_DISABLED receipt=false".equals(calls.getFirst().observed()),
-                            "先凍結 CLOSE 並改門，checkpoint 之後才發收據：" + calls.getFirst().observed());
-                    var receipt = store.lookup(sid).orElseThrow();
-                    c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED && k.doorGoal() == DoorGoal.OPEN
-                            && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, now)), "收據保留原艙停止原因與時間：" + receipt.home().closeIntent());
-                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
-                    c.complete();
-                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
-                finally { p.close(); hooks.release(); }
-            }, () -> {
-                try { throw new GameTestException("ORDINARY_DOOR_NOT_CLOSED_OUT door=" + p.doorSummary() + " row=" + journal.allSessions().get(sid)
-                        + " checkpoints=" + probe.calls()); }
-                finally { p.close(); hooks.release(); }
+                    var sid = UUID.randomUUID();
+                    var dormant = p.dormant(sid, 59);
+                    var server = p.f.server;
+                    var journal = SessionRecoveryState.get(server);
+                    c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, ChamberDoorService.DoorState.CLOSED).succeeded(), "B 的門是普通關門");
+                    c.assertTrue(!ChamberPowerCoordinator.doorHasMembrane(p.b, p.frame), "B 的門沒有量子膜");
+                    var store = p.receipts();
+                    var probe = M5GameTestSupport.installChunkCheckpointProbe(c, p.b.getRegistryKey(), 0, call -> {
+                        var row = journal.allFlushedSessions().get(sid);
+                        String close = row instanceof HomeSessionRecord h && h.home().closeIntent() instanceof Close k ? k.reason().name() : "NONE";
+                        boolean receipt;
+                        try { receipt = store.lookup(sid).isPresent(); } catch (java.io.IOException failure) { return "receipt=ERROR"; }
+                        return "door=" + p.doorSummary() + " close=" + close + " receipt=" + receipt;
+                    }, hooks);
+                    long now = server.getOverworld().getTime();
+                    var stopped = withStop(dormant, RootReason.ROOT_DISABLED, now);
+                    c.assertTrue(journal.commitHomeRollForward(server, dormant, stopped).committed(), "原艙停止原因已 checked latch");
+                    until(c, "ordinary_closed_door_needs_native_checkpoint", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                        try {
+                            c.assertTrue("OPEN/NONE".equals(p.doorSummary()), "B 普通關門必須改為一般開門：" + p.doorSummary());
+                            var calls = probe.calls();
+                            c.assertTrue(!calls.isEmpty() && calls.getFirst().chunks().containsAll(p.doorChunks()),
+                                    "移除前必須涵蓋 B 門的原生 checkpoint：" + calls);
+                            c.assertTrue("door=OPEN/NONE close=ROOT_DISABLED receipt=false".equals(calls.getFirst().observed()),
+                                    "先凍結 CLOSE 並改門，checkpoint 之後才發收據：" + calls.getFirst().observed());
+                            var receipt = store.lookup(sid).orElseThrow();
+                            c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED && k.doorGoal() == DoorGoal.OPEN
+                                    && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, now)), "收據保留原艙停止原因與時間：" + receipt.home().closeIntent());
+                            c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
+                            c.complete();
+                        } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                        finally { p.close(); hooks.release(); }
+                    }, () -> {
+                        try { throw new GameTestException("ORDINARY_DOOR_NOT_CLOSED_OUT door=" + p.doorSummary() + " row=" + journal.allSessions().get(sid)
+                                + " checkpoints=" + probe.calls()); }
+                        finally { p.close(); hooks.release(); }
+                    });
+                } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
@@ -107,45 +111,49 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var p = new Projection(c, hooks);
         try {
-            var server = p.f.server;
-            var journal = SessionRecoveryState.get(server);
-            var lifecycle = new ChamberLifecycleService(ChamberRegistryState.get(server).registry());
-            var first = UUID.randomUUID();
-            p.dormant(first, 58);
-            long now = server.getOverworld().getTime();
-            c.assertTrue(lifecycle.setEnabled(p.chamber, false), "停用的直接 setter 只在 latch 持久後回報成功");
-            c.assertTrue(stopped(journal, first, RootReason.ROOT_DISABLED), "DIRECT_SETTER_LATCH：停用必須先 checked latch 本趟");
-            c.assertTrue(((HomeSessionRecord) journal.allFlushedSessions().get(first)).home().stoppedAtGameTime() == now, "latch 時間是事件當下");
-            c.assertTrue(lifecycle.setOriginEnabled(p.root, true), "latch 持久後同 tick 可復啟");
-            c.assertTrue(stopped(journal, first, RootReason.ROOT_DISABLED), "復啟不撤銷 latch");
-            until(c, "root_disable_latches_before_ack_and_reenable/first", 200, () -> !journal.allSessions().containsKey(first), () -> {
+            whenEntryReady(c, p, "root_disable_latches_before_ack_and_reenable", 280, hooks, () -> {
                 try {
-                    // 註冊已落 disabled、本趟停止尚未落盤：先 enable 也只能在 latch 之後生效。
-                    var second = UUID.randomUUID();
-                    p.dormant(second, 57);
-                    p.rawEnabled(false);
-                    c.assertTrue(lifecycle.setEnabled(p.chamber, true), "latch 完成後才放行 enable");
-                    c.assertTrue(stopped(journal, second, RootReason.ROOT_DISABLED), "ENABLE_BEFORE_LATCH：enable 不得跳過尚未落盤的停止");
-                    c.assertTrue(ChamberRegistryState.get(server).registry().records().get(p.chamber).enabled(), "registry 已復啟");
-                    until(c, "root_disable_latches_before_ack_and_reenable/second", 200, () -> !journal.allSessions().containsKey(second), () -> {
+                    var server = p.f.server;
+                    var journal = SessionRecoveryState.get(server);
+                    var lifecycle = new ChamberLifecycleService(ChamberRegistryState.get(server).registry());
+                    var first = UUID.randomUUID();
+                    p.dormant(first, 58);
+                    long now = server.getOverworld().getTime();
+                    c.assertTrue(lifecycle.setEnabled(p.chamber, false), "停用的直接 setter 只在 latch 持久後回報成功");
+                    c.assertTrue(stopped(journal, first, RootReason.ROOT_DISABLED), "DIRECT_SETTER_LATCH：停用必須先 checked latch 本趟");
+                    c.assertTrue(((HomeSessionRecord) journal.allFlushedSessions().get(first)).home().stoppedAtGameTime() == now, "latch 時間是事件當下");
+                    c.assertTrue(lifecycle.setOriginEnabled(p.root, true), "latch 持久後同 tick 可復啟");
+                    c.assertTrue(stopped(journal, first, RootReason.ROOT_DISABLED), "復啟不撤銷 latch");
+                    until(c, "root_disable_latches_before_ack_and_reenable/first", 200, () -> !journal.allSessions().containsKey(first), () -> {
                         try {
-                            // 開服 fence 掃描：只有持久 registry 的停用，沒有任何通知（含沒有 runtime 的 DORMANT）。
-                            var third = UUID.randomUUID();
-                            p.dormant(third, 56);
+                            // 註冊已落 disabled、本趟停止尚未落盤：先 enable 也只能在 latch 之後生效。
+                            var second = UUID.randomUUID();
+                            p.dormant(second, 57);
                             p.rawEnabled(false);
-                            HomeRootFence.bootstrap(server);
-                            c.assertTrue(stopped(journal, third, RootReason.ROOT_DISABLED), "BOOTSTRAP_SCAN_DORMANT：開服掃描必須 latch 無 runtime 的 DORMANT");
-                            p.rawEnabled(true);
-                            until(c, "root_disable_latches_before_ack_and_reenable/third", 200, () -> !journal.allSessions().containsKey(third), () -> {
+                            c.assertTrue(lifecycle.setEnabled(p.chamber, true), "latch 完成後才放行 enable");
+                            c.assertTrue(stopped(journal, second, RootReason.ROOT_DISABLED), "ENABLE_BEFORE_LATCH：enable 不得跳過尚未落盤的停止");
+                            c.assertTrue(ChamberRegistryState.get(server).registry().records().get(p.chamber).enabled(), "registry 已復啟");
+                            until(c, "root_disable_latches_before_ack_and_reenable/second", 200, () -> !journal.allSessions().containsKey(second), () -> {
                                 try {
-                                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "三趟都 checked 收尾後解鎖");
-                                    c.complete();
-                                } finally { p.close(); hooks.release(); }
-                            }, () -> { try { throw new GameTestException("THIRD_NOT_CLOSED " + journal.allSessions().get(third)); } finally { p.close(); hooks.release(); } });
+                                    // 開服 fence 掃描：只有持久 registry 的停用，沒有任何通知（含沒有 runtime 的 DORMANT）。
+                                    var third = UUID.randomUUID();
+                                    p.dormant(third, 56);
+                                    p.rawEnabled(false);
+                                    HomeRootFence.bootstrap(server);
+                                    c.assertTrue(stopped(journal, third, RootReason.ROOT_DISABLED), "BOOTSTRAP_SCAN_DORMANT：開服掃描必須 latch 無 runtime 的 DORMANT");
+                                    p.rawEnabled(true);
+                                    until(c, "root_disable_latches_before_ack_and_reenable/third", 200, () -> !journal.allSessions().containsKey(third), () -> {
+                                        try {
+                                            c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "三趟都 checked 收尾後解鎖");
+                                            c.complete();
+                                        } finally { p.close(); hooks.release(); }
+                                    }, () -> { try { throw new GameTestException("THIRD_NOT_CLOSED " + journal.allSessions().get(third)); } finally { p.close(); hooks.release(); } });
+                                } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
+                            }, () -> { try { throw new GameTestException("SECOND_NOT_CLOSED " + journal.allSessions().get(second)); } finally { p.close(); hooks.release(); } });
                         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
-                    }, () -> { try { throw new GameTestException("SECOND_NOT_CLOSED " + journal.allSessions().get(second)); } finally { p.close(); hooks.release(); } });
+                    }, () -> { try { throw new GameTestException("FIRST_NOT_CLOSED " + journal.allSessions().get(first)); } finally { p.close(); hooks.release(); } });
                 } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
-            }, () -> { try { throw new GameTestException("FIRST_NOT_CLOSED " + journal.allSessions().get(first)); } finally { p.close(); hooks.release(); } });
+            });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
 
@@ -196,42 +204,46 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var p = new Projection(c, hooks);
         try {
-            var sid = UUID.randomUUID();
-            var dormant = p.dormant(sid, slot);
-            var server = p.f.server;
-            var journal = SessionRecoveryState.get(server);
-            var facing = p.frame.outwardFacing();
-            var door = sealed ? ChamberDoorService.DoorState.sealed(facing) : ChamberDoorService.DoorState.passable(facing);
-            c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, door).succeeded() && ChamberPowerCoordinator.doorHasMembrane(p.b, p.frame),
-                    "B 的門帶著" + (sealed ? "封閉膜" : "可通行膜") + "：" + p.doorSummary());
-            var store = p.receipts();
-            var probe = M5GameTestSupport.installChunkCheckpointProbe(c, p.b.getRegistryKey(), 0, call -> {
-                var row = journal.allFlushedSessions().get(sid);
-                String close = row instanceof HomeSessionRecord h && h.home().closeIntent() instanceof Close k ? k.reason().name() : "NONE";
-                boolean receipt;
-                try { receipt = store.lookup(sid).isPresent(); } catch (java.io.IOException failure) { return "receipt=ERROR"; }
-                return "door=" + p.doorSummary() + " close=" + close + " receipt=" + receipt;
-            }, hooks);
-            long now = server.getOverworld().getTime();
-            c.assertTrue(journal.commitHomeRollForward(server, dormant, withStop(dormant, RootReason.ROOT_DISABLED, now)).committed(), "原艙停止原因已 checked latch");
-            until(c, sealed ? "sealed_door_closes_out_as_ordinary_open" : "passable_door_closes_out_as_ordinary_open", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            whenEntryReady(c, p, sealed ? "sealed_door_closes_out_as_ordinary_open" : "passable_door_closes_out_as_ordinary_open", 380, hooks, () -> {
                 try {
-                    c.assertTrue("OPEN/NONE".equals(p.doorSummary()), "MEMBRANE_DOOR_KEPT：帶膜的 B 門結案後必須是一般開門：" + p.doorSummary());
-                    var calls = probe.calls();
-                    c.assertTrue(!calls.isEmpty() && calls.getFirst().chunks().containsAll(p.doorChunks()), "移除前必須涵蓋 B 門的原生 checkpoint：" + calls);
-                    c.assertTrue("door=OPEN/NONE close=ROOT_DISABLED receipt=false".equals(calls.getFirst().observed()),
-                            "先凍結 CLOSE 並改門，checkpoint 之後才發收據：" + calls.getFirst().observed());
-                    var receipt = store.lookup(sid).orElseThrow();
-                    c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED && k.doorGoal() == DoorGoal.OPEN,
-                            "收據保留原艙停止原因：" + receipt.home().closeIntent());
-                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
-                    c.complete();
-                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
-                finally { p.close(); hooks.release(); }
-            }, () -> {
-                try { throw new GameTestException("MEMBRANE_DOOR_NOT_CLOSED_OUT door=" + p.doorSummary() + " row=" + journal.allSessions().get(sid)
-                        + " checkpoints=" + probe.calls()); }
-                finally { p.close(); hooks.release(); }
+                    var sid = UUID.randomUUID();
+                    var dormant = p.dormant(sid, slot);
+                    var server = p.f.server;
+                    var journal = SessionRecoveryState.get(server);
+                    var facing = p.frame.outwardFacing();
+                    var door = sealed ? ChamberDoorService.DoorState.sealed(facing) : ChamberDoorService.DoorState.passable(facing);
+                    c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, door).succeeded() && ChamberPowerCoordinator.doorHasMembrane(p.b, p.frame),
+                            "B 的門帶著" + (sealed ? "封閉膜" : "可通行膜") + "：" + p.doorSummary());
+                    var store = p.receipts();
+                    var probe = M5GameTestSupport.installChunkCheckpointProbe(c, p.b.getRegistryKey(), 0, call -> {
+                        var row = journal.allFlushedSessions().get(sid);
+                        String close = row instanceof HomeSessionRecord h && h.home().closeIntent() instanceof Close k ? k.reason().name() : "NONE";
+                        boolean receipt;
+                        try { receipt = store.lookup(sid).isPresent(); } catch (java.io.IOException failure) { return "receipt=ERROR"; }
+                        return "door=" + p.doorSummary() + " close=" + close + " receipt=" + receipt;
+                    }, hooks);
+                    long now = server.getOverworld().getTime();
+                    c.assertTrue(journal.commitHomeRollForward(server, dormant, withStop(dormant, RootReason.ROOT_DISABLED, now)).committed(), "原艙停止原因已 checked latch");
+                    until(c, sealed ? "sealed_door_closes_out_as_ordinary_open" : "passable_door_closes_out_as_ordinary_open", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                        try {
+                            c.assertTrue("OPEN/NONE".equals(p.doorSummary()), "MEMBRANE_DOOR_KEPT：帶膜的 B 門結案後必須是一般開門：" + p.doorSummary());
+                            var calls = probe.calls();
+                            c.assertTrue(!calls.isEmpty() && calls.getFirst().chunks().containsAll(p.doorChunks()), "移除前必須涵蓋 B 門的原生 checkpoint：" + calls);
+                            c.assertTrue("door=OPEN/NONE close=ROOT_DISABLED receipt=false".equals(calls.getFirst().observed()),
+                                    "先凍結 CLOSE 並改門，checkpoint 之後才發收據：" + calls.getFirst().observed());
+                            var receipt = store.lookup(sid).orElseThrow();
+                            c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED && k.doorGoal() == DoorGoal.OPEN,
+                                    "收據保留原艙停止原因：" + receipt.home().closeIntent());
+                            c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
+                            c.complete();
+                        } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                        finally { p.close(); hooks.release(); }
+                    }, () -> {
+                        try { throw new GameTestException("MEMBRANE_DOOR_NOT_CLOSED_OUT door=" + p.doorSummary() + " row=" + journal.allSessions().get(sid)
+                                + " checkpoints=" + probe.calls()); }
+                        finally { p.close(); hooks.release(); }
+                    });
+                } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
@@ -252,60 +264,64 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var p = new Projection(c, hooks);
         try {
-            var server = p.f.server;
-            var journal = SessionRecoveryState.get(server);
-            var sid = UUID.randomUUID();
-            var dormant = p.dormant(sid, slot);
-            var h = dormant.home();
-            long time = server.getOverworld().getTime();
-            var collapse = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.COLLAPSING,
-                    new Home(h.selection(), time, -1, -1, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
-            c.assertTrue(journal.commitHomeRestore(server, dormant, collapse).committed(), "checked COLLAPSING");
-            var row = collapse;
-            if (passage) {
-                row = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.PASSAGE_READY,
-                        new Home(h.selection(), time, time, time + 1200, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
-                c.assertTrue(journal.commitHomeRestore(server, collapse, row).committed(), "checked READY");
-            }
-            c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, ChamberDoorService.DoorState.passable(p.frame.outwardFacing())).succeeded(),
-                    "B 的門是可通行膜");
-            var writes = guardWitness(c, p, sid, hooks);
-            var actor = p.f.players.getFirst().player();
-            // 門口有人：站在門的中央那一格；淨空：站在艙內中央。
-            var spot = Vec3d.ofBottomCenter(ChamberGeometry.localToWorld(p.frame, 3, 1, passage ? 0 : 3));
-            c.assertTrue(actor.teleport(p.b, spot.x, spot.y, spot.z, Set.of(), 0, 0) && actor.getServerWorld() == p.b, "參與者在 exact B");
-            long now = server.getOverworld().getTime();
-            var phase = passage ? HomeClosure.DoorPhase.PASSAGE : HomeClosure.DoorPhase.PREPARE;
-            var current = row;
-            c.assertTrue(HomeClosure.onParticipantClose(server, current, actor, passage ? HomeClosure.DoorPhase.PREPARE : HomeClosure.DoorPhase.PASSAGE, now)
-                    == ChamberCollapsePort.DoorUse.REFUSED && current.equals(journal.allFlushedSessions().get(sid)), "錯誤 phase 不得 mint");
-            if (passage) {
-                HomeClosure.onEntryStopped(server, current, p.b, HomeClosure.EntrySignal.DISABLED, now);
-                c.assertTrue(current.equals(journal.allFlushedSessions().get(sid)) && current.equals(journal.allSessions().get(sid)),
-                        "ENTRY_DISABLED_REJECTED：B 端的 DISABLED 訊號一律不 mint（使用者 2026-11-17 裁示）");
-            }
-            c.assertTrue(HomeClosure.onParticipantClose(server, current, actor, phase, now) == ChamberCollapsePort.DoorUse.HANDLED, "參與者關門由回程終局 owner 處置");
-            var store = p.receipts();
-            String expected = passage ? "OPEN/NONE" : "CLOSED/NONE";
-            until(c, passage ? "participant_close_keeps_door_open_when_doorway_occupied" : "participant_close_closes_door_when_doorway_clear", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            whenEntryReady(c, p, passage ? "participant_close_keeps_door_open_when_doorway_occupied" : "participant_close_closes_door_when_doorway_clear", 380, hooks, () -> {
                 try {
-                    c.assertTrue(expected.equals(p.doorSummary()), (passage ? "PINCH_DOOR_CLOSED：門口有人時結案必須開門：" : "CLEAR_DOOR_NOT_CLOSED：門口淨空時結案必須關門：")
-                            + p.doorSummary());
-                    var receipt = store.lookup(sid).orElseThrow();
-                    c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.PARTICIPANT_CLOSED
-                            && k.doorGoal() == DoorGoal.CLOSE_IF_CLEAR_ELSE_OPEN && k.closedAtGameTime() == now
-                            && k.evidence().equals(new ParticipantClosed(actor.getUuid(), HomeSessionRecord.Phase.valueOf(phase.name()), now)),
-                            "收據保留實際 actor、phase 與時間：" + receipt.home().closeIntent());
-                    c.assertTrue(writes.size() >= 3 && writes.stream().allMatch(write -> write.endsWith("guard=true")),
-                            "GUARD_WRITE_OUTSIDE：參與者關門的結案寫出與 B 門 checkpoint 都必須在 session operation guard 內：" + writes);
-                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
-                    c.complete();
-                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
-                finally { p.close(); hooks.release(); }
-            }, () -> {
-                try { throw new GameTestException("PARTICIPANT_CLOSE_NOT_CLOSED_OUT door=" + p.doorSummary() + " row=" + journal.allSessions().get(sid)
-                        + " thresholds=" + closureThresholds(p, sid)); }
-                finally { p.close(); hooks.release(); }
+                    var server = p.f.server;
+                    var journal = SessionRecoveryState.get(server);
+                    var sid = UUID.randomUUID();
+                    var dormant = p.dormant(sid, slot);
+                    var h = dormant.home();
+                    long time = server.getOverworld().getTime();
+                    var collapse = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.COLLAPSING,
+                            new Home(h.selection(), time, -1, -1, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
+                    c.assertTrue(journal.commitHomeRestore(server, dormant, collapse).committed(), "checked COLLAPSING");
+                    var row = collapse;
+                    if (passage) {
+                        row = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.PASSAGE_READY,
+                                new Home(h.selection(), time, time, time + 1200, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
+                        c.assertTrue(journal.commitHomeRestore(server, collapse, row).committed(), "checked READY");
+                    }
+                    c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, ChamberDoorService.DoorState.passable(p.frame.outwardFacing())).succeeded(),
+                            "B 的門是可通行膜");
+                    var writes = guardWitness(c, p, sid, hooks);
+                    var actor = p.f.players.getFirst().player();
+                    // 門口有人：站在門的中央那一格；淨空：站在艙內中央。
+                    var spot = Vec3d.ofBottomCenter(ChamberGeometry.localToWorld(p.frame, 3, 1, passage ? 0 : 3));
+                    c.assertTrue(actor.teleport(p.b, spot.x, spot.y, spot.z, Set.of(), 0, 0) && actor.getServerWorld() == p.b, "參與者在 exact B");
+                    long now = server.getOverworld().getTime();
+                    var phase = passage ? HomeClosure.DoorPhase.PASSAGE : HomeClosure.DoorPhase.PREPARE;
+                    var current = row;
+                    c.assertTrue(HomeClosure.onParticipantClose(server, current, actor, passage ? HomeClosure.DoorPhase.PREPARE : HomeClosure.DoorPhase.PASSAGE, now)
+                            == ChamberCollapsePort.DoorUse.REFUSED && current.equals(journal.allFlushedSessions().get(sid)), "錯誤 phase 不得 mint");
+                    if (passage) {
+                        HomeClosure.onEntryStopped(server, current, p.b, HomeClosure.EntrySignal.DISABLED, now);
+                        c.assertTrue(current.equals(journal.allFlushedSessions().get(sid)) && current.equals(journal.allSessions().get(sid)),
+                                "ENTRY_DISABLED_REJECTED：B 端的 DISABLED 訊號一律不 mint（使用者 2026-11-17 裁示）");
+                    }
+                    c.assertTrue(HomeClosure.onParticipantClose(server, current, actor, phase, now) == ChamberCollapsePort.DoorUse.HANDLED, "參與者關門由回程終局 owner 處置");
+                    var store = p.receipts();
+                    String expected = passage ? "OPEN/NONE" : "CLOSED/NONE";
+                    until(c, passage ? "participant_close_keeps_door_open_when_doorway_occupied" : "participant_close_closes_door_when_doorway_clear", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                        try {
+                            c.assertTrue(expected.equals(p.doorSummary()), (passage ? "PINCH_DOOR_CLOSED：門口有人時結案必須開門：" : "CLEAR_DOOR_NOT_CLOSED：門口淨空時結案必須關門：")
+                                    + p.doorSummary());
+                            var receipt = store.lookup(sid).orElseThrow();
+                            c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.PARTICIPANT_CLOSED
+                                    && k.doorGoal() == DoorGoal.CLOSE_IF_CLEAR_ELSE_OPEN && k.closedAtGameTime() == now
+                                    && k.evidence().equals(new ParticipantClosed(actor.getUuid(), HomeSessionRecord.Phase.valueOf(phase.name()), now)),
+                                    "收據保留實際 actor、phase 與時間：" + receipt.home().closeIntent());
+                            c.assertTrue(writes.size() >= 3 && writes.stream().allMatch(write -> write.endsWith("guard=true")),
+                                    "GUARD_WRITE_OUTSIDE：參與者關門的結案寫出與 B 門 checkpoint 都必須在 session operation guard 內：" + writes);
+                            c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
+                            c.complete();
+                        } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                        finally { p.close(); hooks.release(); }
+                    }, () -> {
+                        try { throw new GameTestException("PARTICIPANT_CLOSE_NOT_CLOSED_OUT door=" + p.doorSummary() + " row=" + journal.allSessions().get(sid)
+                                + " thresholds=" + closureThresholds(p, sid)); }
+                        finally { p.close(); hooks.release(); }
+                    });
+                } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
@@ -316,56 +332,60 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var p = new Projection(c, hooks);
         try {
-            var server = p.f.server;
-            var journal = SessionRecoveryState.get(server);
-            var registry = ChamberRegistryState.get(server).registry();
-            var lifecycle = new ChamberLifecycleService(registry);
-            var sid = UUID.randomUUID();
-            var settled = p.settled(sid, 54);
-            var dormant = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, settled.participants(), List.of(), SessionState.MEASURED, settled.home());
-            boolean[] fail = {false};
-            M5GameTestSupport.installFlushProbe(c, state -> { if (fail[0]) throw new IllegalStateException("M7_FIX1_JOURNAL_FLUSH_FAULT"); }, hooks);
-            // 任何路徑收尾都先解除故障並補一次寫出，不把本 fixture 未確認的寫入留給之後的 test（mut16 實測：中途失敗時之後兩案 admitHome 被拒）。
-            // 這次寫出只在判定之後的收尾執行，不代替下面要驗的 production 重試。
-            hooks.add(() -> { fail[0] = false; journal.flush(server); });
-            long eventAt = server.getOverworld().getTime();
-            fail[0] = true;
-            try {
-                c.assertTrue(journal.commitHomeRollForward(server, settled, dormant).status() == SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING
-                        && journal.rollForwardPending(sid), "前一筆寫入尚未確認");
-                c.assertTrue(!lifecycle.setEnabled(p.chamber, false), "QUEUE_ACK：journal 未收斂時停用不得回報成功");
-                c.assertTrue(!registry.records().get(p.chamber).enabled() && dormant.equals(journal.allSessions().get(sid)), "registry 已落停用，本趟尚未寫停止原因");
-                HomeRootFence.onRootEvent(server, p.root, HomeEndpointAuthority.RootStatus.INVALID_STRUCTURE, eventAt + 1);
-                c.assertTrue(!HomeRootFence.permitsEnable(server, p.chamber) && !lifecycle.setOriginEnabled(p.root, true)
-                        && !registry.records().get(p.chamber).enabled(), "QUEUE_ENABLE：排隊期間拒絕同根復啟");
-            } finally { fail[0] = false; }
-            // 審查 I-1：前一筆只由 production 的唯一重試者（SessionRecoveryManager 的 HOME 分支，沿用同一個 journal 退避）收斂，測試不手動寫出。
-            // 故障在同一個 tick 內就已解除，第一次重試沒有退避，所以有界等待 20 ticks。重試寫出確認後，同一個 END_SERVER_TICK 內防線就 latch、終局 owner 就結案
-            // 並移除熱列（fix2 green 實測），所以只等「roll-forward 已確認」，不等中間狀態；之後的結果由收據驗。
-            until(c, "root_event_queues_behind_unconfirmed_journal/retry", 20, () -> !journal.rollForwardPending(sid), () -> {
+            whenEntryReady(c, p, "root_event_queues_behind_unconfirmed_journal", 360, hooks, () -> {
                 try {
-                    var store = p.receipts();
-                    until(c, "root_event_queues_behind_unconfirmed_journal/closeout", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                    var server = p.f.server;
+                    var journal = SessionRecoveryState.get(server);
+                    var registry = ChamberRegistryState.get(server).registry();
+                    var lifecycle = new ChamberLifecycleService(registry);
+                    var sid = UUID.randomUUID();
+                    var settled = p.settled(sid, 54);
+                    var dormant = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, settled.participants(), List.of(), SessionState.MEASURED, settled.home());
+                    boolean[] fail = {false};
+                    M5GameTestSupport.installFlushProbe(c, state -> { if (fail[0]) throw new IllegalStateException("M7_FIX1_JOURNAL_FLUSH_FAULT"); }, hooks);
+                    // 任何路徑收尾都先解除故障並補一次寫出，不把本 fixture 未確認的寫入留給之後的 test（mut16 實測：中途失敗時之後兩案 admitHome 被拒）。
+                    // 這次寫出只在判定之後的收尾執行，不代替下面要驗的 production 重試。
+                    hooks.add(() -> { fail[0] = false; journal.flush(server); });
+                    long eventAt = server.getOverworld().getTime();
+                    fail[0] = true;
+                    try {
+                        c.assertTrue(journal.commitHomeRollForward(server, settled, dormant).status() == SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING
+                                && journal.rollForwardPending(sid), "前一筆寫入尚未確認");
+                        c.assertTrue(!lifecycle.setEnabled(p.chamber, false), "QUEUE_ACK：journal 未收斂時停用不得回報成功");
+                        c.assertTrue(!registry.records().get(p.chamber).enabled() && dormant.equals(journal.allSessions().get(sid)), "registry 已落停用，本趟尚未寫停止原因");
+                        HomeRootFence.onRootEvent(server, p.root, HomeEndpointAuthority.RootStatus.INVALID_STRUCTURE, eventAt + 1);
+                        c.assertTrue(!HomeRootFence.permitsEnable(server, p.chamber) && !lifecycle.setOriginEnabled(p.root, true)
+                                && !registry.records().get(p.chamber).enabled(), "QUEUE_ENABLE：排隊期間拒絕同根復啟");
+                    } finally { fail[0] = false; }
+                    // 審查 I-1：前一筆只由 production 的唯一重試者（SessionRecoveryManager 的 HOME 分支，沿用同一個 journal 退避）收斂，測試不手動寫出。
+                    // 故障在同一個 tick 內就已解除，第一次重試沒有退避，所以有界等待 20 ticks。重試寫出確認後，同一個 END_SERVER_TICK 內防線就 latch、終局 owner 就結案
+                    // 並移除熱列（fix2 green 實測），所以只等「roll-forward 已確認」，不等中間狀態；之後的結果由收據驗。
+                    until(c, "root_event_queues_behind_unconfirmed_journal/retry", 20, () -> !journal.rollForwardPending(sid), () -> {
                         try {
-                            var receipt = store.lookup(sid).orElseThrow();
-                            c.assertTrue(receipt.home().stopReason().equals(Optional.of(RootReason.ROOT_DISABLED)) && receipt.home().stoppedAtGameTime() == eventAt
-                                    && receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED
-                                    && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, eventAt)),
-                                    "QUEUE_FIRST_WINS：排隊的第一個事件以原原因與時間 latch：" + receipt.home());
-                            c.assertTrue(!gate().globalChamberBusy(server, p.chamber) && HomeRootFence.permitsEnable(server, p.chamber)
-                                    && lifecycle.setOriginEnabled(p.root, true) && registry.records().get(p.chamber).enabled(), "收尾後放行復啟");
-                            c.complete();
-                        } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
-                        finally { p.close(); hooks.release(); }
+                            var store = p.receipts();
+                            until(c, "root_event_queues_behind_unconfirmed_journal/closeout", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                                try {
+                                    var receipt = store.lookup(sid).orElseThrow();
+                                    c.assertTrue(receipt.home().stopReason().equals(Optional.of(RootReason.ROOT_DISABLED)) && receipt.home().stoppedAtGameTime() == eventAt
+                                            && receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED
+                                            && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, eventAt)),
+                                            "QUEUE_FIRST_WINS：排隊的第一個事件以原原因與時間 latch：" + receipt.home());
+                                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber) && HomeRootFence.permitsEnable(server, p.chamber)
+                                            && lifecycle.setOriginEnabled(p.root, true) && registry.records().get(p.chamber).enabled(), "收尾後放行復啟");
+                                    c.complete();
+                                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                                finally { p.close(); hooks.release(); }
+                            }, () -> {
+                                try { throw new GameTestException("QUEUED_LATCH_NOT_CLOSED_OUT row=" + journal.allSessions().get(sid) + " flushed=" + journal.allFlushedSessions().get(sid)); }
+                                finally { p.close(); hooks.release(); }
+                            });
+                        } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
                     }, () -> {
-                        try { throw new GameTestException("QUEUED_LATCH_NOT_CLOSED_OUT row=" + journal.allSessions().get(sid) + " flushed=" + journal.allFlushedSessions().get(sid)); }
+                        try { throw new GameTestException("HOME_ROLL_FORWARD_NOT_RETRIED：HOME roll-forward 寫出失敗後，production 沒有在有界時間內重試收斂：current="
+                                + journal.allSessions().get(sid) + " flushed=" + journal.allFlushedSessions().get(sid) + " pending=" + journal.rollForwardPending(sid)); }
                         finally { p.close(); hooks.release(); }
                     });
                 } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
-            }, () -> {
-                try { throw new GameTestException("HOME_ROLL_FORWARD_NOT_RETRIED：HOME roll-forward 寫出失敗後，production 沒有在有界時間內重試收斂：current="
-                        + journal.allSessions().get(sid) + " flushed=" + journal.allFlushedSessions().get(sid) + " pending=" + journal.rollForwardPending(sid)); }
-                finally { p.close(); hooks.release(); }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
@@ -408,38 +428,42 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var p = new Projection(c, hooks);
         try {
-            var server = p.f.server;
-            var journal = SessionRecoveryState.get(server);
-            var pages = dev.quantumchamber.corridor.CorridorPageManager.forServer(server);
-            var lifecycle = new ChamberLifecycleService(ChamberRegistryState.get(server).registry());
-            var sid = UUID.randomUUID();
-            p.dormant(sid, 49);
-            var writes = guardWitness(c, p, sid, hooks);
-            long eventAt = server.getOverworld().getTime();
-            boolean[] acked = {true}, reenabled = {true};
-            pages.exclusiveOperation(sid, () -> {
-                acked[0] = lifecycle.setEnabled(p.chamber, false);
-                reenabled[0] = lifecycle.setEnabled(p.chamber, true);
-                return null;
-            });
-            c.assertTrue(!acked[0] && ((HomeSessionRecord) journal.allSessions().get(sid)).home().stopReason().isEmpty() && writes.isEmpty(),
-                    "GUARD_EVENT_NOT_QUEUED：同 SID 的操作進行中時，原艙停用只能排隊、不在 guard 外寫入、不回報成功：acked=" + acked[0] + " writes=" + writes);
-            c.assertTrue(!reenabled[0] && !ChamberRegistryState.get(server).registry().records().get(p.chamber).enabled(), "GUARD_ENABLE_BLOCKED：排隊期間拒絕同根復啟");
-            var store = p.receipts();
-            until(c, "home_writes_hold_session_guard", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            whenEntryReady(c, p, "home_writes_hold_session_guard", 380, hooks, () -> {
                 try {
-                    var receipt = store.lookup(sid).orElseThrow();
-                    c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED
-                            && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, eventAt)), "guard 釋放後以排隊事件的原因與時間結案：" + receipt.home());
-                    c.assertTrue(writes.size() >= 4 && writes.stream().allMatch(write -> write.endsWith("guard=true")),
-                            "GUARD_WRITE_OUTSIDE：原艙 latch、結案、移除的 journal 寫出與 B 門 checkpoint 都必須在 session operation guard 內：" + writes);
-                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
-                    c.complete();
-                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
-                finally { p.close(); hooks.release(); }
-            }, () -> {
-                try { throw new GameTestException("GUARDED_CLOSE_NOT_FINISHED row=" + journal.allSessions().get(sid) + " writes=" + writes); }
-                finally { p.close(); hooks.release(); }
+                    var server = p.f.server;
+                    var journal = SessionRecoveryState.get(server);
+                    var pages = dev.quantumchamber.corridor.CorridorPageManager.forServer(server);
+                    var lifecycle = new ChamberLifecycleService(ChamberRegistryState.get(server).registry());
+                    var sid = UUID.randomUUID();
+                    p.dormant(sid, 49);
+                    var writes = guardWitness(c, p, sid, hooks);
+                    long eventAt = server.getOverworld().getTime();
+                    boolean[] acked = {true}, reenabled = {true};
+                    pages.exclusiveOperation(sid, () -> {
+                        acked[0] = lifecycle.setEnabled(p.chamber, false);
+                        reenabled[0] = lifecycle.setEnabled(p.chamber, true);
+                        return null;
+                    });
+                    c.assertTrue(!acked[0] && ((HomeSessionRecord) journal.allSessions().get(sid)).home().stopReason().isEmpty() && writes.isEmpty(),
+                            "GUARD_EVENT_NOT_QUEUED：同 SID 的操作進行中時，原艙停用只能排隊、不在 guard 外寫入、不回報成功：acked=" + acked[0] + " writes=" + writes);
+                    c.assertTrue(!reenabled[0] && !ChamberRegistryState.get(server).registry().records().get(p.chamber).enabled(), "GUARD_ENABLE_BLOCKED：排隊期間拒絕同根復啟");
+                    var store = p.receipts();
+                    until(c, "home_writes_hold_session_guard", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                        try {
+                            var receipt = store.lookup(sid).orElseThrow();
+                            c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED
+                                    && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, eventAt)), "guard 釋放後以排隊事件的原因與時間結案：" + receipt.home());
+                            c.assertTrue(writes.size() >= 4 && writes.stream().allMatch(write -> write.endsWith("guard=true")),
+                                    "GUARD_WRITE_OUTSIDE：原艙 latch、結案、移除的 journal 寫出與 B 門 checkpoint 都必須在 session operation guard 內：" + writes);
+                            c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
+                            c.complete();
+                        } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                        finally { p.close(); hooks.release(); }
+                    }, () -> {
+                        try { throw new GameTestException("GUARDED_CLOSE_NOT_FINISHED row=" + journal.allSessions().get(sid) + " writes=" + writes); }
+                        finally { p.close(); hooks.release(); }
+                    });
+                } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
@@ -468,72 +492,76 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         var hooks = new M2CorridorGameTests.TestHooks();
         var p = new Projection(c, hooks);
         try {
-            var server = p.f.server;
-            var journal = SessionRecoveryState.get(server);
-            var pages = dev.quantumchamber.corridor.CorridorPageManager.forServer(server);
-            var sid = UUID.randomUUID();
-            var dormant = p.dormant(sid, 45);
-            var h = dormant.home();
-            long time = server.getOverworld().getTime();
-            var collapse = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.COLLAPSING,
-                    new Home(h.selection(), time, -1, -1, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
-            c.assertTrue(journal.commitHomeRestore(server, dormant, collapse).committed(), "checked COLLAPSING");
-            var ready = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.PASSAGE_READY,
-                    new Home(h.selection(), time, time, time + 1200, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
-            c.assertTrue(journal.commitHomeRestore(server, collapse, ready).committed(), "checked READY");
-            c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, ChamberDoorService.DoorState.passable(p.frame.outwardFacing())).succeeded(),
-                    "B 的門是可通行膜");
-            c.assertTrue(!p.b.isReceivingRedstonePower(p.frame.controllerPos()), "前提：B 斷電，沒有 guard 時 LOW 訊號成立");
-            var writes = guardWitness(c, p, sid, hooks);
-            var actor = p.f.players.getFirst().player();
-            var spot = Vec3d.ofBottomCenter(ChamberGeometry.localToWorld(p.frame, 3, 1, 3));
-            c.assertTrue(actor.teleport(p.b, spot.x, spot.y, spot.z, Set.of(), 0, 0) && actor.getServerWorld() == p.b, "參與者在 exact B");
-            long now = server.getOverworld().getTime();
-            BooleanSupplier unchanged = () -> ready.equals(journal.allSessions().get(sid)) && ready.equals(journal.allFlushedSessions().get(sid))
-                    && !journal.rollForwardPending(sid);
-            // 依呼叫順序記錄每次呼叫的結果與之後 journal 是否改變；失敗訊息以第一個偏差的呼叫命名（後面的呼叫看到的改變可能是前一個呼叫寫的）。
-            var calls = new ArrayList<String>();
-            pages.exclusiveOperation(sid, () -> {
-                for (int round = 1; round <= 2; round++) {
-                    try {
-                        var use = HomeClosure.onParticipantClose(server, ready, actor, HomeClosure.DoorPhase.PASSAGE, now);
-                        calls.add("participant#" + round + "=" + use + (unchanged.getAsBoolean() ? "" : "/WRITTEN"));
-                    } catch (RuntimeException failure) { calls.add("participant#" + round + "=THREW:" + failure); }
-                    try {
-                        HomeClosure.onEntryStopped(server, ready, p.b, HomeClosure.EntrySignal.LOW, now);
-                        calls.add("entry#" + round + (unchanged.getAsBoolean() ? "" : "=WRITTEN"));
-                    } catch (RuntimeException failure) { calls.add("entry#" + round + "=THREW:" + failure); }
-                }
-                return null;
-            });
-            var expectedCalls = List.of("participant#1=REFUSED", "entry#1", "participant#2=REFUSED", "entry#2");
-            int first = 0;
-            while (first < calls.size() && first < expectedCalls.size() && calls.get(first).equals(expectedCalls.get(first))) first++;
-            boolean entryFirst = first < calls.size() && calls.get(first).startsWith("entry");
-            c.assertTrue(calls.equals(expectedCalls), (entryFirst
-                    ? "GUARD_HELD_ENTRY_WROTE：呼叫端持有同 SID 的 guard 時，B 停止訊號不得 mint、journal 不變（第一個偏差在 B 停止訊號）："
-                    : "GUARD_HELD_PARTICIPANT_WROTE：呼叫端持有同 SID 的 guard 時，參與者關門必須回 REFUSED、journal 不變（第一個偏差在參與者關門）：")
-                    + calls);
-            c.assertTrue(writes.isEmpty(), "GUARD_HELD_WRITES：持有 guard 期間不得有 journal 寫出或 B 門 checkpoint：" + writes);
-            c.assertTrue(HomeClosure.onParticipantClose(server, ready, actor, HomeClosure.DoorPhase.PASSAGE, server.getOverworld().getTime())
-                    == ChamberCollapsePort.DoorUse.HANDLED, "guard 釋放後同一個參與者關門照常處置");
-            var store = p.receipts();
-            until(c, "caller_held_guard_refuses_participant_close_and_entry_stop", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+            whenEntryReady(c, p, "caller_held_guard_refuses_participant_close_and_entry_stop", 380, hooks, () -> {
                 try {
-                    var receipt = store.lookup(sid).orElseThrow();
-                    c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.PARTICIPANT_CLOSED
-                            && k.evidence().equals(new ParticipantClosed(actor.getUuid(), HomeSessionRecord.Phase.PASSAGE, now)),
-                            "guard 釋放後以參與者關門結案：" + receipt.home().closeIntent());
-                    c.assertTrue(!writes.isEmpty() && writes.stream().allMatch(write -> write.endsWith("guard=true")),
-                            "GUARD_WRITE_OUTSIDE：guard 釋放後的結案寫出與 B 門 checkpoint 都必須在 session operation guard 內：" + writes);
-                    c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
-                    c.complete();
-                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
-                finally { p.close(); hooks.release(); }
-            }, () -> {
-                try { throw new GameTestException("GUARD_RELEASED_CLOSE_NOT_FINISHED row=" + journal.allSessions().get(sid) + " writes=" + writes
-                        + " thresholds=" + closureThresholds(p, sid)); }
-                finally { p.close(); hooks.release(); }
+                    var server = p.f.server;
+                    var journal = SessionRecoveryState.get(server);
+                    var pages = dev.quantumchamber.corridor.CorridorPageManager.forServer(server);
+                    var sid = UUID.randomUUID();
+                    var dormant = p.dormant(sid, 45);
+                    var h = dormant.home();
+                    long time = server.getOverworld().getTime();
+                    var collapse = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.COLLAPSING,
+                            new Home(h.selection(), time, -1, -1, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
+                    c.assertTrue(journal.commitHomeRestore(server, dormant, collapse).committed(), "checked COLLAPSING");
+                    var ready = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), SessionState.PASSAGE_READY,
+                            new Home(h.selection(), time, time, time + 1200, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty()));
+                    c.assertTrue(journal.commitHomeRestore(server, collapse, ready).committed(), "checked READY");
+                    c.assertTrue(new ChamberDoorService().applyTarget(p.b, p.frame, ChamberDoorService.DoorState.passable(p.frame.outwardFacing())).succeeded(),
+                            "B 的門是可通行膜");
+                    c.assertTrue(!p.b.isReceivingRedstonePower(p.frame.controllerPos()), "前提：B 斷電，沒有 guard 時 LOW 訊號成立");
+                    var writes = guardWitness(c, p, sid, hooks);
+                    var actor = p.f.players.getFirst().player();
+                    var spot = Vec3d.ofBottomCenter(ChamberGeometry.localToWorld(p.frame, 3, 1, 3));
+                    c.assertTrue(actor.teleport(p.b, spot.x, spot.y, spot.z, Set.of(), 0, 0) && actor.getServerWorld() == p.b, "參與者在 exact B");
+                    long now = server.getOverworld().getTime();
+                    BooleanSupplier unchanged = () -> ready.equals(journal.allSessions().get(sid)) && ready.equals(journal.allFlushedSessions().get(sid))
+                            && !journal.rollForwardPending(sid);
+                    // 依呼叫順序記錄每次呼叫的結果與之後 journal 是否改變；失敗訊息以第一個偏差的呼叫命名（後面的呼叫看到的改變可能是前一個呼叫寫的）。
+                    var calls = new ArrayList<String>();
+                    pages.exclusiveOperation(sid, () -> {
+                        for (int round = 1; round <= 2; round++) {
+                            try {
+                                var use = HomeClosure.onParticipantClose(server, ready, actor, HomeClosure.DoorPhase.PASSAGE, now);
+                                calls.add("participant#" + round + "=" + use + (unchanged.getAsBoolean() ? "" : "/WRITTEN"));
+                            } catch (RuntimeException failure) { calls.add("participant#" + round + "=THREW:" + failure); }
+                            try {
+                                HomeClosure.onEntryStopped(server, ready, p.b, HomeClosure.EntrySignal.LOW, now);
+                                calls.add("entry#" + round + (unchanged.getAsBoolean() ? "" : "=WRITTEN"));
+                            } catch (RuntimeException failure) { calls.add("entry#" + round + "=THREW:" + failure); }
+                        }
+                        return null;
+                    });
+                    var expectedCalls = List.of("participant#1=REFUSED", "entry#1", "participant#2=REFUSED", "entry#2");
+                    int first = 0;
+                    while (first < calls.size() && first < expectedCalls.size() && calls.get(first).equals(expectedCalls.get(first))) first++;
+                    boolean entryFirst = first < calls.size() && calls.get(first).startsWith("entry");
+                    c.assertTrue(calls.equals(expectedCalls), (entryFirst
+                            ? "GUARD_HELD_ENTRY_WROTE：呼叫端持有同 SID 的 guard 時，B 停止訊號不得 mint、journal 不變（第一個偏差在 B 停止訊號）："
+                            : "GUARD_HELD_PARTICIPANT_WROTE：呼叫端持有同 SID 的 guard 時，參與者關門必須回 REFUSED、journal 不變（第一個偏差在參與者關門）：")
+                            + calls);
+                    c.assertTrue(writes.isEmpty(), "GUARD_HELD_WRITES：持有 guard 期間不得有 journal 寫出或 B 門 checkpoint：" + writes);
+                    c.assertTrue(HomeClosure.onParticipantClose(server, ready, actor, HomeClosure.DoorPhase.PASSAGE, server.getOverworld().getTime())
+                            == ChamberCollapsePort.DoorUse.HANDLED, "guard 釋放後同一個參與者關門照常處置");
+                    var store = p.receipts();
+                    until(c, "caller_held_guard_refuses_participant_close_and_entry_stop", 200, () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), () -> {
+                        try {
+                            var receipt = store.lookup(sid).orElseThrow();
+                            c.assertTrue(receipt.home().closeIntent() instanceof Close k && k.reason() == CloseReason.PARTICIPANT_CLOSED
+                                    && k.evidence().equals(new ParticipantClosed(actor.getUuid(), HomeSessionRecord.Phase.PASSAGE, now)),
+                                    "guard 釋放後以參與者關門結案：" + receipt.home().closeIntent());
+                            c.assertTrue(!writes.isEmpty() && writes.stream().allMatch(write -> write.endsWith("guard=true")),
+                                    "GUARD_WRITE_OUTSIDE：guard 釋放後的結案寫出與 B 門 checkpoint 都必須在 session operation guard 內：" + writes);
+                            c.assertTrue(!gate().globalChamberBusy(server, p.chamber), "checked 移除後解鎖");
+                            c.complete();
+                        } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                        finally { p.close(); hooks.release(); }
+                    }, () -> {
+                        try { throw new GameTestException("GUARD_RELEASED_CLOSE_NOT_FINISHED row=" + journal.allSessions().get(sid) + " writes=" + writes
+                                + " thresholds=" + closureThresholds(p, sid)); }
+                        finally { p.close(); hooks.release(); }
+                    });
+                } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
@@ -787,6 +815,29 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         } catch (java.lang.reflect.InvocationTargetException failure) {
             throw new IllegalStateException(type + "." + name + " 丟出：" + failure.getCause(), failure.getCause());
         } catch (ReflectiveOperationException failure) { throw new IllegalStateException(failure); }
+    }
+
+    /** 前置等待逾時時 thresholds 用的 SID：等待在本案建立 session 之前，沒有本案的列。 */
+    private static final UUID NO_SESSION = new UUID(0L, 0L);
+
+    /**
+     * B 端就緒的前置等待（使用者 2026-11-17 裁示「測試先等 B 區塊就緒」，CI 44003465357 Ubuntu pinch 案）：本案建立 session、觸發收尾之前，有界等待 B 的
+     * {@code PassageTransferPolicy.homeChunks} 每個 chunk 的方塊與 entity storage 都已載入（與 {@link ChunkSaveCheckpoint#ready} 同一判斷），以及
+     * {@code OriginDoors.doorwayEntitiesLoaded} 為真；就緒後才執行 {@code body}。等不到時丟出以 {@code ENV_NOT_READY} 開頭的 GameTestException（附 thresholds），
+     * 標明是測試環境未就緒、不是回程終局 owner 的失敗。收尾等待（200 tick）、斷言、tickLimit 與案例集合都不變；{@code bound} 由呼叫端依該案 tickLimit
+     * 扣掉其後的等待決定，前置等待加上收尾等待不超過 tickLimit。{@code body} 在 tick callback 內執行，失敗時由它自己釋放 fixture。
+     */
+    private static void whenEntryReady(TestContext c, Projection p, String label, int bound, M2CorridorGameTests.TestHooks hooks, Runnable body) {
+        @SuppressWarnings("unchecked")
+        var chunks = (Set<ChunkPos>) invokeStatic("dev.quantumchamber.collapse.PassageTransferPolicy", "homeChunks", new Class<?>[]{ChamberFrame.class}, p.frame);
+        until(c, label + "/entry_ready", bound, () -> ChunkSaveCheckpoint.ready(p.b, chunks)
+                && (Boolean) invokeStatic("dev.quantumchamber.collapse.OriginDoors", "doorwayEntitiesLoaded", new Class<?>[]{ServerWorld.class, ChamberFrame.class}, p.b, p.frame),
+                body, () -> {
+                    try {
+                        throw new GameTestException("ENV_NOT_READY：B 端在 " + bound + " tick 內沒有就緒（homeChunks 的方塊與 entity、門口 entity），是測試環境未就緒、"
+                                + "不是回程終局 owner 的失敗（本案 session 尚未建立）：thresholds=" + closureThresholds(p, NO_SESSION));
+                    } finally { p.close(); hooks.release(); }
+                });
     }
 
     /**
