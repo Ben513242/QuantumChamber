@@ -810,7 +810,7 @@ run-all 新 step `m7-home-native`（在 `m6-native` 之後）：
 
 - 以 `-EvidenceRoot <run root>` 一次跑完整 46 列（本機約 30 分鐘：46 列×約 38 秒）。run root 內必須恰好一份 `m7-home-run-<12 hex>.json`（`M7_HOME_RUNALL_SUMMARY`）。
 - 再以 `-VerifySummary <那一份> -ExpectedHead <run-all 開始時的 HEAD> -RequireComplete -SelfTest` 驗證，輸出必須恰好一行 `M7_HOME_VERIFIED_COMPLETE PASS rows=46 phases=92 … selection=all HEAD=<同一個 HEAD>`（`M7_HOME_RUNALL_NOT_COMPLETE`）。分片 summary 會被 `-RequireComplete` 以 `M7_HOME_NOT_COMPLETE` 拒絕，不能冒充完整。
-- run-all 的其他 step（含最後的 `summary`）沒有改，`summary.json` 不另記這一段；結果看 console.log 的 `BEGIN／END m7-home-native` 與 run root 內的 summary。
+- `summary` step 另外唯讀重驗同一份 summary（T4 B2b-4，B2b3-M2，`Get-M7HomeNativeProof`）：run root 內恰一份、`-VerifySummary … -ExpectedHead <HEAD> -RequireComplete`（不再跑負控）、輸出恰一行 46 列的 `M7_HOME_VERIFIED_COMPLETE PASS`，重驗前後 SHA-256 相同、head／46 列／92 phase 相符；結果寫進 `summary.json` 的 `m7HomeNative`（`summary`、`sha256`、`rows`、`phases`、`status=COMPLETE`、`verify`），`SUMMARY` 行最後加 `m7native=COMPLETE:46`。跳過或刪掉 `m7-home-native` step 時，summary step 以 `M7_HOME_RUNALL_SUMMARY` 失敗。其他 step 與 `summary.json` 既有欄位沒有改。
 - `summary` step 的 M4 recovery `readback-fault` 分支另外直接核 `pending-stopped.json` 的 `stopSaveCalls≥1` 與 `universeUnchanged=true`（B2b1-M4，與 `m4-recovery-probe.ps1` 對齊）。
 
 CI（`.github/workflows/build.yml`）新增兩個 job，其他 job 不變：

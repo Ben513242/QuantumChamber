@@ -51,6 +51,19 @@ function Step([string]$name,[scriptblock]$body) {
 function One([string]$prefix,[string]$suffix=''){ $d=@(Get-ChildItem -LiteralPath $runRoot | Where-Object {$_.Name -match ('^'+[regex]::Escape($prefix)+'[0-9a-f]{32}'+[regex]::Escape($suffix)+'$')}); if($d.Count -ne 1){throw "root 必須恰一個：$prefix（$($d.Count)）"}; return $d[0].FullName }
 function Read-Json([string]$path){return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String}
 function Hash([string]$path){return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
+# M7 T4 B2b-4（B2b3-M2）：summary step 唯讀重驗 m7-home-native step 留下的那一份 summary（恰一份、-RequireComplete；負控已在該 step 跑過，這裡不再跑），
+# 回傳寫進 summary.json 的 m7HomeNative（路徑、SHA-256、46 列、92 phase、COMPLETE）。
+function Get-M7HomeNativeProof([string]$ExpectedHead) {
+    $files=@(Get-ChildItem -LiteralPath $runRoot -File | Where-Object {$_.Name -cmatch '^m7-home-run-[0-9a-f]{12}\.json$'})
+    if($files.Count -ne 1){throw "M7_HOME_RUNALL_SUMMARY：run root 必須恰一份 m7-home-run summary（$($files.Count)）"}
+    $file=$files[0].FullName;$sha=Hash $file
+    $verify=@(& (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -VerifySummary $file -ExpectedHead $ExpectedHead -RequireComplete)
+    $line=@($verify | Where-Object {"$_" -cmatch ('^M7_HOME_VERIFIED_COMPLETE PASS rows=46 phases=92 .* selection=all HEAD='+[regex]::Escape($ExpectedHead)+'（')})
+    if($line.Count -ne 1){throw 'M7_HOME_RUNALL_NOT_COMPLETE：summary step 重驗沒有恰一行 46 列的 M7_HOME_VERIFIED_COMPLETE PASS'}
+    $saved=Read-Json $file
+    if((Hash $file) -cne $sha -or $saved.head -cne $ExpectedHead -or @($saved.rows).Count -ne 46 -or $saved.phaseCount -ne 92){throw 'M7_HOME_RUNALL_SUMMARY_CHANGED：重驗前後 summary 不同或內容不符'}
+    return [ordered]@{summary=$file;sha256=$sha;rows=@($saved.rows).Count;phases=$saved.phaseCount;status='COMPLETE';verify="$($line[0])"}
+}
 function Assert-W10FullEvidence($Collapse,[string]$ExpectedHead) {
     # 獨立終局oracle：不呼producer/import helper，不以summary或validation的PASS代替原件。
     $w=$Collapse.w10
@@ -552,6 +565,7 @@ Step 'summary' {
         Tee-Object -FilePath (Join-Path $runRoot 'm6-native-verify.log')
     $m7Fresh=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_home'})
     if($m7Fresh.Count -ne 1 -or $m7Fresh[0].head -cne $head -or $m7Fresh[0].status -cne 'PASS'){throw 'M7_FINAL_PROOF'}
+    $m7Native=Get-M7HomeNativeProof $head
     $m7LiveHead=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
     if($LASTEXITCODE -ne 0 -or $m7LiveHead -cne $head -or $m7LiveHead -cne $startHead){throw 'M7_HEAD_CHANGED'}
     $summary=[ordered]@{status='PASS';head=$head;runRoot=$runRoot
@@ -560,10 +574,11 @@ Step 'summary' {
         jars=$jars;mainOnly=[ordered]@{ciReceipt=(Join-Path $runRoot 'main-ci-receipt.json');ciReceiptSha256=Hash (Join-Path $runRoot 'main-ci-receipt.json');status=$oracle.status;fabricLoadedModIds=@($oracle.fabricLoadedModIds);staleDatapackWarnings=$oracle.warningCount}
         m3=[ordered]@{lifecycle=4;transfer=5;evidenceOwner=$probeOwner};recovery=[ordered]@{summary=$recoveryFile;runId=$recovery.runId;phaseCount=$phases.Count}
         m7Home=$m7Fresh[0]
+        m7HomeNative=$m7Native
         m6Native=[ordered]@{summary=$nativeFile;sha256=Hash $nativeFile;mode='PER_CHAIN';phaseCount=$native.phaseCount;chains=$native.chains;functionalAssertionsRemainRed=$true}
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;normal=$normal;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}
     $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runRoot 'summary.json') -Encoding utf8
-    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) normal=$($normalCases.Count)/13 perTest=$fullReceipts+$normalReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:$(@($native.phases | Where-Object expectedMode -CEQ 'DIAGNOSTIC').Count),FUNCTIONAL:$(@($native.phases | Where-Object expectedMode -CEQ 'FUNCTIONAL').Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green'])"
+    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) normal=$($normalCases.Count)/13 perTest=$fullReceipts+$normalReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:$(@($native.phases | Where-Object expectedMode -CEQ 'DIAGNOSTIC').Count),FUNCTIONAL:$(@($native.phases | Where-Object expectedMode -CEQ 'FUNCTIONAL').Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green']) m7native=$($m7Native.status):$($m7Native.rows)"
 }
 Say "END ALL exit=0 HEAD=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())"
