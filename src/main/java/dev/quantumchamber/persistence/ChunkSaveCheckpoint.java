@@ -30,6 +30,10 @@ import net.minecraft.world.storage.StorageIoWorker;
  * POI storage 沒有 observer 與 barrier，它的非同步寫入失敗只經 server 的 onChunkSaveFailure 記錄，屬 best-effort：
  * 在 verify 之後才完成的 POI 失敗不會被看見。
  * 任何失敗都重新標髒並丟出例外（fail-closed）。
+ *
+ * <p>journal 不在判定之內（M7 T4 P1／P2）：{@code server.save} 經原生路徑寫 journal（{@code SessionRecoveryState.save}，不是 checked flush），
+ * journal 寫出失敗時只記 ERROR、不丟出，所以這裡的成功不代表 journal 已落盤。呼叫端之後要靠自己的 checked 寫出（{@code journal.flush} 及以 flushed
+ * 判定的提交／移除）把關。
  */
 public final class ChunkSaveCheckpoint {
     private ChunkSaveCheckpoint() { }

@@ -219,7 +219,8 @@ public final class SessionRecoveryState extends PersistentState {
     private final java.util.Set<ReceiptReport> receiptMismatchReported = new HashSet<>();
     // T4 P1：目前這次 save 是否來自 checked flush（{@link #flush}）。不是時就是原版的原生存檔（autosave、/save-all、停服）。
     private boolean checkedWrite;
-    // T4 P2：原生存檔已記過 ERROR 的 journal 寫出失敗類別；每個 instance 每一類只記一次（見 {@link #reportNativeSaveFailure}）。
+    // T4 P2：原生存檔已記過 ERROR 的 journal 寫出失敗類別；同一段失敗期間每一類只記一次（見 {@link #reportNativeSaveFailure}）。
+    // T4 B2b-1（P2-M2）：讀回確認的成功寫出（checked 或原生）結束這段失敗期間時清除，比照 confirmedFailureWarnings；之後再發生同類失敗仍會再記。
     private final java.util.EnumSet<NativeSaveFailure> nativeSaveFailureReported = java.util.EnumSet.noneOf(NativeSaveFailure.class);
     private String loadError;
     private MinecraftServer owner;
@@ -950,6 +951,8 @@ public final class SessionRecoveryState extends PersistentState {
     /**
      * checked flush 的寫出：與原生存檔走同一個 {@link #save}，差別只在寫出失敗時——這裡照舊丟出，由 caller 以 flushed 判定失敗並退避；
      * 原生存檔則不丟出、保持未寫出的狀態（收據核對擋下時見 {@link #receiptHold}，T4 P1；其他 journal 寫入失敗見 {@link #reportNativeSaveFailure}，T4 P2）。
+     * <p>覆蓋前提（T4 P2 審查 P2-M6 附註）：多數拒寫原因的 JUnit 只經這裡（checked）驗，原生路徑另有少數斷言；這成立是因為兩條路徑共用同一個 save 本體、
+     * 只差失敗時丟不丟出。日後若把原生路徑分出另一個本體，要重新補上原生路徑的拒寫斷言。
      */
     void checkedSave(File file, RegistryWrapper.WrapperLookup lookup) {
         boolean outer = checkedWrite;
@@ -1090,8 +1093,12 @@ public final class SessionRecoveryState extends PersistentState {
                 pending = null;
                 // roll-forward 尚未確認的 session：讀回確認 flushed 已等於 current 時清除。
                 rollForwardPending.removeIf(sid -> Objects.equals(flushed.get(sid), records.get(sid)));
+                // T4 B2b-1（P2-M2）：讀回確認的成功寫出結束原生存檔的失敗期間；之後再發生同類失敗仍會再記一則 ERROR。
+                nativeSaveFailureReported.clear();
             } catch (IOException | RuntimeException exception) {
-                throw new UncheckedIOException("journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot",
+                // T4 B2b-1（P2-M5）：checked 路徑的訊息不變（丟出同一個物件）；原生存檔的 ERROR 附這個 cause，不帶 checked 的用語。
+                throw new UncheckedIOException(checkedWrite ? "journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot"
+                        : "journal 原生存檔寫出失敗，保留 dirty 與上一個 durable snapshot",
                         exception instanceof IOException io ? io : new IOException("journal strict readback 失敗", exception));
             }
             setDirty(false);
@@ -1108,8 +1115,9 @@ public final class SessionRecoveryState extends PersistentState {
      * <li>{@code UNHEALTHY}：開服時讀不到 journal；本 instance 永不寫出，管理員修檔後重啟收斂。</li>
      * <li>{@code PENDING}：上一次寫出的結果尚未確認、核對磁碟失敗；未確認的寫入不覆寫。核對失敗後本 instance 停寫（M5 既有），重啟後由開服 strict 載入收斂。</li>
      * <li>{@code PREPARE}：編碼或寫出前檢查（schema、strict decode、preflight、預算）失敗；尚未建立 pending，保持 dirty。</li>
-     * <li>{@code WRITE}：寫入正式檔失敗（例如 Windows atomic move 的 AccessDenied）；possiblyMoved 時保留 pending，下一次寫出先核對磁碟，否則保持 dirty。</li>
-     * <li>{@code READBACK}：正式檔已替換但讀回失敗或不符；保留 pending（下一次寫出依 M5 既有規則判定是否需要重啟）。</li>
+     * <li>{@code WRITE}：寫入正式檔失敗（例如 Windows atomic move 的 AccessDenied）；possiblyMoved 時正式檔可能已被替換、保留 pending，下一次寫出先核對磁碟，
+     *     否則保持 dirty。</li>
+     * <li>{@code READBACK}：正式檔已替換但讀回失敗或不符；保留 pending，下一次寫出核對磁碟時依 M5 既有規則判定需要重啟（legacy schema ≤4 沒有 pending，下一次存檔重寫）。</li>
      * </ul>
      * 後三類由下一次原生存檔與 recovery 的 journal 退避重試（{@code SessionRecoveryManager}）收斂；不新增短暫重試。
      */
@@ -1126,20 +1134,28 @@ public final class SessionRecoveryState extends PersistentState {
 
     /**
      * T4 P2：原生存檔的 journal 寫入失敗不丟進原版存檔鏈（原版照常存完其他 PersistentState、level.dat 與各世界，停服照常完成），只記 ERROR。
-     * 每個 instance 每一類只記一次；不屬於任何 session，帶 {@code CollapseService.TICK_LOG_MARKER}（父 marker 是 {@code LOG_MARKER}）並附 cause。
-     * 訊息依失敗後的狀態說明收斂方式。
+     * 同一段失敗期間每一類只記一次，不刷屏；讀回確認的成功寫出結束這段期間（T4 B2b-1，P2-M2），之後再發生同類失敗仍再記一則。不屬於任何 session，帶
+     * {@code CollapseService.TICK_LOG_MARKER}（父 marker 是 {@code LOG_MARKER}）並附 cause。
+     * 訊息依失敗的階段說明這次的結果（T4 B2b-1，P2-M5：結果不明的寫出與讀回失敗時正式檔可能已被替換，不寫成「這次沒有寫出」），再依失敗後的狀態說明收斂方式。
      */
     private void reportNativeSaveFailure(NativeSaveFailure kind, File file, RuntimeException failure) {
         if (!nativeSaveFailureReported.add(kind)) return;
+        String outcome;
+        if (kind == NativeSaveFailure.READBACK) outcome = "journal 這次沒有確認寫出：正式檔已被替換，但讀回失敗或與寫出的內容不符（結果未確認）";
+        else if (kind == NativeSaveFailure.WRITE && pending != null) outcome = "journal 這次沒有確認寫出：atomic move 可能已經完成，正式檔可能已被替換（結果未確認）";
+        else outcome = "journal 這次沒有寫出";
         String convergence;
         if (loadError != null) convergence = "本 instance 不會寫出 journal；需要修復或移走損壞的 journal 檔，再重啟伺服器才能收斂";
         else if (pendingRestartRequired) convergence = "已無法證實磁碟上的權威，本 instance 不再寫出 journal（未確認的寫入不會被覆寫）；需要重啟伺服器才能收斂（開服 strict 載入）";
-        else if (pending != null) convergence = "保留 pending：下一次寫出（原生存檔，或 recovery 的 journal 退避重試）會先核對磁碟仍是上一份權威才重寫，不覆寫未確認的寫入";
+        else if (pending != null && kind == NativeSaveFailure.READBACK) convergence = "保留 pending：正式檔已是這份未確認的寫出，下一次寫出（原生存檔，或 recovery 的 journal 退避重試）"
+                + "核對磁碟時會判定需要重啟伺服器才能收斂（開服 strict 載入），本 instance 之後不再寫出 journal，未確認的寫入不會被覆寫";
+        else if (pending != null) convergence = "由保留的 pending 收斂：下一次寫出（原生存檔，或 recovery 的 journal 退避重試）會先核對磁碟，仍是上一份權威才重寫；"
+                + "正式檔若已被這份未確認的寫出替換，本 instance 停寫、需要重啟伺服器，未確認的寫入不會被覆寫";
         else convergence = "保持 dirty：由下一次原生存檔或 recovery 的 journal 退避重試收斂";
         org.slf4j.LoggerFactory.getLogger("quantumchamber").error(dev.quantumchamber.collapse.CollapseService.TICK_LOG_MARKER,
-                "原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗：{}：不丟進原版存檔流程，原版照常存完其他資料與各世界；journal 這次沒有寫出"
-                        + "（dirty={}，pending={}）；{}。每個 instance 這一類只記一次：path={}：{}",
-                kind.text, isDirty(), pending != null, convergence, file.toPath().toAbsolutePath().normalize(), FailureText.describe(failure), failure);
+                "原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗：{}：不丟進原版存檔流程，原版照常存完其他資料與各世界；{}"
+                        + "（dirty={}，pending={}）；{}。同一段失敗期間這一類只記一次（讀回確認的成功寫出之後再發生時會再記）：path={}：{}",
+                kind.text, outcome, isDirty(), pending != null, convergence, file.toPath().toAbsolutePath().normalize(), FailureText.describe(failure), failure);
     }
 
     /**
@@ -1184,8 +1200,8 @@ public final class SessionRecoveryState extends PersistentState {
 
     /**
      * {@link #receiptHold} 核對失敗之後才分類（不在成功路徑多讀檔）：再以 {@link HomeReceiptStore#lookup} 讀一次。讀得出、而且不是這一列的結案快照
-     * （或這一列尚未結案）才算「不符」；讀不出（IO 錯誤、權限、路徑不是一般檔案、內容無法解析）、檔案不見，或讀出的內容等於這一列（第一次的失敗來自讀取）
-     * 都算「無法核對」，ERROR 不寫成竄改或損壞。
+     * （或這一列尚未結案）才算「不符」；讀不出（IO 錯誤、權限、路徑不是一般檔案、內容無法解析）、檔案不見，或讀出的內容等於這一列（第一次的失敗來自讀取，
+     * 或只差 DataVersion 等位元組層級的不同）都算「無法核對」。ERROR 如實寫「無法讀取或解析」，不寫成外部竄改，也不宣稱收據沒有被改過（T4 B2b-1，P2-M5）。
      */
     private static boolean receiptReadable(HomeReceiptStore store, JournalSession row) {
         if (store == null) return false;
@@ -1205,11 +1221,12 @@ public final class SessionRecoveryState extends PersistentState {
         if (!receiptMismatchReported.add(report)) return;
         var receipt = saveRoot.resolve("data").resolve("quantumchamber_home_receipts").resolve(report.sid() + ".dat").toAbsolutePath().normalize();
         String kind = report.mismatch() ? "與熱列不符（外部竄改、損壞或備份錯拼）"
-                : "無法讀取或核對（例如檔案被其他程式鎖定、權限不足、路徑不是一般檔案，或內容無法解析；這不代表收據被改過）";
+                : "無法讀取或解析（例如檔案被其他程式鎖定、權限不足、路徑不是一般檔案、內容無法解析，或與這一列只差 DataVersion 等格式；"
+                        + "可能只是讀取問題，也可能是損壞或其他版本寫出的收據）";
         String scope = report.unchanged() ? "這一列未變動，journal 照原樣寫出，其他旅程不受影響"
                 : "這一列本次有變動，本次不寫出 journal、保持 dirty；處理之前全服 journal 寫入已暫停（原生存檔不寫出 journal，所有旅程的 checked 提交都會失敗並退避）";
         String handling = report.mismatch() ? "確認收據檔是否屬於這一列，刪除它或還原成原本發佈的那一份，下一次存檔或 owner 重試就會恢復，不必重啟"
-                : "排除讀取問題（解除鎖定、修正權限），或刪除、還原該收據檔，下一次存檔或 owner 重試就會恢復，不必重啟";
+                : "先排除讀取問題（解除鎖定、修正權限）；不是讀取問題時，確認收據檔是否屬於這一列，刪除它或還原成原本發佈的那一份。下一次存檔或 owner 重試就會恢復，不必重啟";
         org.slf4j.LoggerFactory.getLogger("quantumchamber").error(dev.quantumchamber.collapse.CollapseService.LOG_MARKER,
                 "回程收據{}：保留熱列、收據原件與占用，需要管理員處理（{}）：session={}：收據檔={}：處理方式：{}：{}",
                 kind, scope, report.sid(), receipt, handling, FailureText.describe(failure), failure);
