@@ -389,6 +389,11 @@ tasks.named('check') {
 test {
     useJUnitPlatform()
     systemProperty 'fabric.side', 'server'
+    // M7 T4 B2b-3（I-1）：Gradle console 即時印出每個案例的開始與結果，gate 的「90 秒無輸出就判卡住」才看得到 JUnit 進度。
+    // 只加事件列，不開 showStandardStreams（測試自己的 stdout 仍只進 XML），不改測試行為。
+    testLogging {
+        events 'started', 'passed', 'failed'
+    }
     workingDir file('run/testworlds')
     doFirst {
         workingDir.mkdirs()

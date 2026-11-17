@@ -791,3 +791,8 @@ manifest 在 close 矩陣 39 列之後再接 7 列（B2a 的 5 列、T4 P1 的 `
 ### >4096 趟回程歷史（T4 B2b-2，plan Task 4 :265、V10）
 
 `M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（JUnit，`m7-inventory.json` 的 `portable.junit`，兩平台都跑）：4100 個互異 SID 各自經 admission 的同名檔查詢與同卷探測、CLOSE 列進熱 journal、正式 `publishOrVerify` 發布、正式 checked 移除（`terminateHome`，`finishHomeClose` 核過 proof 後的同一個本體）。之後舊 SID（前、中、4096 邊界前後、最後）以「旅程識別碼已有歷史」拒絕重用、新 SID 仍可 admission；抽樣的舊收據 exact 讀回、位元組自發布後不變。禁止全目錄掃描以 instrumentation 證明：收據 store 建在委派預設檔案系統的 `ListingProbe` 上，記錄目錄列舉與碰到別的 SID 收據檔的每一次存取，整段必須都是 0；把 `read` 改成列舉目錄的 mutation 被 `RECEIPT_DIRECTORY_LISTED` 殺掉。不虛增歷史計數：每趟移除後 journal 位元組都回到同一份空 schema6，`data` 底下只有 journal 與收據目錄，收據目錄恰為 4100 個 `<sid>.dat`（事後從磁碟數出）。Windows 本機約 46 秒（每趟約 11 ms）。限制：JUnit 拿不到 owner 的 mint／proof，CLOSE 列以 journal fixture 放入；B 門、原生 checkpoint 與 proof 由 M7 GameTest 與原生 46 列負責。
+
+分段（T4 B2b-3，I-1）：Gradle 的 `test` task 原本執行期間不輸出任何東西，4100 趟集中在一個方法時，Windows CI 上整段 M7 JUnit 對 `M7Runtime` 的「90 秒無輸出就判卡住」是一段長靜默（CI 44097956125 以 `reason=idle` 失敗，idle 90.03 秒）。現在兩處一起處理，idle 90 秒與總時限 600 秒都不變：
+
+- `build.gradle` 的 `test` 開 `testLogging { events 'started', 'passed', 'failed' }`：Gradle console 即時印出每個案例的開始與結果。不開 `showStandardStreams`，測試自己的 stdout 仍只進 XML。全部 JUnit 的 gate 都會多出這些事件列。
+- `M7HomeHistoryScaleTest` 依序拆成 `tripsBlock01Of10`～`tripsBlock10Of10`（各 410 趟）與最後的 `moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（admission、讀回、磁碟計數），共 11 個方法，`m7-inventory.json` 的 `portable.junit` 同步列出。`@TestInstance(PER_CLASS)`＋`@TestMethodOrder(OrderAnnotation)` 共用同一份累積狀態，存檔目錄是 static `@TempDir`（非 static 的 `@TempDir` 欄位在 JUnit 5.10 每個方法都會重新注入）。每一趟的步驟與斷言、4100 趟的數量都沒有改；每段開頭與最後一個方法都先核對前面的趟數全部完成（`BLOCK_ORDER`），一段失敗之後其餘各段都以具名錯因失敗，也不能只單獨跑其中一個方法。本機每段約 5 秒。

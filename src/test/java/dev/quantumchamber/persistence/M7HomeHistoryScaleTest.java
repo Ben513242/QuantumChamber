@@ -15,7 +15,11 @@ import java.security.MessageDigest;
 import java.util.*;
 import net.minecraft.nbt.NbtCompound;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.io.TempDir;
 
 /**
@@ -30,11 +34,41 @@ import org.junit.jupiter.api.io.TempDir;
  * 收據目錄恰好是這 {@value #TRIPS} 個 SID 各一個 {@code .dat}（沒有索引、計數檔或暫存殘留）。這些數量都是事後從磁碟數出來的，不是迴圈自己的計數。
  * <p>限制（如實揭露）：JUnit 拿不到回程終局 owner 的一次性 mint／proof（{@code HomeClosure.CloseMint}、{@code HomeClosureProof} 的建構子是 private），所以
  * CLOSE 列以 journal fixture 放進熱 journal，B 門、原生 checkpoint 與 proof 的部分由 M7 GameTest 與 Windows 原生 46 列負責。
+ * <p>分段執行（T4 B2b-3，I-1）：{@value #TRIPS} 趟依序分成 {@value #BLOCKS} 個測試方法（每段 {@value #PER_BLOCK} 趟），共用同一個存檔目錄、probe、store
+ * 與累積狀態（{@link TestInstance.Lifecycle#PER_CLASS} 加上 static {@link TempDir}），最後一個方法做 >4096 之後的 admission、抽樣讀回與磁碟計數。
+ * 拆段只為了讓 Gradle testLogging 在段與段之間印出事件列，M7 gate 的「90 秒無輸出就判卡住」看得到進度；每一趟的步驟與斷言都和拆段前相同，
+ * 也沒有減少趟數。每段開頭核對前面各段的趟數全部完成（{@code BLOCK_ORDER}），最後一個方法也先核對 {@value #TRIPS} 趟都完成：某一趟失敗之後，
+ * 之後的各段與最後一段都以具名錯因失敗，不會在只完成一部分的狀態上通過。只跑其中一個方法同樣會以 {@code BLOCK_ORDER} 失敗。
  */
+@TestInstance(TestInstance.Lifecycle.PER_CLASS)
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class M7HomeHistoryScaleTest {
     static final int TRIPS = 4100;
-    @TempDir Path save;
-    @BeforeAll static void version() { net.minecraft.SharedConstants.createGameVersion(); }
+    static final int BLOCKS = 10;
+    static final int PER_BLOCK = TRIPS / BLOCKS;
+    /** static：PER_CLASS 底下非 static 的 {@code @TempDir} 欄位每個方法都會換一個新目錄，各段必須共用同一個存檔目錄。 */
+    @TempDir static Path save;
+
+    private ListingProbe probe;
+    private HomeReceiptStore store;
+    private Path journal;
+    private Path receipts;
+    // 抽樣：前（0、1）、中、4096 邊界前後（TRIPS=4100 時為第 4095、4096 趟，也就是第 4096、4097 個 SID）與最後一趟。
+    private final SortedSet<Integer> samples = new TreeSet<>(List.of(0, 1, TRIPS / 2, TRIPS - 5, TRIPS - 4, TRIPS - 1));
+    private final Map<Integer, String> published = new HashMap<>();
+    private byte[] emptyJournal;
+    /** 已經走完全部斷言的趟數；一趟的每個斷言都通過之後才加一。 */
+    private int completedTrips;
+    private long tripNanos;
+
+    @BeforeAll void setUp() throws Exception {
+        net.minecraft.SharedConstants.createGameVersion();
+        assertEquals(0, TRIPS % BLOCKS, "TRIPS 必須能均分成 BLOCKS 段");
+        probe = new ListingProbe(save);
+        store = new HomeReceiptStore(probe.root());
+        journal = save.resolve("data/quantumchamber_sessions.dat");
+        receipts = HomeReceiptStore.receiptPath(save.toRealPath(), sid(0)).getParent();
+    }
 
     private static UUID sid(int trip) { return UUID.nameUUIDFromBytes(("m7-t4b2b2-history-" + trip).getBytes(java.nio.charset.StandardCharsets.UTF_8)); }
 
@@ -53,39 +87,61 @@ class M7HomeHistoryScaleTest {
 
     private static String sha256(byte[] bytes) throws Exception { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
 
-    @Test void moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan() throws Exception {
-        var probe = new ListingProbe(save);
-        var store = new HomeReceiptStore(probe.root());
-        var journal = save.resolve("data/quantumchamber_sessions.dat");
-        var receipts = HomeReceiptStore.receiptPath(save.toRealPath(), sid(0)).getParent();
-        // 抽樣：前（0、1）、中、4096 邊界前後（TRIPS=4100 時為第 4095、4096 趟，也就是第 4096、4097 個 SID）與最後一趟。
-        var samples = new TreeSet<>(List.of(0, 1, TRIPS / 2, TRIPS - 5, TRIPS - 4, TRIPS - 1));
-        var published = new HashMap<Integer, String>();
-        byte[] emptyJournal = null;
+    // 第 1～10 段：每段 PER_BLOCK 趟，依序執行（@Order），共用同一份累積狀態；方法名稱同步列在 m7-inventory.json 的 portable.junit。
+    @Order(1) @Test void tripsBlock01Of10() throws Exception { runBlock(0); }
+    @Order(2) @Test void tripsBlock02Of10() throws Exception { runBlock(1); }
+    @Order(3) @Test void tripsBlock03Of10() throws Exception { runBlock(2); }
+    @Order(4) @Test void tripsBlock04Of10() throws Exception { runBlock(3); }
+    @Order(5) @Test void tripsBlock05Of10() throws Exception { runBlock(4); }
+    @Order(6) @Test void tripsBlock06Of10() throws Exception { runBlock(5); }
+    @Order(7) @Test void tripsBlock07Of10() throws Exception { runBlock(6); }
+    @Order(8) @Test void tripsBlock08Of10() throws Exception { runBlock(7); }
+    @Order(9) @Test void tripsBlock09Of10() throws Exception { runBlock(8); }
+    @Order(10) @Test void tripsBlock10Of10() throws Exception { runBlock(9); }
+
+    /** 第 {@code block} 段（0 起算）：前面各段必須已全部完成，再逐趟走完整的步驟與斷言（與拆段前的單一迴圈相同）。 */
+    private void runBlock(int block) throws Exception {
+        assertTrue(block >= 0 && block < BLOCKS, "BLOCK_ORDER：段號超出範圍：" + block);
+        int from = block * PER_BLOCK;
+        assertEquals(from, completedTrips, "BLOCK_ORDER：第 " + (block + 1) + " 段開始時前面應已完成 " + from + " 趟，實際 " + completedTrips + " 趟（前面某一段失敗，或沒有依序執行）");
         long started = System.nanoTime();
-        for (int trip = 0; trip < TRIPS; trip++) {
-            var sid = sid(trip);
-            var frozen = closed(sid);
-            probe.allow(sid);
-            // 1. admission 側：新 SID 只查同名檔（不存在），並做同卷發布探測。
-            store.requireAdmissible(sid);
-            // 2. CLOSE 列進熱 journal（fixture，見類別說明的限制），開服 strict 載入只核這一列自己的收據（尚未發布）。
-            SessionJournalStore.write(journal, M7BudgetSpikeTest.wrap(List.of(HomeJournalCodec.encode(frozen))));
-            var state = SessionRecoveryState.load(journal); state.requireHealthy();
-            assertEquals(Map.of(sid, frozen), state.allFlushedSessions(), "第 " + trip + " 趟：CLOSE 列在熱 journal");
-            // 3. 正式發布收據；4. 正式 checked 移除熱列（移除前 exact 核對收據）。
-            store.publishOrVerify(frozen);
-            if (samples.contains(trip)) published.put(trip, sha256(Files.readAllBytes(HomeReceiptStore.receiptPath(save, sid))));
-            var removed = state.terminateHome(store, () -> state.checkedSave(journal.toFile(), null), frozen);
-            assertEquals(SessionRecoveryState.TerminalResult.Status.REMOVED, removed.status(), "第 " + trip + " 趟：熱列移除：" + removed.failure());
-            assertTrue(state.allSessions().isEmpty() && state.allFlushedSessions().isEmpty(), "第 " + trip + " 趟：熱列已移除");
-            byte[] bytes = Files.readAllBytes(journal);
-            if (emptyJournal == null) emptyJournal = bytes;
-            else assertArrayEquals(emptyJournal, bytes, "HISTORY_IN_JOURNAL：第 " + trip + " 趟移除後 journal 不得累積任何歷史或計數");
-            assertEquals(List.of(), probe.listings(), "RECEIPT_DIRECTORY_LISTED：第 " + trip + " 趟：收據只能按已知 SID exact lookup，不得列舉目錄");
-            assertEquals(List.of(), probe.foreign(), "FOREIGN_RECEIPT_TOUCHED：第 " + trip + " 趟：只能碰這一趟 SID 自己的收據檔");
+        try {
+            for (int trip = from; trip < from + PER_BLOCK; trip++) {
+                oneTrip(trip);
+                completedTrips++;
+            }
+        } finally {
+            tripNanos += System.nanoTime() - started;
         }
-        double tripSeconds = (System.nanoTime() - started) / 1e9;
+    }
+
+    private void oneTrip(int trip) throws Exception {
+        var sid = sid(trip);
+        var frozen = closed(sid);
+        probe.allow(sid);
+        // 1. admission 側：新 SID 只查同名檔（不存在），並做同卷發布探測。
+        store.requireAdmissible(sid);
+        // 2. CLOSE 列進熱 journal（fixture，見類別說明的限制），開服 strict 載入只核這一列自己的收據（尚未發布）。
+        SessionJournalStore.write(journal, M7BudgetSpikeTest.wrap(List.of(HomeJournalCodec.encode(frozen))));
+        var state = SessionRecoveryState.load(journal); state.requireHealthy();
+        assertEquals(Map.of(sid, frozen), state.allFlushedSessions(), "第 " + trip + " 趟：CLOSE 列在熱 journal");
+        // 3. 正式發布收據；4. 正式 checked 移除熱列（移除前 exact 核對收據）。
+        store.publishOrVerify(frozen);
+        if (samples.contains(trip)) published.put(trip, sha256(Files.readAllBytes(HomeReceiptStore.receiptPath(save, sid))));
+        var removed = state.terminateHome(store, () -> state.checkedSave(journal.toFile(), null), frozen);
+        assertEquals(SessionRecoveryState.TerminalResult.Status.REMOVED, removed.status(), "第 " + trip + " 趟：熱列移除：" + removed.failure());
+        assertTrue(state.allSessions().isEmpty() && state.allFlushedSessions().isEmpty(), "第 " + trip + " 趟：熱列已移除");
+        byte[] bytes = Files.readAllBytes(journal);
+        if (emptyJournal == null) emptyJournal = bytes;
+        else assertArrayEquals(emptyJournal, bytes, "HISTORY_IN_JOURNAL：第 " + trip + " 趟移除後 journal 不得累積任何歷史或計數");
+        assertEquals(List.of(), probe.listings(), "RECEIPT_DIRECTORY_LISTED：第 " + trip + " 趟：收據只能按已知 SID exact lookup，不得列舉目錄");
+        assertEquals(List.of(), probe.foreign(), "FOREIGN_RECEIPT_TOUCHED：第 " + trip + " 趟：只能碰這一趟 SID 自己的收據檔");
+    }
+
+    // 最後一段：>4096 之後的 admission、舊收據 exact 讀回與磁碟計數（拆段前單一方法的後半，斷言不變）。
+    @Order(BLOCKS + 1) @Test void moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan() throws Exception {
+        assertEquals(TRIPS, completedTrips, "BLOCK_ORDER：" + TRIPS + " 趟必須全部完成才能核對 >4096 之後的狀態，實際只完成 " + completedTrips + " 趟");
+        double tripSeconds = tripNanos / 1e9;
         assertEquals(6, SessionJournalStore.read(journal).getCompound("data").getInt("SchemaVersion"));
 
         // 之後仍可新 admission；舊 SID（前、中、後）不能重用，而且是因為它自己的單檔歷史，不是 instance 內的狀態。
@@ -128,8 +184,8 @@ class M7HomeHistoryScaleTest {
         for (int trip = 0; trip < TRIPS; trip++) expected.add(sid(trip) + ".dat");
         assertEquals(TRIPS, expected.size(), "fixture 的 SID 必須互異");
         assertEquals(List.copyOf(expected), names, "RECEIPT_SET：收據目錄必須恰好是每個 SID 一個 .dat，沒有索引、計數檔或暫存殘留");
-        System.out.printf("M7_T4B2B2_HISTORY trips=%d receipts=%d tripSeconds=%.1f perTripMillis=%.2f listings=%d foreign=%d samples=%s%n",
-                TRIPS, names.size(), tripSeconds, tripSeconds * 1000 / TRIPS, probe.listings().size(), probe.foreign().size(), samples);
+        System.out.printf("M7_T4B2B2_HISTORY trips=%d receipts=%d tripSeconds=%.1f perTripMillis=%.2f listings=%d foreign=%d samples=%s blocks=%d perBlock=%d%n",
+                TRIPS, names.size(), tripSeconds, tripSeconds * 1000 / TRIPS, probe.listings().size(), probe.foreign().size(), samples, BLOCKS, PER_BLOCK);
     }
 
     /**
