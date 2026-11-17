@@ -98,6 +98,132 @@ jobs:
             run/m6-universe-*/world/data/**
             run/m6-universe-*/world/dimensions/quantumchamber/universe/**
           if-no-files-found: error
+
+  # M7 T4 B2b-3：Windows 原生 M7 回程終局跨 JVM 鏈（46 列）分四片平行執行：三個門態各 13 列，restart 與 receipt 兩族（3＋4 列）同一片依序執行。
+  # 分片的單份驗證只算分片 PASS（M7_HOME_VERIFIED_SHARD），T4 完整 PASS 只由下方彙總 job 的 -VerifyAggregate 給出。
+  m7-home-native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: ordinary
+            selector: DoorState
+            values: ordinary
+          - shard: sealed
+            selector: DoorState
+            values: sealed
+          - shard: passable
+            selector: DoorState
+            values: passable
+          - shard: restart-receipt
+            selector: Family
+            values: restart,receipt
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      M7_HOME_SHARD: ${{ matrix.shard }}
+      M7_HOME_SELECTOR: ${{ matrix.selector }}
+      M7_HOME_VALUES: ${{ matrix.values }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: 執行 Windows M7 原生跨 JVM 分片
+        timeout-minutes: 60
+        shell: pwsh
+        run: |
+          # 每個選擇值跑一次 runner，各自恰好留下一份 summary；路徑依序寫進本片的清單，供驗證與彙總 job 使用。
+          if ($env:M7_HOME_SELECTOR -cnotin @('DoorState','Family')) { throw "M7_HOME_CI_SELECTOR：$env:M7_HOME_SELECTOR" }
+          $list = "build/m7-home-native/$env:M7_HOME_SHARD.txt"
+          if (Test-Path -LiteralPath $list) { throw "M7_HOME_CI_STALE_LIST：$list" }
+          New-Item -ItemType Directory -Path build/m7-home-native -Force | Out-Null
+          $summaries = @()
+          foreach ($value in $env:M7_HOME_VALUES.Split(',')) {
+            $selection = @{ $env:M7_HOME_SELECTOR = $value }
+            & ./scripts/verification/m7-home-probe.ps1 @selection -Gradle (Join-Path $PWD 'gradlew.bat') | Tee-Object -Variable probeOutput
+            $lines = @($probeOutput | Where-Object { "$_".StartsWith('M7_HOME_SUMMARY=') })
+            if ($lines.Count -ne 1) { throw "M7_HOME_CI_SUMMARY_NOT_UNIQUE：$value（$($lines.Count)）" }
+            $summaries += "$($lines[0])".Substring('M7_HOME_SUMMARY='.Length)
+          }
+          $summaries | Set-Content -LiteralPath $list -Encoding utf8
+      - name: 確認 Windows M7 原生分片收據
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          # 單份驗證對分片也是 exit 0，所以另外要求輸出恰為本片選擇的 M7_HOME_VERIFIED_SHARD PASS（不能只看 exit code）。
+          $values = @($env:M7_HOME_VALUES.Split(','))
+          $summaries = @(Get-Content -LiteralPath "build/m7-home-native/$env:M7_HOME_SHARD.txt" | Where-Object { $_ })
+          if ($summaries.Count -ne $values.Count) { throw "M7_HOME_CI_SUMMARY_COUNT：$($summaries.Count)／$($values.Count)" }
+          for ($i = 0; $i -lt $values.Count; $i++) {
+            $scope = if ($env:M7_HOME_SELECTOR -ceq 'DoorState') { "doorState:$($values[$i])" } else { "family:$($values[$i])" }
+            & ./scripts/verification/m7-home-probe.ps1 -VerifySummary $summaries[$i] -ExpectedHead $env:GITHUB_SHA -SelfTest | Tee-Object -Variable verifyOutput
+            $shard = @($verifyOutput | Where-Object { "$_" -cmatch ('^M7_HOME_VERIFIED_SHARD PASS .* selection=' + [regex]::Escape($scope) + ' HEAD=' + [regex]::Escape($env:GITHUB_SHA) + '（') })
+            if ($shard.Count -ne 1) { throw "M7_HOME_CI_NOT_SHARD：$scope $($summaries[$i])" }
+          }
+      - name: 上傳 Windows M7 原生分片證據
+        if: always()
+        timeout-minutes: 10
+        uses: actions/upload-artifact@v4
+        with:
+          name: m7-home-native-${{ matrix.shard }}
+          compression-level: 1
+          include-hidden-files: true
+          path: |
+            build/m7-home-native/*.txt
+            .superpowers/verification/m7-home-run-*.json
+            .superpowers/verification/m7-home-*/**
+            run/m7-home-*/preservation.json
+            run/m7-home-*/server.properties
+            run/m7-home-*/world/data/**
+          if-no-files-found: error
+
+  # 彙總：下載四片的 summary 與原件（同一個 Windows workspace 路徑，summary 內的絕對路徑才對得上），-VerifyAggregate 必須是 doorState 組合的 T4 完整 PASS。
+  m7-home-native-aggregate:
+    needs: m7-home-native
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: 下載 Windows M7 原生分片證據
+        timeout-minutes: 10
+        uses: actions/download-artifact@v4
+        with:
+          pattern: m7-home-native-*
+          merge-multiple: true
+          path: .
+      - name: 彙總 Windows M7 原生分片收據
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          # 四片的清單恰為 ordinary、passable、restart-receipt、sealed，合計 5 份 summary；summary 引用的原件都必須已下載到同一路徑。
+          $log = 'build/m7-home-native-aggregate.log'
+          New-Item -ItemType Directory -Path build -Force | Out-Null
+          "M7_HOME_CI_AGGREGATE_START HEAD=$env:GITHUB_SHA" | Set-Content -LiteralPath $log -Encoding utf8
+          $lists = @(Get-ChildItem -LiteralPath build/m7-home-native -File -Filter '*.txt' | Sort-Object Name)
+          if (($lists.Name -join ',') -cne 'ordinary.txt,passable.txt,restart-receipt.txt,sealed.txt') { throw "M7_HOME_CI_AGGREGATE_LISTS：$($lists.Name -join ',')" }
+          $summaries = @($lists | ForEach-Object { Get-Content -LiteralPath $_.FullName } | Where-Object { $_ })
+          if ($summaries.Count -ne 5) { throw "M7_HOME_CI_AGGREGATE_INPUT：$($summaries.Count)" }
+          foreach ($path in $summaries) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "M7_HOME_CI_AGGREGATE_MISSING：$path" }
+            foreach ($row in @((Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).rows)) {
+              foreach ($file in @($row.preservation) + @($row.phases | ForEach-Object receipt)) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "M7_HOME_CI_AGGREGATE_MISSING：$file" } }
+            }
+          }
+          & ./scripts/verification/m7-home-probe.ps1 -VerifyAggregate ($summaries -join ',') -ExpectedHead $env:GITHUB_SHA -SelfTest | Tee-Object -FilePath $log -Append | Tee-Object -Variable aggregateOutput
+          $complete = @($aggregateOutput | Where-Object { "$_" -cmatch ('^M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=46 phases=92 .* HEAD=' + [regex]::Escape($env:GITHUB_SHA) + '（') })
+          if ($complete.Count -ne 1) { throw 'M7_HOME_CI_AGGREGATE_NOT_COMPLETE' }
+      - name: 上傳 Windows M7 原生彙總結果
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: m7-home-aggregate
+          path: build/m7-home-native-aggregate.log
+          if-no-files-found: error
+
   build:
     runs-on: ubuntu-latest
     # job 層級的上限也涵蓋沒有個別 timeout 的 Build step。
