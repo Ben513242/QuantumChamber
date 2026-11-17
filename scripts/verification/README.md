@@ -802,6 +802,7 @@ strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立
 - strict 趟：第 0 趟、各段的第一趟與最後一趟、`samples`（0、1、2050、4095、4096、4099），以及每 64 趟（`STRICT_STRIDE`），共 86 趟，在 setUp 依規則固定。strict 趟照原本的完整步驟：admission 的同名檔查詢與同卷探測、CLOSE 列以正式 writer（`SessionJournalStore.write`）落盤、開服 strict 載入（`SessionRecoveryState.load`，含預算與這一列自己的收據核對）。
 - 其餘 4014 趟：CLOSE 列以同一份 data NBT 在記憶體 strict decode（`SessionRecoveryState.fromNbt`）放進熱 state，不落盤、不重讀。
 - 不抽樣：4100 趟每一趟都走正式 `publishOrVerify` 與正式 checked 移除 `terminateHome`；每一趟之後的 REMOVED、熱列清空、移除時寫出的 journal 位元組等於空 schema6、列舉 0、碰到別的 SID 0 都照舊；最後一個方法的舊 SID 拒絕、新 admission、exact 讀回、磁碟計數不變，另核 strict 趟恰好全部執行（`STRICT_SAMPLE`）。「熱 journal 檔先有這一列、移除後回到空」的磁碟層級證據只在 strict 趟。
+- 規則鎖定（T4 B2b-5，B2b4-M1）：最後一個方法另核各段的首趟與末趟都是 strict 趟，而且 strict 趟恰為 86 趟（`STRICT_TRIPS`，`STRICT_SAMPLE`）。把 `STRICT_STRIDE` 調大或刪掉首尾條件，strict 趟會變少、首尾也失去磁碟層級的證據，現在都會以 `STRICT_SAMPLE` 失敗。
 - 本機（Windows）XML 總計 53.7 秒 → 約 28 秒。下限是正式發布與移除本身（剖析約每趟 6.3 ms，佔原本每趟成本約一半），所以剩下的成本無法再以抽樣降低。
 
 ### 規模測試獨立一段（T4 B2b-5）

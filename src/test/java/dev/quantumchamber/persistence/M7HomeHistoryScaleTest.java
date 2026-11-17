@@ -45,7 +45,8 @@ import org.junit.jupiter.api.io.TempDir;
  * 第 0 趟、各段的第一趟與最後一趟、{@code samples}（前、中、4096 邊界前後、最後一趟），以及每 {@value #STRICT_STRIDE} 趟（固定抽樣）。其餘趟的 CLOSE 列
  * 以同一份 data NBT 在記憶體 strict decode（{@code SessionRecoveryState.fromNbt}）放進熱 state，不落盤、不重讀。不抽樣的部分：4100 趟每一趟都走正式發布
  * （{@code publishOrVerify}）與正式 checked 移除（{@code terminateHome}），每一趟之後的斷言（REMOVED、熱列已清空、移除時寫出的 journal 位元組等於空 schema6、
- * 列舉 0、碰到別的 SID 0）也都照舊；最後一個方法另核 strict 趟恰好依規則全部執行（{@code STRICT_SAMPLE}）。「熱 journal 檔先有這一列、移除後回到空」
+ * 列舉 0、碰到別的 SID 0）也都照舊；最後一個方法另核 strict 趟恰好依規則全部執行，而且規則本身沒有被改小：各段首尾都是 strict 趟、恰為
+ * {@value #STRICT_TRIPS} 趟（{@code STRICT_SAMPLE}；T4 B2b-5，B2b4-M1）。「熱 journal 檔先有這一列、移除後回到空」
  * 的磁碟層級證據只在 strict 趟；其餘趟由 REMOVED（移除的 checked 寫出 exact 讀回已無這一列）與寫出後的 journal 位元組負責。
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -56,6 +57,11 @@ class M7HomeHistoryScaleTest {
     static final int PER_BLOCK = TRIPS / BLOCKS;
     /** strict 趟的固定抽樣間距（見類別說明）。 */
     static final int STRICT_STRIDE = 64;
+    /**
+     * strict 趟的固定數量（T4 B2b-5，B2b4-M1）：每 {@value #STRICT_STRIDE} 趟（0～4096）65 趟，各段首趟另加 9 趟（410…3690 都不是 64 的倍數），
+     * 各段末趟另加 10 趟（409…4099），{@code samples} 另加 1 與 4095 兩趟，合計 86。規則被改小（例如 stride 調大、刪掉首尾條件）時以 {@code STRICT_SAMPLE} 失敗。
+     */
+    static final int STRICT_TRIPS = 86;
     /** static：PER_CLASS 底下非 static 的 {@code @TempDir} 欄位每個方法都會換一個新目錄，各段必須共用同一個存檔目錄。 */
     @TempDir static Path save;
 
@@ -171,6 +177,12 @@ class M7HomeHistoryScaleTest {
         assertEquals(TRIPS, completedTrips, "BLOCK_ORDER：" + TRIPS + " 趟必須全部完成才能核對 >4096 之後的狀態，實際只完成 " + completedTrips + " 趟");
         assertTrue(strictTrips.containsAll(samples), "STRICT_SAMPLE：strict 趟必須涵蓋全部抽樣趟：" + samples);
         assertEquals(strictTrips.size(), strictDone, "STRICT_SAMPLE：strict 趟必須依規則全部執行（" + strictTrips.size() + " 趟），實際 " + strictDone + " 趟");
+        // B2b4-M1：鎖定規則本身——各段的首尾趟都必須是 strict 趟（磁碟層級的證據），strict 趟恰為 STRICT_TRIPS 趟。
+        for (int block = 0; block < BLOCKS; block++) {
+            int first = block * PER_BLOCK, last = first + PER_BLOCK - 1;
+            assertTrue(strictTrips.contains(first) && strictTrips.contains(last), "STRICT_SAMPLE：第 " + (block + 1) + " 段的首趟 " + first + " 與末趟 " + last + " 都必須是 strict 趟");
+        }
+        assertEquals(STRICT_TRIPS, strictTrips.size(), "STRICT_SAMPLE：strict 趟必須恰為 " + STRICT_TRIPS + " 趟（stride " + STRICT_STRIDE + "、各段首尾與 samples），實際 " + strictTrips.size() + " 趟");
         double tripSeconds = tripNanos / 1e9;
         assertEquals(6, SessionJournalStore.read(journal).getCompound("data").getInt("SchemaVersion"));
 
