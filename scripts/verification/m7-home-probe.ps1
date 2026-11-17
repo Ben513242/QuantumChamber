@@ -5,19 +5,27 @@
 # 參數：
 #   -Only <列名,...>     只跑指定列（manifest 順序）；-DoorState ordinary|sealed|passable 只跑 close 矩陣該門態的 13 列（B2 CI 分片）；
 #   -Family close|restart|receipt 只跑該族的列（close＝39 列）。三個 -DoorState 分片與 restart、receipt 兩族的聯集恰為全部列、互不重疊。
-#   -VerifySummary <檔>  唯讀重驗已存 summary（逐列、逐 phase、逐退出碼與 receipt hash／內容）；-SelfTest 另跑負控（不改原件）
+#   -VerifySummary <檔>  唯讀重驗已存 summary（逐列、逐 phase、逐退出碼與 receipt hash／內容）；-SelfTest 另跑負控（不改原件）。只有選擇 all、恰為 windows.native 全部 46 列、
+#                        treeClean=true 的那一份才輸出 M7_HOME_VERIFIED_COMPLETE PASS（T4 完整 PASS）；其他（-Only、-DoorState、-Family）只輸出 M7_HOME_VERIFIED_SHARD PASS
+#                        （分片 PASS）。-RequireComplete 時分片以 M7_HOME_NOT_COMPLETE 失敗。treeClean 不是 true 的 summary 一律以 M7_HOME_SAVED_TREE_DIRTY 拒絕。
+#   -VerifyAggregate <檔,...>  唯讀彙總多份分片 summary（T4 B2b-2）：成員全部 treeClean、同一個 HEAD、各自通過單份驗證，列的聯集恰為 windows.native、沒有重疊；
+#                        合法組合只有「三個 -DoorState 分片＋restart＋receipt」與「close＋restart＋receipt」。PASS 輸出 M7_HOME_AGGREGATE_COMPLETE PASS（T4 完整 PASS）。
+#                        -SelfTest 另跑彙總負控與每一份成員的單份負控（總數上限 479，與 M6 同）。
 #   -ExpectedHead <sha>  summary 的 HEAD；未給時用目前 HEAD
 # phase receipt 位置由 testmod M7HomeProbe 固定為 <repo>/.superpowers/verification/m7-home-<nonce>/<phase>/（halt.json 或 final.json）。
 param([string[]]$Only=@(),[ValidateSet('','ordinary','sealed','passable')][string]$DoorState='',[ValidateSet('','close','restart','receipt')][string]$Family='',
-      [string]$VerifySummary='',[string]$ExpectedHead='',[switch]$SelfTest,
+      [string]$VerifySummary='',[string[]]$VerifyAggregate=@(),[switch]$RequireComplete,[string]$ExpectedHead='',[switch]$SelfTest,
       [string]$EvidenceRoot='',[string]$Gradle='',
       [int]$IdleSeconds=90,[int]$PhaseMinutes=5,[int]$BlockMinutes=240,
       [int]$GradleCodePage=[Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $Only=@($Only | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-if($SelfTest -and -not $VerifySummary){throw 'M7_HOME_VERIFY_SCOPE：SelfTest 僅供唯讀 VerifySummary'}
-if($VerifySummary -and ($Only.Count -or $DoorState -or $Family)){throw 'M7_HOME_VERIFY_SCOPE：唯讀驗證不得混入 runtime 選擇'}
+$VerifyAggregate=@($VerifyAggregate | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+if($SelfTest -and -not $VerifySummary -and -not $VerifyAggregate.Count){throw 'M7_HOME_VERIFY_SCOPE：SelfTest 僅供唯讀 VerifySummary／VerifyAggregate'}
+if($RequireComplete -and -not $VerifySummary){throw 'M7_HOME_VERIFY_SCOPE：RequireComplete 僅供 VerifySummary（VerifyAggregate 本身就要求完整）'}
+if($VerifySummary -and $VerifyAggregate.Count){throw 'M7_HOME_VERIFY_SCOPE：VerifySummary 與 VerifyAggregate 只能擇一'}
+if(($VerifySummary -or $VerifyAggregate.Count) -and ($Only.Count -or $DoorState -or $Family)){throw 'M7_HOME_VERIFY_SCOPE：唯讀驗證不得混入 runtime 選擇'}
 if(@(@(($Only.Count -gt 0),[bool]$DoorState,[bool]$Family) | Where-Object {$_}).Count -gt 1){throw 'M7_HOME_SELECTION_MIXED：-Only、-DoorState、-Family 只能指定一個'}
 $project=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 . (Join-Path $PSScriptRoot 'probe-common.ps1')
@@ -334,6 +342,8 @@ function Assert-M7SavedRow($summary,[int]$Index,$receiptOverrides=@{}) {
 }
 function Assert-M7SavedGlobal($summary) {
     if($summary.status -cne 'PASS' -or $summary.schema -ne 1 -or $summary.head -cne $head -or (@($summary.rowTable) -join ',') -cne ($manifest.row -join ',')){throw 'M7_HOME_SAVED_SUMMARY'}
+    # T4 B2b-2（B1-M4）：帶著未提交改動跑出的 PASS 不能歸到該 HEAD。
+    if($summary.treeClean -ne $true){throw 'M7_HOME_SAVED_TREE_DIRTY：summary 不是在乾淨工作樹跑出（treeClean 不是 true）'}
     $expected=@(switch -CaseSensitive ($summary.selection.mode){
         'all' {@($manifest.row)}
         'doorState' {if($summary.selection.doorState -cnotin $doors){throw 'M7_HOME_SAVED_SELECTION'};@($manifest | Where-Object {$_.family -ceq 'close' -and $_.door -ceq $summary.selection.doorState} | ForEach-Object row)}
@@ -351,6 +361,50 @@ function Assert-M7SavedSummary($summary) {
     Assert-M7SavedGlobal $summary
     for($i=0;$i -lt @($summary.rows).Count;$i++){Assert-M7SavedRow $summary $i}
 }
+# T4 B2b-2（B1-M4、B2a-M5）：單份 summary 只有「選擇 all、列恰為 windows.native 全部列、treeClean=true」才是 T4 完整 PASS；其他都只是分片 PASS。
+# 先經 Assert-M7SavedSummary 驗過內容，這裡只判範圍。
+function Test-M7Complete($summary) {
+    return $summary.selection.mode -ceq 'all' -and $summary.treeClean -eq $true -and (@(@($summary.rows) | ForEach-Object row) -join ',') -ceq (@($inventory.windows.native) -join ',')
+}
+function Assert-M7Complete($summary) {
+    if(-not (Test-M7Complete $summary)){throw "M7_HOME_NOT_COMPLETE：selection=$($summary.selection.mode) rows=$(@($summary.rows).Count)／$(@($inventory.windows.native).Count)（分片 PASS 不是 T4 完整 PASS；分片請以 -VerifyAggregate 彙總）"}
+}
+# 多份分片的彙總：只接受 -DoorState 與 -Family 分片；成員全部 treeClean、同一個 HEAD、各自通過單份驗證；列的聯集恰為 windows.native、沒有重疊。
+# 在這些條件下合法組合只有兩種（下表）；最後仍明確比對，防止日後加了新的分片種類卻漏改這裡。
+$aggregateCombinations=[ordered]@{
+    doorState=@('doorState:ordinary','doorState:sealed','doorState:passable','family:restart','family:receipt')
+    family=@('family:close','family:restart','family:receipt')
+}
+function Get-M7ShardKey($summary) {
+    switch -CaseSensitive ($summary.selection.mode){
+        'doorState' {return "doorState:$($summary.selection.doorState)"}
+        'family' {return "family:$($summary.selection.family)"}
+        default {throw "M7_HOME_AGGREGATE_SHARD：彙總只接受 -DoorState 或 -Family 分片，實際 selection=$($summary.selection.mode)"}
+    }
+}
+function Assert-M7Aggregate($members) {
+    $members=@($members)
+    if($members.Count -lt 2){throw "M7_HOME_AGGREGATE_INPUT：彙總至少要兩份分片 summary，實際 $($members.Count) 份"}
+    $keys=@();$rows=@()
+    for($i=0;$i -lt $members.Count;$i++){
+        $s=$members[$i].summary;$name=$members[$i].path
+        if($s.treeClean -ne $true){throw "M7_HOME_AGGREGATE_TREE：第 $i 份（$name）不是乾淨工作樹跑出"}
+        if($s.head -cne $head){throw "M7_HOME_AGGREGATE_HEAD：第 $i 份（$name）head=$($s.head)，預期 $head"}
+        $keys+=Get-M7ShardKey $s
+        try {Assert-M7SavedSummary $s | Out-Null} catch {throw "M7_HOME_AGGREGATE_MEMBER：第 $i 份（$name）：$($_.Exception.Message)"}
+        $rows+=@(@($s.rows) | ForEach-Object row)
+    }
+    if(@($keys | Sort-Object -Unique -CaseSensitive).Count -ne $keys.Count){throw "M7_HOME_AGGREGATE_OVERLAP：分片重複：$($keys -join ',')"}
+    $duplicated=@($rows | Group-Object -CaseSensitive | Where-Object Count -gt 1 | ForEach-Object Name)
+    if($duplicated.Count){throw "M7_HOME_AGGREGATE_OVERLAP：列重疊：$($duplicated -join ',')"}
+    $expected=@($inventory.windows.native)
+    $missing=@($expected | Where-Object {$_ -cnotin $rows});$extra=@($rows | Where-Object {$_ -cnotin $expected})
+    if($missing.Count -or $extra.Count -or $rows.Count -ne $expected.Count){throw "M7_HOME_AGGREGATE_UNION：列的聯集不等於 windows.native（缺 $($missing -join ',')；多 $($extra -join ',')）"}
+    $sortedKeys=(@($keys) | Sort-Object -CaseSensitive) -join ','
+    $combination=@($aggregateCombinations.Keys | Where-Object {((@($aggregateCombinations[$_]) | Sort-Object -CaseSensitive) -join ',') -ceq $sortedKeys})
+    if($combination.Count -ne 1){throw "M7_HOME_AGGREGATE_COMBINATION：$sortedKeys"}
+    return $combination[0]
+}
 function Copy-M7Json($value) { return $value | ConvertTo-Json -Depth 40 | ConvertFrom-Json -DateKind String }
 # 負控必須以預期的具名錯因被拒（不是任意例外）。
 function Test-M7Rejected([scriptblock]$Check,[string]$Case,[string]$Code) {
@@ -359,47 +413,96 @@ function Test-M7Rejected([scriptblock]$Check,[string]$Case,[string]$Code) {
     if($reason -cnotmatch ('^'+[regex]::Escape($Code)+'(：|$)')){throw "M7_HOME_SELFTEST_MISSED：$Case 預期 $Code，實際（$reason）"}
 }
 
+# 單份 summary 的負控（-VerifySummary 與 -VerifyAggregate 的每一份成員共用）；計數累加到 $script:m7Checks。
+function Invoke-M7SummarySelfTest($summary) {
+    # 整份 summary 的負控：列缺少、多出、改名、phase 改名、選擇與 HEAD 不符、工作樹不乾淨。
+    $global=[ordered]@{
+        'row-missing'=@('M7_HOME_SAVED_ROWS',{param($s) $s.rows=@(@($s.rows) | Select-Object -SkipLast 1)})
+        'row-extra'=@('M7_HOME_SAVED_ROWS',{param($s) $s.rows=@(@($s.rows)+@(@($s.rows)[0]))})
+        'row-renamed'=@('M7_HOME_SAVED_ROWS',{param($s) @($s.rows)[0].row=@($s.rows)[0].row+'-renamed'})
+        'row-swapped'=@('M7_HOME_SAVED_ROWS',{param($s) if(@($s.rows).Count -ge 2){$first=@($s.rows)[0].row;@($s.rows)[0].row=@($s.rows)[1].row;@($s.rows)[1].row=$first}else{@($s.rows)[0].row='close-ordinary-renamed'}})
+        'phase-renamed'=@('M7_HOME_SAVED_PHASES',{param($s) @(@($s.rows)[0].phases)[0].phase='restart'})
+        'selection-mismatch'=@('M7_HOME_SAVED_SELECTION',{param($s) $s.selection=[pscustomobject]@{mode='doorState';doorState=$(if(@($s.rows)[0].door -ceq 'ordinary'){'sealed'}else{'ordinary'});family='';only=@()}})
+        'head-mismatch'=@('M7_HOME_SAVED_SUMMARY',{param($s) $s.head='0'*40})
+        'tree-dirty'=@('M7_HOME_SAVED_TREE_DIRTY',{param($s) $s.treeClean=$false})
+    }
+    foreach($case in $global.Keys){$bad=Copy-M7Json $summary;& $global[$case][1] $bad;Test-M7Rejected {Assert-M7SavedSummary $bad} $case $global[$case][0];$script:m7Checks++}
+    # 分片冒充完整（T4 B2b-2）：把分片的選擇改成 all 會被選擇核對拒絕；分片本身不能通過完整性判定。
+    if(-not (Test-M7Complete $summary)){
+        $bad=Copy-M7Json $summary;$bad.selection=[pscustomobject]@{mode='all';doorState='';family='';only=@()}
+        Test-M7Rejected {Assert-M7SavedSummary $bad;Assert-M7Complete $bad} 'shard-claims-complete' 'M7_HOME_SAVED_SELECTION';$script:m7Checks++
+        Test-M7Rejected {Assert-M7Complete $summary} 'shard-not-complete' 'M7_HOME_NOT_COMPLETE';$script:m7Checks++
+    }
+    # 逐列：兩個 phase 的退出碼、receipt hash 與 receipt 內容（cut、事件序列、狀態）；只重驗該列，原件不改。
+    for($i=0;$i -lt @($summary.rows).Count;$i++){
+        foreach($p in 0,1){
+            $bad=Copy-M7Json $summary;@(@($bad.rows)[$i].phases)[$p].javaExitCode=$(if($p -eq 0){0}else{77})
+            Test-M7Rejected {Assert-M7SavedGlobal $bad;Assert-M7SavedRow $bad $i} "exit-$i-$p" 'M7_HOME_SAVED_EXIT';$script:m7Checks++
+            $bad=Copy-M7Json $summary;@(@($bad.rows)[$i].phases)[$p].receiptSha256='0'*64
+            Test-M7Rejected {Assert-M7SavedGlobal $bad;Assert-M7SavedRow $bad $i} "hash-$i-$p" 'M7_HOME_SAVED_RECEIPT_HASH';$script:m7Checks++
+        }
+        $crashReceipt=Read-M7Receipt @(@($summary.rows)[$i].phases)[0].receipt
+        $reopenReceipt=Read-M7Receipt @(@($summary.rows)[$i].phases)[1].receipt
+        $bad=Copy-M7Json $crashReceipt;$bad.cut=$(if($bad.cut -ceq 'before-close'){'after-close'}else{'before-close'})
+        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/crash"=$bad}} "crash-cut-$i" 'M7_HOME_RECEIPT_IDENTITY';$script:m7Checks++
+        $bad=Copy-M7Json $crashReceipt;$bad.events=@(@($bad.events)+@([pscustomobject]@{event='extra-event';serverTick=0;gameTime=0;detail='NONE'}))
+        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/crash"=$bad}} "crash-events-$i" 'M7_HOME_CRASH_EVENTS';$script:m7Checks++
+        $bad=Copy-M7Json $reopenReceipt;$bad.status='FAIL'
+        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-status-$i" 'M7_HOME_REOPEN_FAILED';$script:m7Checks++
+        $bad=Copy-M7Json $reopenReceipt;$bad.events=@(@($bad.events)+@([pscustomobject]@{event='before-door';serverTick=0;gameTime=0;detail='OPEN/NONE'}))
+        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-events-$i" 'M7_HOME_REOPEN_EVENTS';$script:m7Checks++
+    }
+    # 負控不改原件：結束再完整重驗一次。
+    Assert-M7SavedSummary $summary
+}
+# 彙總的負控（T4 B2b-2）：缺片、重疊、不同 HEAD、treeClean=false、分片冒充完整（成員自稱 all）、only 成員、只給一份、列從一片搬到另一片（聯集不變但成員不符）。
+function Invoke-M7AggregateSelfTest($members) {
+    $cases=[ordered]@{
+        'aggregate-missing'=@('M7_HOME_AGGREGATE_UNION',{param($m) @($m | Select-Object -SkipLast 1)})
+        'aggregate-duplicate'=@('M7_HOME_AGGREGATE_OVERLAP',{param($m) @($m)+@($m[0])})
+        'aggregate-head'=@('M7_HOME_AGGREGATE_HEAD',{param($m) $m[-1].summary.head='0'*40;$m})
+        'aggregate-tree-dirty'=@('M7_HOME_AGGREGATE_TREE',{param($m) $m[-1].summary.treeClean=$false;$m})
+        'aggregate-shard-claims-complete'=@('M7_HOME_AGGREGATE_SHARD',{param($m) $m[0].summary.selection.mode='all';$m})
+        'aggregate-only-member'=@('M7_HOME_AGGREGATE_SHARD',{param($m) $m[0].summary.selection.mode='only';$m})
+        'aggregate-single'=@('M7_HOME_AGGREGATE_INPUT',{param($m) @($m[0])})
+        'aggregate-row-moved'=@('M7_HOME_AGGREGATE_MEMBER',{param($m) $moved=@($m[0].summary.rows)[-1];$m[0].summary.rows=@(@($m[0].summary.rows) | Select-Object -SkipLast 1);$m[1].summary.rows=@(@($m[1].summary.rows)+@($moved));$m})
+    }
+    foreach($case in $cases.Keys){
+        $copy=@(@($members) | ForEach-Object {[pscustomobject]@{path=$_.path;summary=(Copy-M7Json $_.summary)}})
+        $bad=@(& $cases[$case][1] $copy)
+        Test-M7Rejected {Assert-M7Aggregate $bad | Out-Null} $case $cases[$case][0];$script:m7Checks++
+    }
+}
+
 $head=(git -c "safe.directory=$project" -C $project rev-parse HEAD).Trim()
 if($ExpectedHead){$head=$ExpectedHead}
+$selfTestBudget=479
+$script:m7Checks=0
+if($VerifyAggregate.Count) {
+    $members=@(foreach($path in $VerifyAggregate){[pscustomobject]@{path=$path;summary=(Read-M7Receipt $path)}})
+    $combination=Assert-M7Aggregate $members
+    if($SelfTest) {
+        Invoke-M7AggregateSelfTest $members
+        foreach($member in $members){Invoke-M7SummarySelfTest $member.summary}
+        if($script:m7Checks -gt $selfTestBudget){throw "M7_HOME_SELFTEST_BUDGET：負控 $($script:m7Checks) 個超過上限 $selfTestBudget"}
+        # 負控不改原件：結束再完整重驗一次彙總。
+        $null=Assert-M7Aggregate $members
+    }
+    $rowTotal=@($members | ForEach-Object {@($_.summary.rows)}).Count
+    Write-Output "M7_HOME_AGGREGATE_COMPLETE PASS combination=$combination summaries=$($members.Count) rows=$rowTotal phases=$(2*$rowTotal) negativeChecks=$($script:m7Checks) HEAD=$head（T4 完整 PASS：分片彙總）"
+    return
+}
 if($VerifySummary) {
     $summary=Read-M7Receipt $VerifySummary
     Assert-M7SavedSummary $summary
-    $checks=0
+    if($RequireComplete){Assert-M7Complete $summary}
     if($SelfTest) {
-        # 整份 summary 的負控：列缺少、多出、改名、phase 改名、選擇與 HEAD 不符。
-        $global=[ordered]@{
-            'row-missing'=@('M7_HOME_SAVED_ROWS',{param($s) $s.rows=@(@($s.rows) | Select-Object -SkipLast 1)})
-            'row-extra'=@('M7_HOME_SAVED_ROWS',{param($s) $s.rows=@(@($s.rows)+@(@($s.rows)[0]))})
-            'row-renamed'=@('M7_HOME_SAVED_ROWS',{param($s) @($s.rows)[0].row=@($s.rows)[0].row+'-renamed'})
-            'row-swapped'=@('M7_HOME_SAVED_ROWS',{param($s) if(@($s.rows).Count -ge 2){$first=@($s.rows)[0].row;@($s.rows)[0].row=@($s.rows)[1].row;@($s.rows)[1].row=$first}else{@($s.rows)[0].row='close-ordinary-renamed'}})
-            'phase-renamed'=@('M7_HOME_SAVED_PHASES',{param($s) @(@($s.rows)[0].phases)[0].phase='restart'})
-            'selection-mismatch'=@('M7_HOME_SAVED_SELECTION',{param($s) $s.selection=[pscustomobject]@{mode='doorState';doorState=$(if(@($s.rows)[0].door -ceq 'ordinary'){'sealed'}else{'ordinary'});family='';only=@()}})
-            'head-mismatch'=@('M7_HOME_SAVED_SUMMARY',{param($s) $s.head='0'*40})
-        }
-        foreach($case in $global.Keys){$bad=Copy-M7Json $summary;& $global[$case][1] $bad;Test-M7Rejected {Assert-M7SavedSummary $bad} $case $global[$case][0];$checks++}
-        # 逐列：兩個 phase 的退出碼、receipt hash 與 receipt 內容（cut、事件序列、狀態）；只重驗該列，原件不改。
-        for($i=0;$i -lt @($summary.rows).Count;$i++){
-            foreach($p in 0,1){
-                $bad=Copy-M7Json $summary;@(@($bad.rows)[$i].phases)[$p].javaExitCode=$(if($p -eq 0){0}else{77})
-                Test-M7Rejected {Assert-M7SavedGlobal $bad;Assert-M7SavedRow $bad $i} "exit-$i-$p" 'M7_HOME_SAVED_EXIT';$checks++
-                $bad=Copy-M7Json $summary;@(@($bad.rows)[$i].phases)[$p].receiptSha256='0'*64
-                Test-M7Rejected {Assert-M7SavedGlobal $bad;Assert-M7SavedRow $bad $i} "hash-$i-$p" 'M7_HOME_SAVED_RECEIPT_HASH';$checks++
-            }
-            $crashReceipt=Read-M7Receipt @(@($summary.rows)[$i].phases)[0].receipt
-            $reopenReceipt=Read-M7Receipt @(@($summary.rows)[$i].phases)[1].receipt
-            $bad=Copy-M7Json $crashReceipt;$bad.cut=$(if($bad.cut -ceq 'before-close'){'after-close'}else{'before-close'})
-            Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/crash"=$bad}} "crash-cut-$i" 'M7_HOME_RECEIPT_IDENTITY';$checks++
-            $bad=Copy-M7Json $crashReceipt;$bad.events=@(@($bad.events)+@([pscustomobject]@{event='extra-event';serverTick=0;gameTime=0;detail='NONE'}))
-            Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/crash"=$bad}} "crash-events-$i" 'M7_HOME_CRASH_EVENTS';$checks++
-            $bad=Copy-M7Json $reopenReceipt;$bad.status='FAIL'
-            Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-status-$i" 'M7_HOME_REOPEN_FAILED';$checks++
-            $bad=Copy-M7Json $reopenReceipt;$bad.events=@(@($bad.events)+@([pscustomobject]@{event='before-door';serverTick=0;gameTime=0;detail='OPEN/NONE'}))
-            Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-events-$i" 'M7_HOME_REOPEN_EVENTS';$checks++
-        }
-        # 負控不改原件：結束再完整重驗一次。
-        Assert-M7SavedSummary $summary
+        Invoke-M7SummarySelfTest $summary
+        if($script:m7Checks -gt $selfTestBudget){throw "M7_HOME_SELFTEST_BUDGET：負控 $($script:m7Checks) 個超過上限 $selfTestBudget"}
     }
-    Write-Output "M7_HOME_VERIFIED PASS rows=$(@($summary.rows).Count) phases=$($summary.phaseCount) negativeChecks=$checks selection=$($summary.selection.mode) HEAD=$head"
+    $scope=$(switch -CaseSensitive ($summary.selection.mode){'doorState'{"doorState:$($summary.selection.doorState)"};'family'{"family:$($summary.selection.family)"};default{$summary.selection.mode}})
+    if(Test-M7Complete $summary){Write-Output "M7_HOME_VERIFIED_COMPLETE PASS rows=$(@($summary.rows).Count) phases=$($summary.phaseCount) negativeChecks=$($script:m7Checks) selection=$scope HEAD=$head（T4 完整 PASS）"}
+    else{Write-Output "M7_HOME_VERIFIED_SHARD PASS rows=$(@($summary.rows).Count)／$(@($inventory.windows.native).Count) phases=$($summary.phaseCount) negativeChecks=$($script:m7Checks) selection=$scope HEAD=$head（分片 PASS，不是 T4 完整 PASS；完整請用 -VerifyAggregate 彙總）"}
     return
 }
 

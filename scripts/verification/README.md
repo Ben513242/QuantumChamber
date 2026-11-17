@@ -744,6 +744,9 @@ pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -DoorState sealed  
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -Only close-ordinary-before-close,close-sealed-after-remove
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -Family close                  # close 矩陣 39 列（restart、receipt 同理）
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifySummary <m7-home-run-*.json> -ExpectedHead <完整SHA> -SelfTest
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifySummary <m7-home-run-*.json> -ExpectedHead <完整SHA> -RequireComplete   # 分片時以 M7_HOME_NOT_COMPLETE 失敗
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifyAggregate <ordinary.json>,<sealed.json>,<passable.json>,<restart.json>,<receipt.json> -ExpectedHead <完整SHA> -SelfTest
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifyAggregate <close.json>,<restart.json>,<receipt.json> -ExpectedHead <完整SHA> -SelfTest
 ```
 
 - 每列一個新的 owned root `run/m7-home-<runId 12 hex>-<列名>`（`probe-common.ps1` 的 `New-OwnedRoot`），兩個 phase 各一個 JVM，phase evidence 在 `.superpowers/verification/m7-home-<nonce>/<phase>/`，已存在就拒絕重跑；root 與原件永久保留。
@@ -757,7 +760,12 @@ pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifySummary <m7-
 - 兩種結束都核對：receipt 的 PID、StartTime（±1 秒）、startupNonce 與實際 JVM 相符、標示 testmod runtime；JVM 已結束；`world/session.lock` 可獨占開啟；latest.log 恰有一行 `M7_HOME_BEGIN`（reopen 另恰有一行 `M7_HOME_END`）。crash 另要求 Gradle 非 0、JVM 77、Gradle 輸出有 `finished with non-zero exit value 77`、沒有 `final.json`；reopen 要求 Gradle 與 JVM 都是 0、沒有 `halt.json`。
 - 逾時沿 `probe-common.ps1`：`-IdleSeconds`（預設 90）、`-PhaseMinutes`（預設 5）、`-BlockMinutes`（預設 240）；逾時 FAIL、保留 root，不可同 root 重跑。啟動前已有非 daemon Java 就拒絕。
 - summary `m7-home-run-<runId>.json`（`-EvidenceRoot`，預設 `.superpowers/verification`）記錄選擇（all／doorState／only）、`selectedRows`、每列兩個 phase 的身分、退出碼、receipt 路徑與 SHA-256、耗時（每 phase、每列與總計）。`-VerifySummary` 唯讀逐列、逐 phase 重驗：列名與順序必須等於選擇的精確集合（不是只看總數）、phase 名稱恰為 crash／reopen、退出碼、receipt hash 與內容、JVM 與 root 不重用。`-SelfTest` 只改記憶體副本，負控為列缺少、多出、改名、對調、phase 改名、選擇不符、HEAD 不符，以及每列兩個 phase 的退出碼、receipt hash、crash 的 cut 與事件、reopen 的狀態與事件；每個負控都要以預期的具名錯因被拒，結束後再完整重驗原件。
-- run-all 與 CI 接線屬 T4 Phase B2b，這裡不納入。
+- 完整性（T4 B2b-2，B1-M4、B2a-M5）：
+  - summary 的 `treeClean` 不是 true（工作樹帶著未提交改動跑出）一律以 `M7_HOME_SAVED_TREE_DIRTY` 拒絕，不能歸到該 HEAD。
+  - 單份 summary 只有「選擇 all、列恰為 `windows.native` 全部 46 列、treeClean=true」才輸出 `M7_HOME_VERIFIED_COMPLETE PASS`（T4 完整 PASS）。`-Only`、`-DoorState`、`-Family` 的 summary 驗過內容也只輸出 `M7_HOME_VERIFIED_SHARD PASS`（分片 PASS），兩個名稱不同，不能只看 exit 0；加 `-RequireComplete` 時分片以 `M7_HOME_NOT_COMPLETE` 失敗。
+  - `-VerifyAggregate` 彙總多份分片：只接受 `-DoorState` 與 `-Family` 分片（`only`、`all` 以 `M7_HOME_AGGREGATE_SHARD` 拒絕）；至少兩份（`M7_HOME_AGGREGATE_INPUT`）；每份 treeClean（`M7_HOME_AGGREGATE_TREE`）、同一個 HEAD（`M7_HOME_AGGREGATE_HEAD`）、各自通過單份驗證（`M7_HOME_AGGREGATE_MEMBER`）；分片與列都不得重複（`M7_HOME_AGGREGATE_OVERLAP`）；列的聯集恰為 `windows.native`（`M7_HOME_AGGREGATE_UNION`）。合法組合只有「三個門態分片（13,13,13）＋restart＋receipt」與「close＋restart＋receipt」，最後再明確比對（`M7_HOME_AGGREGATE_COMBINATION`）。PASS 輸出 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState|family`，這也算 T4 完整 PASS。
+  - `-SelfTest` 另補：每份 summary 加 `tree-dirty`；分片另加「選擇改成 all」（`M7_HOME_SAVED_SELECTION`）與「分片不能通過完整性判定」（`M7_HOME_NOT_COMPLETE`）；彙總另有缺片、重複成員、不同 HEAD、treeClean=false、成員自稱 all、only 成員、只給一份、列從一片搬到另一片（聯集不變但成員不符）8 個，並對每一份成員跑單份負控。總數上限 479（與 M6 同），超過以 `M7_HOME_SELFTEST_BUDGET` 失敗；46 列時為 376（單份完整：8＋8×46）、406（family 三份：8＋10×3＋368）、426（門態五份：8＋10×5＋368）。
+- run-all 與 CI 接線屬 T4 Phase B2b-3，這裡不納入。
 
 ### B2a：其餘跨 JVM 鏈（`M7HomeChainPhases.java`）
 
@@ -777,5 +785,9 @@ manifest 在 close 矩陣 39 列之後再接 7 列（B2a 的 5 列、T4 P1 的 `
 - runner 另核：crash／reopen 的事件序列與 outcome、各列 crash 當下的 journal／registry／收據／門狀態、開服掃描前的觀察（`early`）、收據的原因與 Evidence、收據檔案、checkpoint 範圍（含門 chunk）、移除前後的占用、零移動，以及每列必須成立的 Java 斷言名稱清單。`-SelfTest` 的逐列負控與 close 列相同（每列 8 個）。
 - 同 JVM 的子項（`M7HomeClosureGameTests`）：`checkpoint_failure_keeps_close_and_lock`（checkpoint 結果未知）、`existing_receipt_mismatch_keeps_lock`（發佈前目標已存在而內容不同）、`published_receipt_mismatch_keeps_lock`（收據與熱列跨檔不符；T4 P1 起不再避開原生 autosave 的窗口，改成在不符而且 journal dirty 的期間正面呼叫 `saveAll(true,false,false)`（autosave 的同一條路徑）與 `saveAll(true,true,true)`（`/save-all flush`，原版 `SaveAllCommand` 的同一條路徑），斷言例外不傳出、raids 與 level.dat（flush 時另有兩側 chunk）都存到、journal 照原樣寫出、保鎖，管理員 ERROR 只記一次）；T4 P2 的 `native_save_write_failure_keeps_pending`（`M7NativeSaveFault` 讓 journal 正式寫出的 atomic move 失敗：checked 寫出與故障期間的兩次原生存檔都不得把例外傳出、journal 檔不變、保留 dirty／pending／待確認的 roll-forward、原生存檔的 ERROR 恰一則帶 `TICK_LOG_MARKER`；解除故障後由 recovery 的 journal 退避重試自行收斂）與 `native_save_skips_unhealthy_journal`（journal 不健康時原生存檔不丟出、不寫 journal，其他資料照常存到，恢復健康後照常寫出）。M4 recovery 的 `readback-fault` 自 T4 P2 起預期正常停服：原生 save 不丟出、不寫入、journal hash 不變，PENDING 類 ERROR 恰一則（訊息寫明需要重啟伺服器才能收斂），停服完成（SERVER_STOPPED、JVM exit 0）、磁碟上仍是那份 exact attempt；`recover`、`verify` 照舊。T4 B2b-1（P2-M4）起 `pending-stopped.json` 另記 `stopSaveCalls`（SERVER_STOPPING 之後真正進入 journal save 本體的次數，save HEAD 計數、被凍結取消的不算；ERROR 已去重，不能代替）與 `universeUnchanged`（與一般停服路徑相同，停服不得改 Universe catalog／world keys），Java 與 `m4-recovery-probe.ps1` 都要求 `stopSaveCalls≥1`、`universeUnchanged=true`。
 - 共用 GT server 的殘留收尾（T4 B2b-1，P2-M3）：`M7HomeClosureGameTests.Projection` 記下 `settled()`／`dormant()` 建立的 SID，`close()` 時在釋放 B 區塊票之前，以正式路徑收掉仍在 journal 的列（必要時 checked 清租約、checked latch `ROOT_DISABLED`，再呼叫回程終局 owner 的 `HomeClosure.step`），成功記 `M7_GT_RESIDUE_CLOSED`，收不掉記 `M7_GT_LEFTOVER_HOME`（附 thresholds）；不在 test 結束後另等（下一個 batch 已開始）。`native_save_write_failure_keeps_pending` 因此先等 B 端就緒（`whenEntryReady`，最多 380 tick，tickLimit 2000→2300）。`M7CapacityFixture.admit` 先檢查共用 journal 沒有其他 HOME 列與 pending，不成立時以 `PRIOR_TEST_RESIDUE` 失敗，不誤報成容量問題。
-- 原生存檔 ERROR 的去重（T4 B2b-1，P2-M2）：同一段失敗期間每一類只記一則；讀回確認的成功寫出結束這段期間，之後再發生同類失敗仍再記一則。收據 ERROR 的去重（SID×類別）不變。
-- run-all、CI 接線與 `-VerifySummary` 的完整性檢查屬 T4 Phase B2b。
+- 原生存檔 ERROR 的去重（T4 B2b-1，P2-M2）：同一段失敗期間每一類只記一則；讀回確認的成功寫出結束這段期間，之後再發生同類失敗仍再記一則。收據 ERROR 的去重（SID×類別）在這個 SID 的收據核對（`verifyActive`）通過時清除（T4 B2b-2，B2b1-M2）：不符期間核對一直失敗，仍只記一則；修好之後同一個 SID 再犯會再記。不以「寫出成功」清除，因為未變動的不符列每次存檔都照原樣寫出成功。收據檔路徑由 `HomeReceiptStore.receiptPath` 單一來源計算，收據讀寫與這則 ERROR 共用（P2-M5 第 4 點）。
+- `-VerifySummary` 的完整性檢查與 `-VerifyAggregate` 已在 T4 B2b-2 完成（見上方「完整性」）；run-all、CI 接線屬 T4 Phase B2b-3。
+
+### >4096 趟回程歷史（T4 B2b-2，plan Task 4 :265、V10）
+
+`M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（JUnit，`m7-inventory.json` 的 `portable.junit`，兩平台都跑）：4100 個互異 SID 各自經 admission 的同名檔查詢與同卷探測、CLOSE 列進熱 journal、正式 `publishOrVerify` 發布、正式 checked 移除（`terminateHome`，`finishHomeClose` 核過 proof 後的同一個本體）。之後舊 SID（前、中、4096 邊界前後、最後）以「旅程識別碼已有歷史」拒絕重用、新 SID 仍可 admission；抽樣的舊收據 exact 讀回、位元組自發布後不變。禁止全目錄掃描以 instrumentation 證明：收據 store 建在委派預設檔案系統的 `ListingProbe` 上，記錄目錄列舉與碰到別的 SID 收據檔的每一次存取，整段必須都是 0；把 `read` 改成列舉目錄的 mutation 被 `RECEIPT_DIRECTORY_LISTED` 殺掉。不虛增歷史計數：每趟移除後 journal 位元組都回到同一份空 schema6，`data` 底下只有 journal 與收據目錄，收據目錄恰為 4100 個 `<sid>.dat`（事後從磁碟數出）。Windows 本機約 46 秒（每趟約 11 ms）。限制：JUnit 拿不到 owner 的 mint／proof，CLOSE 列以 journal fixture 放入；B 門、原生 checkpoint 與 proof 由 M7 GameTest 與原生 46 列負責。
