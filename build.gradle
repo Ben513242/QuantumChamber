@@ -133,6 +133,20 @@ loom {
                 if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m6universe.${key}=${providers.gradleProperty(property).get()}"
             }
         }
+        // M7 T4 Phase B1：Windows 原生 close 矩陣（M7HomeProbe）。每個 phase 一個 JVM，root 由 scripts/verification/m7-home-probe.ps1 建立；
+        // 比照 m6UniverseProbe，只轉入 -Pm7Home* 四個屬性，不帶 GameTest 或 collapseSuspended 旗標（probe 也斷言 JVM 沒有它們）。
+        m7HomeProbe {
+            server()
+            name 'M7 Home Close Matrix Probe'
+            source sourceSets.testmod
+            def nonce = providers.gradleProperty('m7HomeNonce').getOrElse('disabled')
+            if (!(nonce ==~ /[a-z0-9]+(?:-[a-z0-9]+)*/)) throw new GradleException('M7 home nonce 只能包含小寫英數與連字號')
+            runDir "run/m7-home-${nonce}"
+            ['phase', 'nonce', 'startupNonce', 'root'].each { key ->
+                def property = 'm7Home' + key.capitalize()
+                if (providers.gradleProperty(property).isPresent()) vmArg "-Dquantumchamber.m7home.${key}=${providers.gradleProperty(property).get()}"
+            }
+        }
         gameTest {
             server()
             name 'M1 Game Test'
