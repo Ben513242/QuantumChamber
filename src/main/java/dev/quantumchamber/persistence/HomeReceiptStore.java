@@ -8,7 +8,15 @@ import java.util.*;
 import net.minecraft.nbt.*;
 import static dev.quantumchamber.persistence.JournalNbt.*;
 
-/** 只按指定 SID 查詢的不可變回程歷史。 */
+/**
+ * 只按指定 SID 查詢的不可變回程歷史。
+ * <p>查詢規則（M7 spec §5.3、V10）：只按已知的 SID 開它自己的 {@code <SID>.dat}（{@code receiptPath}），禁止列舉收據目錄（{@code newDirectoryStream}、
+ * {@code Files.list}／{@code walk}／{@code find}、{@code File.list} 等），也不碰其他 SID 的收據檔。收據沒有數量上限，列舉的成本會隨歷史一直成長。
+ * 讀取的單一入口是 {@code read}：{@code lookup}、{@code requireExact}、{@code verifyActive}、admission 與發布都經它，{@code SessionRecoveryState}
+ * 的開服載入與存檔前核對也是呼叫這些方法。
+ * <p>守門：{@code M7HomeHistoryScaleTest} 的 {@code ListingProbe} 記錄經「測試傳入的這個 store」的每一次目錄列舉與越界存取，必須為 0。它只包住那個
+ * store，若在 {@code SessionRecoveryState} 或其他類別另寫目錄列舉，那個測試看不到；新增讀取路徑時請經 {@code read}，不要自己列舉（T4 B2b-3，B2b2-M2）。
+ */
 public final class HomeReceiptStore {
     private final Path save;
     public HomeReceiptStore(Path save) throws IOException {
