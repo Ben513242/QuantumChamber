@@ -140,7 +140,7 @@ class SessionRecoveryStateTest {
             previous[0] = SessionJournalStore.read(file);
             var flushed = state.flushedRecords();
             state.put(candidateRecord(true)); armed[0] = true;
-            assertThrows(UncheckedIOException.class, () -> state.save(file.toFile(), null), fault);
+            assertThrows(UncheckedIOException.class, () -> state.checkedSave(file.toFile(), null), fault);
             assertTrue(state.isDirty(), fault); assertEquals(flushed, state.flushedRecords(), fault);
             assertEquals(SessionState.MEASURED, state.records().values().iterator().next().state());
         }
@@ -276,7 +276,7 @@ class SessionRecoveryStateTest {
         var template=candidateRecord(false);
         var initial=template.withProgress(template.participants(),template.spaceLeases(),SessionState.ARMING,false); var sid=initial.sessionUuid();
         state.put(initial); armed[0]=true;
-        assertThrows(UncheckedIOException.class,() -> state.save(file.toFile(),null));
+        assertThrows(UncheckedIOException.class,() -> state.checkedSave(file.toFile(),null));
         assertEquals(initial,SessionRecoveryState.load(file).flushedRecords().get(sid),"fixture：未確認的 ARMING 已在磁碟上");
         assertTrue(state.quarantine(sid)); assertFalse(state.quarantine(sid),"重複隔離回 false");
         assertTrue(state.uncheckedSessions().isEmpty(),"隔離 session 不讓 recovery 等待");
@@ -331,7 +331,7 @@ class SessionRecoveryStateTest {
         var file=directory.resolve("readback-window.dat");
         state.put(previous); state.save(file.toFile(),null);
         state.put(selected); armed[0]=true;
-        assertThrows(UncheckedIOException.class,() -> state.save(file.toFile(),null));
+        assertThrows(UncheckedIOException.class,() -> state.checkedSave(file.toFile(),null));
         assertEquals(SessionState.MEASURED,SessionRecoveryState.load(file).flushedRecords().get(previous.sessionUuid()).state(),"fixture：next 已寫入但未確認");
         assertEquals(previous,state.flushedRecords().get(previous.sessionUuid()),"readback 失敗不得前進 flushed");
         assertTrue(state.abortUnchecked(selected));
@@ -627,7 +627,10 @@ class SessionRecoveryStateTest {
         NbtIo.writeCompressed(wrapper, absent);
         var failed = SessionRecoveryState.load(absent);
         assertThrows(IllegalStateException.class, failed::requireHealthy);
-        assertThrows(IllegalStateException.class, () -> failed.save(absent.toFile(), null));
+        assertThrows(IllegalStateException.class, () -> failed.checkedSave(absent.toFile(), null));
+        assertEquals(wrapper, NbtIo.readCompressed(absent, NbtSizeTracker.ofUnlimitedBytes()));
+        // T4 P2：原生存檔（autosave、停服）遇到不健康的 journal 不丟進原版存檔鏈，也不寫。
+        assertDoesNotThrow(() -> failed.save(absent.toFile(), null));
         assertEquals(wrapper, NbtIo.readCompressed(absent, NbtSizeTracker.ofUnlimitedBytes()));
     }
 
@@ -731,7 +734,12 @@ class SessionRecoveryStateTest {
         assertTrue(state.flushedRecords().isEmpty());
         assertEquals(2, SessionJournalStore.read(target).getCompound("data").getInt("SchemaVersion"));
         state.put(SessionRecoveryState.fromNbt(fixture("ARMING", true)).records().values().iterator().next());
-        assertThrows(UncheckedIOException.class, () -> state.save(target.resolve("impossible.dat").toFile(), null));
+        assertThrows(UncheckedIOException.class, () -> state.checkedSave(target.resolve("impossible.dat").toFile(), null));
+        assertTrue(state.isDirty());
+        assertTrue(state.flushedRecords().isEmpty());
+        assertTrue(SessionJournalStore.read(target).getCompound("data").getList("Records", 10).isEmpty());
+        // T4 P2：原生存檔的同一個寫入失敗不丟出，同樣保留舊的 durable snapshot 與 dirty。
+        assertDoesNotThrow(() -> state.save(target.resolve("impossible.dat").toFile(), null));
         assertTrue(state.isDirty());
         assertTrue(state.flushedRecords().isEmpty());
         assertTrue(SessionJournalStore.read(target).getCompound("data").getList("Records", 10).isEmpty());

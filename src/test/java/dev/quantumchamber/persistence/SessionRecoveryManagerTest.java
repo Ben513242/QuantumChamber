@@ -120,7 +120,7 @@ class SessionRecoveryManagerTest {
         state.put(selected);
         assertFalse(state.recoveryWritesSafe(),"put→flush 同步窗口內的未 checked SELECTED 不可經 recovery 寫出");
         var blocker=root.resolve("blocker"); java.nio.file.Files.writeString(blocker,"not a directory");
-        assertThrows(java.io.UncheckedIOException.class,() -> state.save(blocker.resolve("journal.dat").toFile(),null),"模擬 checked flush 失敗");
+        assertThrows(java.io.UncheckedIOException.class,() -> state.checkedSave(blocker.resolve("journal.dat").toFile(),null),"模擬 checked flush 失敗");
         assertTrue(state.abortUnchecked(selected),"ledger owner 以 CAS 還原未 checked selection");
         assertTrue(state.recoveryWritesSafe(),"還原後 recovery 不得停擺");
         // 原生 autosave／stop 與其他 session 的 flush 都走同一 save(File)；此時只能寫出 flushed SELECTABLE。

@@ -900,6 +900,148 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
     }
 
     /**
+     * T4 P2（使用者 2026-11-17 裁示「M7 一併修」；t4b2a-review P1-M3）：原生存檔遇到 journal 正式寫出失敗——Windows atomic move 的 AccessDenied（防毒或索引鎖檔），
+     * 以 {@link M7NativeSaveFault} 讓真正的 {@code writePrepared} 的 move 失敗——時不丟進原版存檔鏈，而且保持 M5 既有的 pending 語意：
+     * <ol>
+     * <li>HOME roll-forward 的 checked 寫出先因同一個故障失敗：結果不明（possiblyMoved），保留 pending、roll-forward 待確認，journal 檔不變。</li>
+     * <li>故障仍在時正面呼叫原版 autosave 的同一條路徑 {@code saveAll(true,false,false)} 與 {@code /save-all flush} 的同一條路徑 {@code saveAll(true,true,true)}
+     *     （pending 狀態下的原生存檔：先核對磁碟仍是上一份權威，才重試寫出、再次失敗）：例外不得傳出；overworld 的 raids 與 level.dat（flush 時另有兩側 chunk）
+     *     都要存到；journal 檔 bytes 不變、仍 dirty、pending 與待確認的 roll-forward 都保留；原生存檔的 ERROR（{@code TICK_LOG_MARKER}）恰一則。</li>
+     * <li>同一個 tick 結束前，recovery 的 journal 退避重試也撞上故障（失敗一次）；解除故障之後，由它在退避期滿時自行收斂（不手動 flush）。</li>
+     * </ol>
+     * 收尾以原艙停止 checked latch，由回程終局 owner 結案移除。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_native_write",tickLimit=2000)
+    public void native_save_write_failure_keeps_pending(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new Projection(c, hooks);
+        try {
+            hooks.add(p::close);
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            var sid = UUID.randomUUID();
+            var target = server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(SessionRecoveryState.STATE_ID + ".dat");
+            var logs = M5GameTestSupport.captureLogs(hooks);
+            // nativeSave 會翻轉 announceAdvancements 來核對 level.dat；結束時還原，不留給之後的 test。
+            boolean announce = server.getGameRules().getBoolean(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS);
+            hooks.add(() -> server.getGameRules().get(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS).set(announce, server));
+            M5GameTestSupport.afterAutosaveClear(c, 1, "m7_t4p2_native_write", 800, (start, autosave) -> {
+                try {
+                    var settled = p.settled(sid, 48);
+                    var dormant = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, settled.participants(), List.of(), SessionState.MEASURED, settled.home());
+                    var fault = M7NativeSaveFault.arm(target);
+                    // 任何路徑收尾都先解除故障並帶出尚未確認的寫出，不把全域 pending 留給之後的 test（hooks 後進先出；只在判定之後執行）。
+                    hooks.add(() -> { fault.close(); if (journal.rollForwardPending(sid) || !journal.pendingSessions().isEmpty()) journal.flush(server); });
+                    var before = M7HomeClosurePhases.sha256(target);
+                    var commit = journal.commitHomeRollForward(server, settled, dormant);
+                    c.assertTrue(commit.status() == SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING && journal.rollForwardPending(sid) && journal.isDirty()
+                            && dormant.equals(journal.pendingSessions().get(sid)) && fault.hits() == 1 && before.equals(M7HomeClosurePhases.sha256(target)),
+                            "前提：checked 寫出因 atomic move 失敗、結果不明（pending）、journal 檔不變：status=" + commit.status() + " hits=" + fault.hits()
+                                    + " pending=" + journal.pendingSessions().keySet());
+                    var autosaveResult = nativeSave(p, () -> server.saveAll(true, false, false), false);
+                    c.assertTrue(autosaveResult.thrown() == null, "NATIVE_AUTOSAVE_THREW：journal 寫出失敗時原生 autosave 的例外傳進原版存檔鏈：" + autosaveResult);
+                    c.assertTrue(autosaveResult.othersSaved(), "NATIVE_AUTOSAVE_INCOMPLETE：原生 autosave 沒有存完其他 PersistentState 與 level.dat：" + autosaveResult);
+                    assertPendingKept(c, journal, sid, settled, dormant, target, before, fault, 2, "原生 autosave 之後");
+                    var flush = nativeSave(p, () -> server.saveAll(true, true, true), true);
+                    c.assertTrue(flush.thrown() == null, "NATIVE_SAVE_ALL_THREW：journal 寫出失敗時 /save-all flush 的例外傳進原版存檔鏈：" + flush);
+                    c.assertTrue(flush.othersSaved() && flush.chunksSaved(), "NATIVE_SAVE_ALL_INCOMPLETE：/save-all flush 沒有存完其他 PersistentState、level.dat 與兩側世界的 chunk：" + flush);
+                    assertPendingKept(c, journal, sid, settled, dormant, target, before, fault, 3, "/save-all flush 之後");
+                    c.assertTrue(nativeSaveErrors(logs).size() == 1 && allNativeSaveErrors(logs) == 1,
+                            "NATIVE_ERROR_COUNT：原生存檔的寫出失敗每個 instance 只記一則 ERROR、帶 TICK_LOG_MARKER：" + nativeSaveErrors(logs) + " total=" + allNativeSaveErrors(logs));
+                    c.assertTrue(nativeSaveErrors(logs).getFirst().contains("寫入正式檔失敗") && nativeSaveErrors(logs).getFirst().contains(target.toAbsolutePath().normalize().toString()),
+                            "NATIVE_ERROR_TEXT：ERROR 說明失敗類別與 journal 路徑：" + nativeSaveErrors(logs));
+                    M5GameTestSupport.whenTicks(c, start + 1, 300, () -> fault.hits() >= 4, retried -> {
+                        try {
+                            // recovery 的 journal 退避重試在故障期間也失敗一次（同一個故障、同一份 pending），之後才解除故障。
+                            assertPendingKept(c, journal, sid, settled, dormant, target, before, fault, 4, "recovery 重試失敗之後");
+                            fault.disarm();
+                            M5GameTestSupport.whenTicks(c, retried + 1, 600, () -> !journal.rollForwardPending(sid), confirmed -> {
+                                try {
+                                    c.assertTrue(dormant.equals(journal.allFlushedSessions().get(sid)) && dormant.equals(journal.allSessions().get(sid))
+                                            && journal.pendingSessions().isEmpty() && !before.equals(M7HomeClosurePhases.sha256(target)),
+                                            "NATIVE_NOT_CONVERGED：解除故障後 journal 沒有收斂到待確認的那一份：flushed=" + journal.allFlushedSessions().get(sid));
+                                    c.assertTrue(confirmed - start >= CollapseBackoff.INITIAL_TICKS && fault.hits() == 4,
+                                            "NATIVE_CONVERGED_BY_OTHER：應由 recovery 的 journal 退避重試在退避期滿時收斂：start=" + start + " confirmed=" + confirmed + " hits=" + fault.hits());
+                                    c.assertTrue(nativeSaveErrors(logs).size() == 1, "NATIVE_ERROR_COUNT：收斂之後仍只有一則：" + nativeSaveErrors(logs));
+                                    closeOutDormant(c, p, dormant, confirmed, hooks);
+                                } catch (java.io.IOException failure) { throw new GameTestException("journal 讀取失敗：" + failure); }
+                            }, () -> "解除故障後沒有收斂：pending=" + journal.pendingSessions().keySet() + " rollForward=" + journal.rollForwardPending(sid), hooks);
+                        } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("journal 讀取失敗：" + failure); }
+                    }, () -> "recovery 的重試沒有撞上故障：hits=" + fault.hits(), hooks);
+                } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("故障武裝或 journal 讀取失敗：" + failure); }
+            }, hooks);
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /**
+     * T4 P2：journal 不健康（開服時讀不到；以 {@code loadError} 重現，沿 {@code fence_init_failure_keeps_enable_blocked} 的做法，同一個 callback 內設定並還原）時，
+     * 原生存檔不丟進原版存檔鏈、也不寫 journal：例外不得傳出；其他 PersistentState、level.dat 與兩側 chunk 都要存到；journal 檔 bytes 不變、仍 dirty；
+     * ERROR（{@code TICK_LOG_MARKER}）兩次存檔只記一則。恢復健康之後，下一次原生存檔照常寫出。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_closure_native_unhealthy",tickLimit=200)
+    public void native_save_skips_unhealthy_journal(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new Projection(c, hooks);
+        try {
+            hooks.add(p::close);
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            var target = server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(SessionRecoveryState.STATE_ID + ".dat");
+            var logs = M5GameTestSupport.captureLogs(hooks);
+            boolean announce = server.getGameRules().getBoolean(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS);
+            hooks.add(() -> server.getGameRules().get(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS).set(announce, server));
+            c.waitAndRun(1, () -> {
+                try {
+                    journal.markDirty();
+                    var before = M7HomeClosurePhases.sha256(target);
+                    var previous = M4CandidateTestAccess.get(journal, "loadError");
+                    NativeSave flush, autosaveResult;
+                    try {
+                        M4CandidateTestAccess.set(journal, "loadError", "M7_T4P2_UNHEALTHY_FAULT");
+                        flush = nativeSave(p, () -> server.saveAll(true, true, true), true);
+                        autosaveResult = nativeSave(p, () -> server.saveAll(true, false, false), false);
+                    } finally { M4CandidateTestAccess.set(journal, "loadError", previous); }
+                    c.assertTrue(flush.thrown() == null && autosaveResult.thrown() == null,
+                            "NATIVE_UNHEALTHY_THREW：journal 不健康時原生存檔的例外傳進原版存檔鏈：" + flush + " / " + autosaveResult);
+                    c.assertTrue(flush.othersSaved() && flush.chunksSaved() && autosaveResult.othersSaved(),
+                            "NATIVE_UNHEALTHY_INCOMPLETE：原生存檔沒有存完其他資料：" + flush + " / " + autosaveResult);
+                    c.assertTrue(before.equals(M7HomeClosurePhases.sha256(target)) && journal.isDirty(), "NATIVE_UNHEALTHY_WROTE：journal 不健康時不得寫出 journal、保持 dirty");
+                    c.assertTrue(nativeSaveErrors(logs).size() == 1 && allNativeSaveErrors(logs) == 1 && nativeSaveErrors(logs).getFirst().contains("journal 不健康"),
+                            "NATIVE_ERROR_COUNT：同一類只記一則、帶 TICK_LOG_MARKER：" + nativeSaveErrors(logs));
+                    var healed = nativeSave(p, () -> server.saveAll(true, false, false), false);
+                    c.assertTrue(healed.thrown() == null && !journal.isDirty(), "恢復健康之後下一次原生存檔照常寫出 journal：" + healed + " dirty=" + journal.isDirty());
+                    hooks.release();
+                    c.complete();
+                } catch (java.io.IOException failure) { hooks.release(); throw new GameTestException("journal 讀取失敗：" + failure); }
+                catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+            });
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /** {@link #native_save_write_failure_keeps_pending}：寫出失敗之後 journal 仍保留 pending、dirty 與待確認的 roll-forward，journal 檔不變，故障已導向 {@code hits} 次。 */
+    private static void assertPendingKept(TestContext c, SessionRecoveryState journal, UUID sid, HomeSessionRecord settled, HomeSessionRecord dormant,
+            java.nio.file.Path target, String before, M7NativeSaveFault.Handle fault, int hits, String when) throws java.io.IOException {
+        c.assertTrue(before.equals(M7HomeClosurePhases.sha256(target)), "NATIVE_JOURNAL_OVERWRITTEN：" + when + "：journal 檔不得改變");
+        c.assertTrue(journal.isDirty() && journal.rollForwardPending(sid) && dormant.equals(journal.pendingSessions().get(sid))
+                && settled.equals(journal.allFlushedSessions().get(sid)) && dormant.equals(journal.allSessions().get(sid)),
+                "NATIVE_PENDING_LOST：" + when + "：必須保留 dirty、pending 與待確認的 roll-forward：dirty=" + journal.isDirty() + " pending=" + journal.pendingSessions().keySet()
+                        + " flushed=" + journal.allFlushedSessions().get(sid));
+        c.assertTrue(fault.hits() == hits, "NATIVE_WRITE_ATTEMPTS：" + when + "：pending 先核對磁碟、才重試寫出，寫出次數應為 " + hits + "：" + fault.hits());
+    }
+
+    /** 原生存檔的 journal 寫出失敗 ERROR（T4 P2）：帶 {@code TICK_LOG_MARKER}（父 marker 是 {@code LOG_MARKER}）、訊息以固定前綴開頭。 */
+    private static List<String> nativeSaveErrors(LogCapture logs) {
+        return logs.marked(org.apache.logging.log4j.Level.ERROR, CollapseService.TICK_LOG_MARKER.getName(), NATIVE_SAVE_ERROR).stream().map(LogCapture.Entry::message).toList();
+    }
+
+    /** 同前綴的 ERROR 總數（不分 marker）：與 {@link #nativeSaveErrors} 相等時，代表每一則都帶 TICK marker。 */
+    private static int allNativeSaveErrors(LogCapture logs) {
+        return logs.matching(org.apache.logging.log4j.Level.ERROR, NATIVE_SAVE_ERROR).size();
+    }
+
+    private static final String NATIVE_SAVE_ERROR = "原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗";
+
+    /**
      * 一次原生存檔的觀察（T4 P1）：呼叫前把 A、B 控制器所在的 chunk 標為待存、overworld 的 raids（另一個原版 PersistentState）標 dirty，並翻轉 gamerule
      * {@code announceAdvancements}（存在 level.dat；不用 level.dat 的 hash，同一 tick 內兩次寫出的內容可能相同）；呼叫後看例外有沒有傳出、raids 是否已存（不再 dirty）、
      * level.dat 的 gamerule 是否等於剛設的值，{@code flush} 時另看兩側 chunk 是否已存（不再待存）。呼叫端負責在結束時還原 gamerule。

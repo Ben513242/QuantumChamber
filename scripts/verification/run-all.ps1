@@ -440,25 +440,30 @@ Step 'summary' {
     foreach($phase in $phases) {
         $receipt=Read-Json $phase.receipt
         if($phase.phase -ceq 'readback-fault') {
+            # T4 P2（使用者 2026-11-17 裁示「改 M4 測試，一律不崩潰」）：原生 save 不丟出、不寫入，停服正常完成（Gradle／JVM 0、pending-stopped.json），磁碟上仍是那份 exact attempt。
             $pendingRoot=Split-Path $phase.receipt
-            if($receipt.status -cne 'EXPECTED_PENDING_RESTART_REQUIRED' -or $receipt.normalStop -or $phase.normalStop -or -not $receipt.ownerAbsent -or -not $receipt.lockReleased -or $receipt.gradleExitCode -notin @(0,1) -or $receipt.javaExitCode -notin @(0,1) -or
+            if($receipt.status -cne 'EXPECTED_PENDING_RESTART_REQUIRED' -or -not $receipt.normalStop -or -not $phase.normalStop -or -not $receipt.ownerAbsent -or -not $receipt.lockReleased -or $receipt.gradleExitCode -ne 0 -or $receipt.javaExitCode -ne 0 -or
                  (Hash $phase.receipt) -cne $phase.receiptSha256.ToLowerInvariant() -or $receipt.pid -ne $phase.javaPid -or $receipt.startupNonce -cne $phase.startupNonce -or $receipt.runtimeScope -cne 'testmod-present'){throw 'M4_PENDING_SUMMARY：專用receipt不符'}
-            $required=@('pending-prestop.json','pending-injected-fault.txt','pending-native-refusal.txt','pending-other-refusal.txt','pending-exact-stack.txt','pending-stop-stack.txt','latest.log','events.jsonl','process.json','pending-journal.dat')
+            $required=@('pending-prestop.json','pending-injected-fault.txt','pending-native-refusal.txt','pending-other-refusal.txt','pending-exact-stack.txt','pending-stopped.json','latest.log','events.jsonl','process.json','pending-journal.dat')
             if((@($receipt.evidence|ForEach-Object {[IO.Path]::GetFileName($_.path)}|Sort-Object) -join ',') -cne (($required|Sort-Object) -join ',')){throw 'M4_PENDING_SUMMARY：原件集合不符'}
             foreach($item in $receipt.evidence){if((Split-Path $item.path) -cne $pendingRoot -or (Hash $item.path) -cne $item.sha256.ToLowerInvariant()){throw 'M4_PENDING_SUMMARY：原件來源/hash不符'}}
             $pre=Read-Json (Join-Path $pendingRoot 'pending-prestop.json')
-            if($pre.status -cne 'PENDING_PRESTOP' -or $pre.pid -ne $phase.javaPid -or $pre.startupNonce -cne $phase.startupNonce -or @($pre.failures).Count -ne 0 -or $pre.faultCount -ne 1 -or -not $pre.noUniverseAllocation -or -not $pre.currentNotSelected -or -not $pre.flushedUnchanged -or $pre.journalHash -cne $receipt.journalHash -or (Hash (Join-Path $pendingRoot 'pending-journal.dat')) -cne $receipt.journalHash){throw 'M4_PENDING_SUMMARY：prestop權威不符'}
+            if($pre.status -cne 'PENDING_PRESTOP' -or $pre.pid -ne $phase.javaPid -or $pre.startupNonce -cne $phase.startupNonce -or @($pre.failures).Count -ne 0 -or $pre.faultCount -ne 1 -or -not $pre.noUniverseAllocation -or -not $pre.currentNotSelected -or -not $pre.flushedUnchanged -or $pre.journalHash -cne $receipt.journalHash -or (Hash (Join-Path $pendingRoot 'pending-journal.dat')) -cne $receipt.journalHash -or $pre.nativeRefusedWithoutThrow -ne $true){throw 'M4_PENDING_SUMMARY：prestop權威不符'}
+            $stopped=Read-Json (Join-Path $pendingRoot 'pending-stopped.json')
+            if($stopped.status -cne 'PENDING_STOPPED' -or $stopped.pid -ne $phase.javaPid -or $stopped.startupNonce -cne $phase.startupNonce -or @($stopped.failures).Count -ne 0 -or $stopped.stoppedSeen -ne $true -or $stopped.stoppingSeen -ne $true -or
+                $stopped.journalHashAfterStop -cne $receipt.journalHash -or $stopped.exactAttemptKept -ne $true -or $stopped.pendingKept -ne $true -or $stopped.levelSaved -ne $true -or $stopped.nativeErrorsAfterStop -ne 1){throw 'M4_PENDING_SUMMARY：停服後的 exact attempt 或停寫不符'}
             $exact=Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-exact-stack.txt') -Raw
             if($exact -notmatch 'CandidateDoorInteraction.failSession' -or $exact -notmatch 'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED'){throw 'M4_PENDING_SUMMARY：首次exact拒寫缺失'}
-            foreach($kind in @('native-refusal','other-refusal','stop-stack')) {
+            foreach($kind in @('native-refusal','other-refusal')) {
                 $stack=Get-Content -LiteralPath (Join-Path $pendingRoot "pending-$kind.txt") -Raw
                 if($stack -notmatch 'JOURNAL_PENDING_RESTART_REQUIRED' -or $stack -match 'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED'){throw 'M4_PENDING_SUMMARY：後續拒寫缺失'}
             }
             if((Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-injected-fault.txt') -Raw) -notmatch 'beforeJournalReadback'){throw 'M4_PENDING_SUMMARY：fault來源不符'}
             $log=Get-Content -LiteralPath (Join-Path $pendingRoot 'latest.log') -Raw
             $errorRows=@([regex]::Matches($log,'(?m)^.*?/ERROR\].*$')|ForEach-Object Value)
-            if($errorRows.Count -ne 2 -or @($errorRows|Where-Object {$_ -notmatch '走廊保留租約等待安全返還：|Exception stopping the server'}).Count){throw 'M4_PENDING_SUMMARY：額外ERROR'}
-            if((Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-native-refusal.txt') -Raw) -notmatch 'MinecraftServer.save' -or (Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-other-refusal.txt') -Raw) -notmatch 'SessionRecoveryState.flush' -or (Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-stop-stack.txt') -Raw) -notmatch 'MinecraftServer.shutdown'){throw 'M4_PENDING_SUMMARY：拒寫呼叫來源不符'}
+            if($errorRows.Count -ne 2 -or @($errorRows|Where-Object {$_ -notmatch '走廊保留租約等待安全返還：|原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗'}).Count -or
+                @($errorRows|Where-Object {$_ -match '原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗' -and $_ -match '需要重啟伺服器才能收斂'}).Count -ne 1 -or [regex]::Matches($log,'Exception stopping the server').Count -ne 0){throw 'M4_PENDING_SUMMARY：額外ERROR或停服崩潰'}
+            if((Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-native-refusal.txt') -Raw) -notmatch 'MinecraftServer.save' -or (Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-native-refusal.txt') -Raw) -notmatch '需要重啟伺服器才能收斂' -or (Get-Content -LiteralPath (Join-Path $pendingRoot 'pending-other-refusal.txt') -Raw) -notmatch 'SessionRecoveryState.flush'){throw 'M4_PENDING_SUMMARY：拒寫呼叫來源不符'}
             continue
         }
         if($receipt.status -ne 'PASS' -or (Hash $phase.receipt) -ne $phase.receiptSha256.ToLowerInvariant() -or $receipt.pid -ne $phase.javaPid -or $receipt.startupNonce -ne $phase.startupNonce -or $receipt.runtimeScope -ne 'testmod-present'){throw "recovery receipt 不符：$($phase.receipt)"}

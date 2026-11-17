@@ -62,33 +62,39 @@ function Invoke-M4Phase([string]$Nonce, [string]$Phase, [string]$Root) {
 }
 
 
-# 唯一預期停寫 phase：不產生／接受正常 final.json。
+# 唯一預期停寫 phase：不產生／接受正常 final.json。T4 P2 起（使用者 2026-11-17 裁示「改 M4 測試，一律不崩潰」）停寫不再以例外表達：
+# 原生 save 不丟出、不寫入（journal hash 不變），PENDING 類 ERROR 恰一則（需要重啟伺服器才能收斂）；checked flush 照舊丟出；停服正常完成
+# （SERVER_STOPPED、Gradle 與 JVM 都是 0、pending-stopped.json），磁碟上仍是那份 exact attempt。其餘檢查與 T4 P2 之前相同、不放寬。
 function Complete-M4Pending($State,[string]$Nonce) {
     $e=$State.PhaseEvidence;$root=$State.Root;$java=$State.JavaProcess
-    if($State.Launcher.ExitCode -notin @(0,1) -or $java.ExitCode -notin @(0,1) -or -not $java.HasExited){throw 'M4_PENDING_EXIT：非預期退出'}
+    if(-not $java.HasExited -or $State.Launcher.ExitCode -ne 0 -or $java.ExitCode -ne 0){throw "M4_PENDING_EXIT：停服必須正常完成（gradle=$($State.Launcher.ExitCode) java=$($java.ExitCode)）"}
     if(Test-Path -LiteralPath (Join-Path $e 'final.json')){throw 'M4_PENDING_FINAL：不得冒正常final'}
+    if(Test-Path -LiteralPath (Join-Path $e 'pending-native-thrown.txt')){throw 'M4_PENDING_NATIVE_THREW：原生 save 把 journal 例外丟進原版存檔鏈'}
+    foreach($name in 'pending-prestop.json','pending-stopped.json'){if(-not(Test-Path -LiteralPath (Join-Path $e $name) -PathType Leaf)){throw "M4_PENDING_RECEIPT_MISSING：$name"}}
     $prePath=Join-Path $e 'pending-prestop.json';$pre=Get-Content -LiteralPath $prePath -Raw|ConvertFrom-Json -DateKind String
     if($pre.status -cne 'PENDING_PRESTOP' -or $pre.phase -cne 'readback-fault' -or $pre.nonce -cne $Nonce -or $pre.root -cne $root -or $pre.pid -ne $State.JavaId -or $pre.startupNonce -cne $State.StartupNonce -or [Math]::Abs(([DateTimeOffset]$pre.startTimeUtc-$State.JavaStart).TotalSeconds) -gt 1){throw 'M4_PENDING_IDENTITY：prestop來源不符'}
-    if($pre.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -cnotin $pre.loadedModIds -or @($pre.failures).Count -ne 0 -or $pre.faultCount -ne 1 -or -not $pre.stopRequested -or -not $pre.noUniverseAllocation -or -not $pre.flushedUnchanged -or -not $pre.currentNotSelected){throw 'M4_PENDING_PRESTOP：權威或fault不符'}
+    if($pre.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -cnotin $pre.loadedModIds -or @($pre.failures).Count -ne 0 -or $pre.faultCount -ne 1 -or -not $pre.stopRequested -or -not $pre.noUniverseAllocation -or -not $pre.flushedUnchanged -or -not $pre.currentNotSelected -or $pre.nativeRefusedWithoutThrow -ne $true -or $pre.nativeSaveReturned -ne $true){throw 'M4_PENDING_PRESTOP：權威或fault不符'}
+    $stopped=Get-Content -LiteralPath (Join-Path $e 'pending-stopped.json') -Raw|ConvertFrom-Json -DateKind String
+    if($stopped.status -cne 'PENDING_STOPPED' -or $stopped.phase -cne 'readback-fault' -or $stopped.nonce -cne $Nonce -or $stopped.pid -ne $State.JavaId -or $stopped.startupNonce -cne $State.StartupNonce -or @($stopped.failures).Count -ne 0 -or
+        $stopped.stoppingSeen -ne $true -or $stopped.stoppedSeen -ne $true -or $stopped.journalHashAfterStop -cne $pre.journalHash -or $stopped.exactAttemptKept -ne $true -or $stopped.pendingKept -ne $true -or $stopped.levelSaved -ne $true -or $stopped.nativeErrorsAfterStop -ne 1){throw 'M4_PENDING_STOPPED：停服後的 exact attempt、pending 或 level.dat 不符'}
     $events=@(Get-Content -LiteralPath (Join-Path $e 'events.jsonl') | ForEach-Object {$_|ConvertFrom-Json})
-    if(($events.event -join ',') -cne 'initialized,pending-prestop' -or @($events|Where-Object {$_.pid -ne $State.JavaId -or $_.startupNonce -cne $State.StartupNonce}).Count){throw 'M4_PENDING_EVENTS：非預期生命週期'}
+    if(($events.event -join ',') -cne 'initialized,pending-prestop,pending-stopped' -or @($events|Where-Object {$_.pid -ne $State.JavaId -or $_.startupNonce -cne $State.StartupNonce}).Count){throw 'M4_PENDING_EVENTS：非預期生命週期'}
     $aux=Copy-OwnedLogs -State $State
     $logPath=Join-Path $e 'latest.log';$log=Get-Content -LiteralPath $logPath -Raw -Encoding utf8
     $exact=[regex]::Match($log,'(?s)java.lang.IllegalStateException: 候選選擇 checked 提交失敗.*?(?=\r?\n\[)')
-    $stop=[regex]::Match($log,'(?s)Exception stopping the server\r?\n(?<stack>.*)$')
-    if(-not $exact.Success -or $exact.Value -notmatch 'CandidateDoorInteraction.failSession' -or $exact.Value -notmatch 'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED' -or -not $stop.Success -or $stop.Value -notmatch 'JOURNAL_PENDING_RESTART_REQUIRED' -or $stop.Value -notmatch 'MinecraftServer.shutdown' -or $stop.Value -match 'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED'){throw 'M4_PENDING_STACK：首次exact或stop拒寫不符'}
-    if([regex]::Matches($log,'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED').Count -ne 1 -or [regex]::Matches($log,'Exception stopping the server').Count -ne 1 -or $log -match 'M4 recovery probe 失敗'){throw 'M4_PENDING_STACK：額外非預期fault'}
+    if(-not $exact.Success -or $exact.Value -notmatch 'CandidateDoorInteraction.failSession' -or $exact.Value -notmatch 'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED'){throw 'M4_PENDING_STACK：首次exact拒寫不符'}
+    if([regex]::Matches($log,'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED').Count -ne 1 -or [regex]::Matches($log,'Exception stopping the server').Count -ne 0 -or $log -match 'M4 recovery probe 失敗'){throw 'M4_PENDING_STACK：額外非預期fault或停服崩潰'}
     $errors=@([regex]::Matches($log,'(?m)^.*?/ERROR\].*$')|ForEach-Object Value)
-    if($errors.Count -ne 2 -or @($errors|Where-Object {$_ -notmatch '走廊保留租約等待安全返還：|Exception stopping the server'}).Count){throw 'M4_PENDING_STACK：存在額外ERROR'}
+    if($errors.Count -ne 2 -or @($errors|Where-Object {$_ -notmatch '走廊保留租約等待安全返還：|原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗'}).Count -or
+        @($errors|Where-Object {$_ -match '原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗' -and $_ -match '需要重啟伺服器才能收斂'}).Count -ne 1){throw 'M4_PENDING_STACK：存在額外ERROR或缺少原生存檔的停寫ERROR'}
     [IO.File]::WriteAllText((Join-Path $e 'pending-exact-stack.txt'),$exact.Value,[Text.UTF8Encoding]::new($false))
-    [IO.File]::WriteAllText((Join-Path $e 'pending-stop-stack.txt'),$stop.Value,[Text.UTF8Encoding]::new($false))
-    $files=@('pending-prestop.json','pending-injected-fault.txt','pending-native-refusal.txt','pending-other-refusal.txt','pending-exact-stack.txt','pending-stop-stack.txt','latest.log','events.jsonl','process.json')
+    $files=@('pending-prestop.json','pending-injected-fault.txt','pending-native-refusal.txt','pending-other-refusal.txt','pending-exact-stack.txt','pending-stopped.json','latest.log','events.jsonl','process.json')
     $hashes=@();foreach($name in $files){$path=Join-Path $e $name;$hashes+=[pscustomobject]@{path=$path;sha256=(Get-FileHash -LiteralPath $path).Hash}}
     foreach($label in @('native','other')){
         $path=Join-Path $e "pending-$label-refusal.txt";$text=Get-Content -LiteralPath $path -Raw
         if($text -notmatch 'JOURNAL_PENDING_RESTART_REQUIRED' -or $text -match 'JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED' -or (Get-FileHash -LiteralPath $path).Hash.ToLowerInvariant() -cne $pre."${label}RefusalSha256" -or $pre."${label}JournalHash" -cne $pre.journalHash){throw "M4_PENDING_STACK：$label 具名拒寫缺失"}
     }
-    if((Get-Content -LiteralPath (Join-Path $e 'pending-native-refusal.txt') -Raw) -notmatch 'MinecraftServer.save' -or (Get-Content -LiteralPath (Join-Path $e 'pending-other-refusal.txt') -Raw) -notmatch 'SessionRecoveryState.flush'){throw 'M4_PENDING_STACK：native/other呼叫來源不符'}
+    if((Get-Content -LiteralPath (Join-Path $e 'pending-native-refusal.txt') -Raw) -notmatch 'MinecraftServer.save' -or (Get-Content -LiteralPath (Join-Path $e 'pending-native-refusal.txt') -Raw) -notmatch '需要重啟伺服器才能收斂' -or (Get-Content -LiteralPath (Join-Path $e 'pending-other-refusal.txt') -Raw) -notmatch 'SessionRecoveryState.flush'){throw 'M4_PENDING_STACK：native/other呼叫來源不符'}
     if((Get-Content -LiteralPath (Join-Path $e 'pending-injected-fault.txt') -Raw) -notmatch 'beforeJournalReadback'){throw 'M4_PENDING_FAULT：缺正式callback stack'}
     $journal=Join-Path $root 'world/data/quantumchamber_sessions.dat'
     if((Get-FileHash -LiteralPath $journal).Hash.ToLowerInvariant() -cne $pre.journalHash){throw 'M4_PENDING_DISK：stop覆寫exact attempt'}
@@ -97,9 +103,9 @@ function Complete-M4Pending($State,[string]$Nonce) {
     $hashes+=[pscustomobject]@{path=(Join-Path $e 'pending-journal.dat');sha256=(Get-FileHash -LiteralPath (Join-Path $e 'pending-journal.dat')).Hash}
     $lock=[IO.File]::Open((Join-Path $root 'world/session.lock'),[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None);$lock.Dispose()
     if(@(Get-CimInstance Win32_Process -Filter "Name='java.exe'"|Where-Object {$_.CommandLine -like "*$($State.StartupNonce)*"}).Count){throw 'M4_PENDING_OWNER：Java仍存活'}
-    $result=[ordered]@{status='EXPECTED_PENDING_RESTART_REQUIRED';phase='readback-fault';nonce=$Nonce;startupNonce=$State.StartupNonce;pid=$State.JavaId;startTimeUtc=$State.JavaStart.ToString('o');runtimeScope='testmod-present';gradleExitCode=$State.Launcher.ExitCode;javaExitCode=$java.ExitCode;normalStop=$false;ownerAbsent=$true;lockReleased=$true;journalHash=$pre.journalHash;evidence=$hashes}
+    $result=[ordered]@{status='EXPECTED_PENDING_RESTART_REQUIRED';phase='readback-fault';nonce=$Nonce;startupNonce=$State.StartupNonce;pid=$State.JavaId;startTimeUtc=$State.JavaStart.ToString('o');runtimeScope='testmod-present';gradleExitCode=$State.Launcher.ExitCode;javaExitCode=$java.ExitCode;normalStop=$true;ownerAbsent=$true;lockReleased=$true;journalHash=$pre.journalHash;evidence=$hashes}
     $path=Join-Path $e 'pending-oracle.json';$result|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $path -Encoding utf8
-    $identity=[ordered]@{phase='readback-fault';nonce=$Nonce;startupNonce=$State.StartupNonce;javaPid=$State.JavaId;javaStartTimeUtc=$State.JavaStart.ToString('o');gradleExitCode=$State.Launcher.ExitCode;javaExitCode=$java.ExitCode;normalStop=$false;lockReleased=$true;root=$root;receipt=$path;receiptSha256=(Get-FileHash -LiteralPath $path).Hash;auxiliaryLogs=$aux}
+    $identity=[ordered]@{phase='readback-fault';nonce=$Nonce;startupNonce=$State.StartupNonce;javaPid=$State.JavaId;javaStartTimeUtc=$State.JavaStart.ToString('o');gradleExitCode=$State.Launcher.ExitCode;javaExitCode=$java.ExitCode;normalStop=$true;lockReleased=$true;root=$root;receipt=$path;receiptSha256=(Get-FileHash -LiteralPath $path).Hash;auxiliaryLogs=$aux}
     $identity|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $e 'launcher.json') -Encoding utf8
     $taskResults.Add([pscustomobject]$identity);$java.Dispose();Write-Output "EXPECTED_PENDING_RESTART_REQUIRED readback-fault root=$root"
 }

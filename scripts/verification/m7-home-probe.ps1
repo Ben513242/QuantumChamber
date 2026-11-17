@@ -1,5 +1,5 @@
 # M7 T4 Phase B1／B2a／P1：Windows 原生跨 JVM 鏈。close 矩陣 close-{ordinary|sealed|passable}-{cut}（39 列，B1）與 B2a 的其餘鏈（restart-*、receipt-*，5 列），
-# 以及 T4 P1 的 receipt-mismatch-stop（收據不符時正常停服；halt 點在停服完成之後）。
+# 以及 T4 P1 的 receipt-mismatch-stop（收據不符時正常停服；halt 點在停服完成之後）與 T4 P2 的 receipt-write-fail-stop（journal 正式寫出故障期間正常停服）。
 # 每列一個全新 owned root（永久保留），兩個 phase 各一個獨立 JVM：crash 在預定點 halt(77)，reopen 以新 JVM 重開、正常停服 exit 0。沿 probe-common.ps1 的 owned phase 機制
 # （PID＋啟動時間身分、逾時停止、log 收集）與 m6-universe-probe.ps1 的 readonly summary＋VerifySummary＋SelfTest 做法。
 # 參數：
@@ -54,12 +54,18 @@ $extras=@(
         crashObserved=@($extraSetup+@('disableAcked','stopLatched','removalRestored','receiptPublishedExact','receiptTampered','markersPlaced','stopCompleted','journalCleanAfterStop',
             'journalRowAfterStop','receiptKeptAfterStop','adminErrorOnce','receiptRestored'))
         reopenObserved=@($extraReopen+@('aDoorAtStart','playerClosedDoor','closeFromCrash','busyAtStart','stopSavedLevel','stopSavedMarkers'))}
+    # T4 P2：熱列移除失敗（RESTORED，journal dirty）之後武裝 journal 正式寫出的 atomic move 故障，autosave 一次（失敗、保留 pending）、放標記與 gamerule，正常停服；
+    # halt 點 stopped 在停服完成（SERVER_STOPPED）之後。
+    [pscustomobject]@{row='receipt-write-fail-stop';family='receipt';door='ordinary';cut='stopped';index=-1;crash=@($cuts[0..11]+@('remove-rejected'));reopen=$fromExisting;outcome=@('UNCHANGED')
+        crashObserved=@($extraSetup+@('disableAcked','stopLatched','removalRestored','receiptPublishedExact','autosaveNoThrow','autosaveKeptPending','markersPlaced','stopCompleted',
+            'stopRetriedWrite','journalHeldAfterStop','journalFileUnchangedAfterStop','journalRowAfterStop','receiptKeptAfterStop','nativeErrorOnce','noSessionError'))
+        reopenObserved=@($extraReopen+@('aDoorAtStart','playerClosedDoor','closeFromCrash','busyAtStart','stopSavedLevel','stopSavedMarkers'))}
 )
 $manifest=@(@(foreach($door in $doors){for($i=0;$i -lt $cuts.Count;$i++){[pscustomobject]@{row="close-$door-$($cuts[$i])";family='close';door=$door;cut=$cuts[$i];index=$i}}})+$extras)
 $inventory=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'm7-inventory.json') -Raw | ConvertFrom-Json
 if(@($inventory.windows.native).Count -ne $manifest.Count -or (@($inventory.windows.native) -join ',') -cne ($manifest.row -join ',')){throw 'M7_HOME_INVENTORY：m7-inventory.json windows.native 與固定矩陣不符'}
 $shards=@(@(foreach($door in $doors){,@($manifest | Where-Object {$_.family -ceq 'close' -and $_.door -ceq $door} | ForEach-Object row)})+@(foreach($name in 'restart','receipt'){,@($manifest | Where-Object family -CEQ $name | ForEach-Object row)}))
-if(((@($shards | ForEach-Object {$_.Count})) -join ',') -cne '13,13,13,3,3' -or ((@($shards | ForEach-Object {$_}) | Sort-Object) -join ',') -cne (($manifest.row | Sort-Object) -join ',') -or @($shards | ForEach-Object {$_} | Sort-Object -Unique).Count -ne $manifest.Count){throw 'M7_HOME_SHARDS：三個 -DoorState 分片與 restart、receipt 兩族的聯集必須恰為全部列且互不重疊'}
+if(((@($shards | ForEach-Object {$_.Count})) -join ',') -cne '13,13,13,3,4' -or ((@($shards | ForEach-Object {$_}) | Sort-Object) -join ',') -cne (($manifest.row | Sort-Object) -join ',') -or @($shards | ForEach-Object {$_} | Sort-Object -Unique).Count -ne $manifest.Count){throw 'M7_HOME_SHARDS：三個 -DoorState 分片與 restart、receipt 兩族的聯集必須恰為全部列且互不重疊'}
 
 function Get-M7Group($spec) {
     if($spec.family -cne 'close'){return $spec.family.ToUpperInvariant()}
@@ -226,6 +232,18 @@ function Assert-M7ExtraCrash($receipt,$spec,[string]$Nonce,[string]$StartupNonce
             $st.tamperedReceiptSha256 -cne $st.originalReceiptSha256 -and $st.receiptAfterStopSha256 -ceq $st.tamperedReceiptSha256 -and @($h.receipts)[0].sha256 -ceq $st.originalReceiptSha256 -and
             $st.adminErrors -eq 1 -and @($st.adminErrorEntries).Count -eq 1 -and @($st.adminErrorEntries)[0].StartsWith('QUANTUMCHAMBER_COLLAPSE|',[StringComparison]::Ordinal)
         }
+        'receipt-write-fail-stop' {
+            # 記憶體欄位是停服前的快照（autosave 的寫出已失敗、保留 pending）；journal／registry／收據清單是停服、解除故障之後的檔案。停服時的存檔重試寫出又失敗：
+            # journal 檔與停服前相同、收據不變、原生存檔的 ERROR（TICK marker）恰一則、這個 SID 沒有收據 ERROR。
+            $st=$receipt.stop
+            $h.flushed.present -and $h.current.present -and $h.current.text -ceq $h.flushed.text -and $h.flushed.close.kind -ceq 'CLOSE' -and $h.flushed.close.reason -ceq 'ROOT_DISABLED' -and
+            $h.pending -eq $true -and -not $h.rollForwardPending -and -not $h.quarantined -and ((Get-M7Names $h.receipts) -join ',') -ceq $dat -and $h.receipt.present -eq $true -and
+            $h.bDoor -ceq 'OPEN/NONE' -and $h.busy -eq $true -and ((@(Get-M7Events $receipt 'after-door') | ForEach-Object detail) -join ',') -ceq 'APPLIED' -and
+            ((@(Get-M7Events $receipt 'remove-rejected') | ForEach-Object detail) -join ',') -ceq 'RESTORED' -and $receipt.stoppingSeen -eq $true -and $receipt.stoppedSeen -eq $true -and
+            $st.autosaveThrown -ceq 'NONE' -and $st.faultHits -eq 2 -and $st.journalBeforeSha256 -ceq $st.journalAfterStopSha256 -and $h.journalSha256 -ceq $st.journalBeforeSha256 -and
+            $st.originalReceiptSha256 -ceq $st.receiptAfterStopSha256 -and @($h.receipts)[0].sha256 -ceq $st.originalReceiptSha256 -and $st.sessionErrors -eq 0 -and
+            $st.nativeErrors -eq 1 -and @($st.nativeErrorEntries).Count -eq 1 -and @($st.nativeErrorEntries)[0].StartsWith('QUANTUMCHAMBER_COLLAPSE_TICK|',[StringComparison]::Ordinal)
+        }
         default {$false}
     }
     if(-not $ok){throw "M7_HOME_CRASH_STATE：$($spec.row)"}
@@ -245,7 +263,7 @@ function Assert-M7ExtraReopen($receipt,$spec,$crash,[string]$Nonce,[string]$Star
     $sf=$receipt.startFiles
     if($sf.journalSha256 -cne $crash.atHalt.journalSha256 -or $sf.registrySha256 -cne $crash.atHalt.registrySha256 -or -not (Test-M7Json @($sf.receipts) @($crash.atHalt.receipts))){throw "M7_HOME_REOPEN_START_FILES：$($spec.row)"}
     $e0=$receipt.early;$s=$receipt.start;$e=$receipt.end;$b=$crash.baseline
-    $existing=$spec.row -cin @('receipt-existing','receipt-mismatch-stop')
+    $existing=$spec.row -cin @('receipt-existing','receipt-mismatch-stop','receipt-write-fail-stop')
     $diskDoor=if($existing){'OPEN/NONE'}else{$initialDoor[$spec.door]}
     if($s.bDoor -cne $diskDoor -or $s.busy -ne ($spec.row -cne 'receipt-player-closed') -or -not (Test-M7Json $s.pose $b.pose)){throw "M7_HOME_REOPEN_START：$($spec.row) bDoor=$($s.bDoor)"}
     $earlyOk=switch($spec.row){
@@ -268,6 +286,7 @@ function Assert-M7ExtraReopen($receipt,$spec,$crash,[string]$Nonce,[string]$Star
         'restart-ready-low-no-root' {$close.evidence -ceq "RestartClosed[startupInstanceUuid=$($receipt.startupInstance), observedAtGameTime=$($close.closedAt)]" -and [long]$close.closedAt -ge [long]$e0.gameTime}
         'receipt-existing' {Test-M7Json $close $crash.atHalt.flushed.close}
         'receipt-mismatch-stop' {Test-M7Json $close $crash.atHalt.flushed.close}
+        'receipt-write-fail-stop' {Test-M7Json $close $crash.atHalt.flushed.close}
         'receipt-player-closed' {Test-M7Json $close $crash.atHalt.receipt.close}
         default {$false}
     }

@@ -159,7 +159,7 @@ class SessionJournalSchemaFiveTest {
             assertThrows(IllegalStateException.class, () -> SessionRecoveryState.load(oversized, validator).requireHealthy());
             var disk = new Disk("4096-authority", validator, fixtureRecord(2, false, registry, lease));
             var checked = disk.state.flushedRecords(); byte[] before = Files.readAllBytes(disk.file);
-            disk.state.put(record); assertThrows(UncheckedIOException.class, disk::save);
+            disk.state.put(record); assertThrows(UncheckedIOException.class, disk::checkedSave);
             assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(disk.file)));
             assertEquals(checked, disk.state.flushedRecords()); assertTrue(disk.state.isDirty());
             assertEquals(4, SessionJournalStore.read(disk.file).getCompound("data").getInt("SchemaVersion"));
@@ -189,7 +189,7 @@ class SessionJournalSchemaFiveTest {
             var checked = state.flushedRecords(); byte[] before = Files.readAllBytes(file);
             assertTrue(checked.equals(SessionRecoveryState.load(file, validator).flushedRecords()), "鄰近預算成功後重啟 exact");
             var next = SessionRecoveryRecord.fromNbt(outside, 5); state.put(next);
-            assertThrows(UncheckedIOException.class, () -> state.save(file.toFile(), null));
+            assertThrows(UncheckedIOException.class, () -> state.checkedSave(file.toFile(), null));
             assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(file))); assertTrue(checked.equals(state.flushedRecords()));
             assertTrue(state.isDirty()); assertEquals(5, SessionJournalStore.read(file).getCompound("data").getInt("SchemaVersion"));
             System.out.println("T9_ADJACENT_REJECT beforeSha=" + sha(before) + " afterSha=" + sha(Files.readAllBytes(file)));
@@ -215,9 +215,13 @@ class SessionJournalSchemaFiveTest {
                 var over = new SessionRecoveryRecord(record.sessionUuid(), record.chamberUuid(), record.origin(), record.participants(),
                         record.spaceLeases(), record.state(), record.restoreEntryEffectOnReturn(), record.semantics(), record.candidateContext(),
                         bigger, record.candidateSelection(), record.collapse());
-                state.put(over); state.save(file.toFile(), null);
+                state.put(over); state.checkedSave(file.toFile(), null);
             });
             assertEquals(1, reads.get(), "4097 應先於正式 write/readback 拒絕");
+            assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(file))); assertTrue(checked.equals(state.flushedRecords()));
+            // T4 P2：同一個狀態的原生存檔不丟出，同樣在正式 write/readback 之前停下、不碰正式檔。
+            assertDoesNotThrow(() -> state.save(file.toFile(), null));
+            assertEquals(1, reads.get(), "原生存檔同樣不得走到正式 write/readback");
             assertTrue(java.util.Arrays.equals(before, Files.readAllBytes(file))); assertTrue(checked.equals(state.flushedRecords()));
             System.out.println("T9_COUNT_BOUNDARY kind=" + (existing ? "EXISTING" : "SOURCE") + " rejectedCount=4097 allocated=" + measured);
         }
@@ -249,7 +253,7 @@ class SessionJournalSchemaFiveTest {
             var fresh = fixtureRecord(3, true, registry, lease); state.put(fresh);
             long allocated = allocatedBytes(wrapData(state.writeNbt(new NbtCompound())));
             assertTrue(allocated > INDEPENDENT_SCHEMA_FIVE_LIMIT);
-            assertThrows(UncheckedIOException.class, () -> state.save(file.toFile(), null));
+            assertThrows(UncheckedIOException.class, () -> state.checkedSave(file.toFile(), null));
             assertEquals(0, calls.get(), "超限應先於 provider lease 取得");
             var after = Files.readAllBytes(file);
             System.out.println("T9_PREFLIGHT_BUDGET allocated=" + allocated + " beforeSha=" + sha(before) + " afterSha=" + sha(after));
@@ -363,24 +367,27 @@ class SessionJournalSchemaFiveTest {
             var validator = SessionRecoveryState.m6Validator(() -> registry, () -> lease);
             var state = new SessionRecoveryState(SessionJournalStore::read, validator);
             var fresh = fixtureRecord(2, true, registry, lease); state.put(fresh);
-            var file = directory.resolve("not-ready.dat"); assertThrows(RuntimeException.class, () -> state.save(file.toFile(), null));
+            var file = directory.resolve("not-ready.dat"); assertThrows(RuntimeException.class, () -> state.checkedSave(file.toFile(), null));
             assertFalse(Files.exists(file)); assertTrue(state.flushedRecords().isEmpty());
             state.markCollapseAuthoritiesInitialized(); assertDoesNotThrow(() -> state.save(file.toFile(), null));
             var blocked = new SessionRecoveryState(SessionJournalStore::read, validator); blocked.markCollapseAuthoritiesInitialized();
             blocked.put(fixtureRecord(1, false, registry, lease)); blocked.put(fresh);
-            assertThrows(RuntimeException.class, () -> blocked.save(directory.resolve("other-unchecked.dat").toFile(), null));
+            assertThrows(RuntimeException.class, () -> blocked.checkedSave(directory.resolve("other-unchecked.dat").toFile(), null));
             assertFalse(Files.exists(directory.resolve("other-unchecked.dat")));
             var old = fixtureRecord(4, false, registry, lease); var removal = new Disk("first-five-removal", validator, old);
             byte[] before = Files.readAllBytes(removal.file); var checked = removal.state.flushedRecords();
             assertTrue(removal.state.remove(old.sessionUuid())); removal.state.put(fresh);
             RuntimeException rejected = null;
-            try { removal.save(); } catch (RuntimeException failure) { rejected = failure; }
+            try { removal.checkedSave(); } catch (RuntimeException failure) { rejected = failure; }
             byte[] after = Files.readAllBytes(removal.file);
             int observed = SessionJournalStore.read(removal.file).getCompound("data").getInt("SchemaVersion");
             System.out.println("T9_FIRST5_REMOVE beforeSha=" + sha(before) + " afterSha=" + sha(after)
                     + " diskSchema=" + observed + " oldStillFlushed=" + removal.state.flushedRecords().containsKey(old.sessionUuid()));
             assertNotNull(rejected, "未 checked 的 M4 移除不得併入首次 schema5");
             assertEquals(4, observed); assertArrayEquals(before, after); assertEquals(checked, removal.state.flushedRecords());
+            // T4 P2：同一個狀態的原生存檔不丟出，也不把未 checked 的移除併入首次 schema5。
+            assertDoesNotThrow(removal::save);
+            assertArrayEquals(before, Files.readAllBytes(removal.file)); assertEquals(checked, removal.state.flushedRecords());
             assertTrue(removal.state.isDirty()); assertTrue(removal.state.abortUnchecked(fresh));
             removal.save(); assertTrue(removal.state.flushedRecords().isEmpty());
             removal.state.put(fresh); assertDoesNotThrow(removal::save);
@@ -394,7 +401,10 @@ class SessionJournalSchemaFiveTest {
             var disk = new Disk("provider", validator, fixtureRecord(1, false, registry, lease));
             byte[] before = Files.readAllBytes(disk.file); var checked = disk.state.flushedRecords();
             disk.state.put(fixtureRecord(2, true, registry, lease)); lease.valid = false;
-            assertThrows(RuntimeException.class, disk::save);
+            assertThrows(RuntimeException.class, disk::checkedSave);
+            assertArrayEquals(before, Files.readAllBytes(disk.file)); assertEquals(checked, disk.state.flushedRecords()); assertTrue(disk.state.isDirty());
+            // T4 P2：同一個寫出前檢查失敗在原生存檔不丟出，也不碰正式檔、保持 dirty（下一次存檔重試）。
+            assertDoesNotThrow(disk::save, "原生存檔的寫出前檢查失敗不得丟進原版存檔鏈");
             assertArrayEquals(before, Files.readAllBytes(disk.file)); assertEquals(checked, disk.state.flushedRecords()); assertTrue(disk.state.isDirty());
             lease.valid = true; assertDoesNotThrow(disk::save);
             assertEquals(5, SessionJournalStore.read(disk.file).getCompound("data").getInt("SchemaVersion"));
@@ -410,22 +420,29 @@ class SessionJournalSchemaFiveTest {
             var server = new Object(); var manager = new NoReadManager(directory);
             assertSame(disk.state, SessionRecoveryState.getOrInstall(server, manager, () -> disk.state, value -> manager.set(SessionRecoveryState.STATE_ID, value)));
             disk.state.put(fresh); disk.failNextRead = true;
-            assertThrows(UncheckedIOException.class, disk::save);
+            assertThrows(UncheckedIOException.class, disk::checkedSave);
             byte[] attempt = Files.readAllBytes(disk.file);
             assertEquals(5, SessionJournalStore.read(disk.file).getCompound("data").getInt("SchemaVersion"));
             assertTrue(disk.state.abortUnchecked(fresh)); assertEquals(checked, disk.state.flushedRecords());
             assertFalse(disk.state.records().containsKey(fresh.sessionUuid()));
             assertEquals(4, disk.state.writeNbt(new NbtCompound()).getInt("SchemaVersion"));
             var otherFile = directory.resolve("other-target.dat"); Files.write(otherFile, oldBytes);
-            var wrongTarget = assertThrows(UncheckedIOException.class, () -> disk.state.save(otherFile.toFile(), null));
+            var wrongTarget = assertThrows(UncheckedIOException.class, () -> disk.state.checkedSave(otherFile.toFile(), null));
             assertEquals("JOURNAL_PENDING_TARGET_MISMATCH", wrongTarget.getCause().getMessage());
+            assertArrayEquals(oldBytes, Files.readAllBytes(otherFile));
+            // T4 P2：原生存檔遇到同一個 pending 不丟出，也不寫到別的目標。
+            assertDoesNotThrow(() -> disk.state.save(otherFile.toFile(), null), "原生存檔不得把 pending 的例外丟進原版存檔鏈");
             assertArrayEquals(oldBytes, Files.readAllBytes(otherFile));
             assertSame(disk.state, SessionRecoveryState.getOrInstall(server, manager,
                     () -> { throw new AssertionError("pending 不得 reload"); }, value -> {}));
             disk.state.setDirty(false);
-            var blocked = assertThrows(UncheckedIOException.class, disk::save);
+            var blocked = assertThrows(UncheckedIOException.class, disk::checkedSave);
             assertEquals("JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED", blocked.getCause().getMessage());
             assertArrayEquals(attempt, Files.readAllBytes(disk.file)); assertEquals(checked, disk.state.flushedRecords());
+            // T4 P2：原生存檔（autosave、停服；cache hit 也一樣）遇到同一個未確認的 attempt 不丟出，也不覆寫它。
+            disk.state.setDirty(false);
+            assertDoesNotThrow(disk::save, "原生存檔不得把 pending 的例外丟進原版存檔鏈");
+            assertArrayEquals(attempt, Files.readAllBytes(disk.file), "原生存檔不得覆寫未確認的 attempt"); assertEquals(checked, disk.state.flushedRecords());
             var restarted = SessionRecoveryState.load(disk.file, validator); restarted.requireHealthy();
             assertTrue(restarted.flushedRecords().containsKey(fresh.sessionUuid()));
         }
@@ -439,7 +456,7 @@ class SessionJournalSchemaFiveTest {
             var later = fixtureRecord(3, false, registry, lease);
             var disk = new Disk("pending-old-first", validator, old);
             byte[] oldBytes = Files.readAllBytes(disk.file);
-            disk.state.put(fresh); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::save);
+            disk.state.put(fresh); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::checkedSave);
             assertTrue(disk.state.abortUnchecked(fresh)); disk.state.put(later);
             Files.write(disk.file, oldBytes);
             assertDoesNotThrow(disk::save);
@@ -468,7 +485,7 @@ class SessionJournalSchemaFiveTest {
             var later = fixtureRecord(3, false, registry, lease);
             var disk = new Disk("pending-terminal-" + observation, validator, old);
             var checked = disk.state.flushedRecords(); byte[] oldBytes = Files.readAllBytes(disk.file);
-            disk.state.put(fresh); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::save);
+            disk.state.put(fresh); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::checkedSave);
             assertTrue(disk.state.abortUnchecked(fresh)); disk.state.put(later);
             switch (observation) {
                 case "attempt" -> { /* 保留實際 move 的檔案。 */ }
@@ -482,12 +499,15 @@ class SessionJournalSchemaFiveTest {
                 default -> throw new AssertionError(observation);
             }
             byte[] observed = Files.exists(disk.file) ? Files.readAllBytes(disk.file) : null;
-            assertEquals(expectedReason, assertThrows(UncheckedIOException.class, disk::save).getCause().getMessage());
+            assertEquals(expectedReason, assertThrows(UncheckedIOException.class, disk::checkedSave).getCause().getMessage());
             if (observed == null) assertFalse(Files.exists(disk.file));
             else assertArrayEquals(observed, Files.readAllBytes(disk.file));
             Files.write(disk.file, oldBytes);
-            assertThrows(UncheckedIOException.class, disk::save, "已判定重啟，還原舊檔後仍須停寫");
+            assertThrows(UncheckedIOException.class, disk::checkedSave, "已判定重啟，還原舊檔後仍須停寫");
             assertArrayEquals(oldBytes, Files.readAllBytes(disk.file)); assertEquals(checked, disk.state.flushedRecords());
+            // T4 P2：原生存檔同樣停寫，只是不把例外丟進原版存檔鏈。
+            assertDoesNotThrow(disk::save, "原生存檔不得把 pending 的例外丟進原版存檔鏈");
+            assertArrayEquals(oldBytes, Files.readAllBytes(disk.file), "已判定重啟後原生存檔也不得寫出");
             assertTrue(disk.state.isDirty()); assertEquals(later, disk.state.records().get(later.sessionUuid()));
             var restarted = SessionRecoveryState.load(disk.file, validator); restarted.requireHealthy();
             assertEquals(checked, restarted.flushedRecords());
@@ -500,7 +520,7 @@ class SessionJournalSchemaFiveTest {
             var state = new SessionRecoveryState(SessionJournalStore::read, validator); state.markCollapseAuthoritiesInitialized();
             state.put(fixtureRecord(2, true, registry, lease));
             var blocker = directory.resolve("blocker"); Files.writeString(blocker, "一般檔案");
-            assertThrows(UncheckedIOException.class, () -> state.save(blocker.resolve("journal.dat").toFile(), null));
+            assertThrows(UncheckedIOException.class, () -> state.checkedSave(blocker.resolve("journal.dat").toFile(), null));
             assertTrue(state.flushedRecords().isEmpty()); assertTrue(state.isDirty());
             var good = directory.resolve("after-not-moved.dat"); assertDoesNotThrow(() -> state.save(good.toFile(), null));
             assertEquals(5, SessionJournalStore.read(good).getCompound("data").getInt("SchemaVersion"));
@@ -511,9 +531,9 @@ class SessionJournalSchemaFiveTest {
             var registry = builtin(); var lease = new TestLease(fixture.registries());
             var validator = SessionRecoveryState.m6Validator(() -> registry, () -> lease);
             var disk = new Disk("legacy-unknown", validator, fixtureRecord(1, false, registry, lease));
-            disk.state.markDirty(); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::save);
+            disk.state.markDirty(); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::checkedSave);
             var fresh = fixtureRecord(2, true, registry, lease); disk.state.put(fresh);
-            byte[] unknown = Files.readAllBytes(disk.file); assertThrows(RuntimeException.class, disk::save);
+            byte[] unknown = Files.readAllBytes(disk.file); assertThrows(RuntimeException.class, disk::checkedSave);
             assertArrayEquals(unknown, Files.readAllBytes(disk.file)); assertTrue(disk.state.abortUnchecked(fresh));
             disk.state.markDirty(); assertDoesNotThrow(disk::save);
             disk.state.put(fresh); assertDoesNotThrow(disk::save);
@@ -530,7 +550,7 @@ class SessionJournalSchemaFiveTest {
             // 只對此已載入 absent 的 instance 注入既有 readback port，保留真實 load provenance。
             var port = SessionRecoveryState.class.getDeclaredField("readback"); port.setAccessible(true);
             port.set(state, (SessionRecoveryState.JournalReadback) path -> { throw new IOException("move 後故障"); });
-            assertThrows(UncheckedIOException.class, () -> state.save(file.toFile(), null));
+            assertThrows(UncheckedIOException.class, () -> state.checkedSave(file.toFile(), null));
             port.set(state, (SessionRecoveryState.JournalReadback) SessionJournalStore::read);
             assertTrue(state.abortUnchecked(fresh));
             Files.delete(file); assertDoesNotThrow(() -> state.save(file.toFile(), null));
@@ -545,9 +565,9 @@ class SessionJournalSchemaFiveTest {
             var disk = new Disk("already-five", validator, fixtureRecord(1, false, registry, lease));
             disk.state.put(fixtureRecord(2, true, registry, lease)); disk.save();
             var checked = disk.state.flushedRecords(); var next = fixtureRecord(3, true, registry, lease);
-            disk.state.put(next); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::save);
+            disk.state.put(next); disk.failNextRead = true; assertThrows(UncheckedIOException.class, disk::checkedSave);
             byte[] originalAttempt = Files.readAllBytes(disk.file); assertTrue(disk.state.abortUnchecked(next));
-            var failure = assertThrows(UncheckedIOException.class, disk::save);
+            var failure = assertThrows(UncheckedIOException.class, disk::checkedSave);
             assertEquals("JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED", failure.getCause().getMessage());
             assertEquals(checked, disk.state.flushedRecords()); assertArrayEquals(originalAttempt, Files.readAllBytes(disk.file));
             assertEquals(5, disk.state.writeNbt(new NbtCompound()).getInt("SchemaVersion"));
@@ -582,6 +602,8 @@ class SessionJournalSchemaFiveTest {
             state.markCollapseAuthoritiesInitialized(); state.put(initial); save();
         }
         void save() { state.save(file.toFile(), null); }
+        /** checked flush 的同一個寫出（T4 P2：原生存檔不再丟出，要觀察失敗原因的斷言改走這裡）。 */
+        void checkedSave() { state.checkedSave(file.toFile(), null); }
     }
     private static SessionRecoveryRecord fixtureRecord(int ordinal, boolean m6, UniverseProfileRegistry registry, TestLease lease) {
         NbtCompound data;
@@ -896,13 +918,13 @@ class SessionJournalSchemaFiveTest {
             var disk = new Disk("readback-version", validator, old);
             disk.state.put(fresh); disk.save(); var previouslyChecked = disk.state.flushedRecords();
             disk.state.remove(fresh.sessionUuid()); disk.wrongVersionNextRead = true;
-            assertThrows(UncheckedIOException.class, disk::save, "相同 records 不能掩蓋 schema5→4 的 readback");
+            assertThrows(UncheckedIOException.class, disk::checkedSave, "相同 records 不能掩蓋 schema5→4 的 readback");
             var actual = SessionJournalStore.read(disk.file); assertEquals(5, actual.getCompound("data").getInt("SchemaVersion"));
             var asFour = actual.getCompound("data").copy(); asFour.putInt("SchemaVersion", 4);
             assertEquals(disk.state.records(), SessionRecoveryState.fromNbt(asFour).records());
             assertEquals(previouslyChecked, disk.state.flushedRecords()); assertTrue(disk.state.isDirty());
             assertEquals("JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED",
-                    assertThrows(UncheckedIOException.class, disk::save).getCause().getMessage());
+                    assertThrows(UncheckedIOException.class, disk::checkedSave).getCause().getMessage());
         }
     }
     @Test void rawVersionProbeAcceptsBothFieldOrdersAndRejectsMissingOrWrongType() throws Exception {

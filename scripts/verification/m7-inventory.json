@@ -39,7 +39,14 @@
       "dev.quantumchamber.persistence.M7CloseMatrixTest.closeLatchRequiresOwnerMint",
       "dev.quantumchamber.persistence.M7CloseMatrixTest.closedRowRemovalRequiresClosureProof",
       "dev.quantumchamber.persistence.M7CloseMatrixTest.participantCloseKeepsActualActorAndPhase",
-      "dev.quantumchamber.persistence.M7CloseMatrixTest.permanentSealCannotBeArchived"
+      "dev.quantumchamber.persistence.M7CloseMatrixTest.permanentSealCannotBeArchived",
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.atomicMoveFailureDuringNativeSaveKeepsPendingAndTheNextSaveConverges",
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.checkedFlushStillFailsWhenTheAtomicMoveFails",
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.unconfirmedAttemptStopsNativeWritesWithoutThrowingUntilRestart",
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.unhealthyJournalNativeSaveDoesNotThrowOrWrite",
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.legacyWriteFailureDuringNativeSaveKeepsDirtyAndTheNextSaveConverges",
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.unchangedMismatchErrorNamesTheReceiptAndHowToRecover",
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.changedRowErrorsSeparateUnreadableFromMismatchAndSayWritesArePaused"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",
@@ -66,7 +73,9 @@
       "quantumchamber:m1_empty|m7homeclosuregametests.legacy_and_home_failing_in_one_tick_count_once",
       "quantumchamber:m1_empty|m7homeclosuregametests.checkpoint_failure_keeps_close_and_lock",
       "quantumchamber:m1_empty|m7homeclosuregametests.existing_receipt_mismatch_keeps_lock",
-      "quantumchamber:m1_empty|m7homeclosuregametests.published_receipt_mismatch_keeps_lock"
+      "quantumchamber:m1_empty|m7homeclosuregametests.published_receipt_mismatch_keeps_lock",
+      "quantumchamber:m1_empty|m7homeclosuregametests.native_save_write_failure_keeps_pending",
+      "quantumchamber:m1_empty|m7homeclosuregametests.native_save_skips_unhealthy_journal"
     ]
   },
   "windows": {
@@ -120,7 +129,8 @@
       "restart-ready-low-no-root",
       "receipt-existing",
       "receipt-player-closed",
-      "receipt-mismatch-stop"
+      "receipt-mismatch-stop",
+      "receipt-write-fail-stop"
     ]
   },
   "ubuntu": {

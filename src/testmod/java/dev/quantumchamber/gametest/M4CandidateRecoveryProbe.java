@@ -57,6 +57,12 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     private SessionRecoveryRecord preFault,diskAtReadback,dormantReceipt;
     private NbtCompound diskJournalAtReadback;
     private boolean selectionFaultFired,readbackArmed;
+    /**
+     * T4 P2（使用者 2026-11-17 裁示「改 M4 測試，一律不崩潰」）：readback-fault 的原生存檔 ERROR 擷取，從原生 save 開到停服之後（停服時的存檔不得重記）。
+     * 原生存檔的 journal 寫出失敗 ERROR 以固定前綴開頭、帶 {@code CollapseService.TICK_LOG_MARKER}。
+     */
+    private LogCapture pendingLogs;
+    private static final String NATIVE_SAVE_ERROR="原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗";
     private UUID chamber2,sid2;
     private List<?> runtimeBeforeSecond;
 
@@ -344,7 +350,10 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         proof.put("inProcessDurable","RETURNING+SELECTABLE"); proof.put("nativeSaveNotAdmitted",true); proof.put("otherSessionFlushNotAdmitted",true);
         success();
     }
-    /** schema5 exact attempt 已落盤：本 instance 只能停寫，不能把未確認 SELECTED 寫回舊 authority。 */
+    /**
+     * schema5 exact attempt 已落盤：本 instance 只能停寫，不能把未確認 SELECTED 寫回舊 authority。T4 P2 起（使用者 2026-11-17 裁示）停寫不再以例外表達：
+     * 原生 save 不丟出、不寫入，記 PENDING 類 ERROR 一則（需要重啟伺服器才能收斂）；checked flush 照舊丟出；之後正常停服（SERVER_STOPPED），磁碟上仍是那份 exact attempt。
+     */
     private void verifyPendingReadback(SessionRecoveryRecord current,SessionRecoveryRecord flushed) throws Exception {
         require(preFault.equals(flushed) && flushed.state()==SessionState.SUPERPOSITION
                 && current.state()==SessionState.RETURNING && sameReceipt(preFault,current) && !current.equals(flushed),"M4_PENDING_AUTHORITY：current/flushed 不符");
@@ -353,7 +362,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         require(diskAtReadback.equals(disk) && disk.state()==SessionState.MEASURED
                 && disk.candidateSelection().orElseThrow() instanceof CandidateSelection.Selected,"M4_PENDING_DISK：磁碟不是 exact SELECTED attempt");
         require(diskJournalAtReadback.equals(SessionJournalStore.read(journalPath).getCompound("data")),"M4_PENDING_DISK：原 NBT 改變");
-        pendingRefusal("native",() -> {journal.markDirty();server.save(false,true,true);},current,before);
+        nativeRefusal(current,before);
         var other=M4CandidateTestAccess.syntheticSession(server,UUID.randomUUID(),10000);
         journal.put(other);
         pendingRefusal("other",() -> journal.flush(server),current,before);
@@ -372,8 +381,67 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
         write(config.root().resolve("manifest.json"),JSON.toJson(manifest));proof.putAll(manifest);
         require(before.equals(hash(journalPath)),"M4_PENDING_DISK：產生證據不能改原件");
         proof.put("noUniverseAllocation",true);proof.put("flushedUnchanged",true);proof.put("currentNotSelected",true);
+        // 停服前改一個只存在 level.dat 的 gamerule：停服存檔完成時它才會落盤（停服把 journal 的例外丟進原版鏈時，level.dat 不會寫出）。
+        server.getGameRules().get(net.minecraft.world.GameRules.ANNOUNCE_ADVANCEMENTS).set(false,server);
+        proof.put("stopGameRule","announceAdvancements=false");
         proof.put("status","PENDING_PRESTOP");proof.put("stopRequested",true);finished=true;
         write(config.evidence().resolve("pending-prestop.json"),JSON.toJson(proof));event("pending-prestop");server.stop(false);
+    }
+    /**
+     * T4 P2：pending 無法確認（本 instance 已停寫）時的原生 save。不得把 journal 的例外丟進原版存檔鏈，原版 save 必須完成；journal hash、current 與 flushed 都不變；
+     * PENDING 類 ERROR 恰一則、帶 TICK marker、寫明需要重啟伺服器才能收斂，cause 是 {@code JOURNAL_PENDING_RESTART_REQUIRED}（不是首次的 exact attempt）。
+     * ERROR 的訊息與 cause stack 寫成 {@code pending-native-refusal.txt}（stack 經 {@code MinecraftServer.save}）。
+     */
+    private void nativeRefusal(SessionRecoveryRecord current,String before) throws Exception {
+        pendingLogs=new LogCapture("quantumchamber");
+        Exception thrown=null; boolean saved=false;
+        try { journal.markDirty(); saved=server.save(false,true,true); } catch(Exception failure) { thrown=failure; }
+        if(thrown!=null) {
+            var stack=new java.io.StringWriter();thrown.printStackTrace(new java.io.PrintWriter(stack));
+            write(config.evidence().resolve("pending-native-thrown.txt"),stack.toString());
+        }
+        require(thrown==null,"M4_PENDING_NATIVE_THREW：原生 save 不得把 journal 例外丟進原版存檔鏈："+thrown);
+        require(saved,"M4_PENDING_NATIVE_INCOMPLETE：原生 save 必須完成");
+        var marked=pendingLogs.marked(org.apache.logging.log4j.Level.ERROR,dev.quantumchamber.collapse.CollapseService.TICK_LOG_MARKER.getName(),NATIVE_SAVE_ERROR);
+        int all=pendingLogs.matching(org.apache.logging.log4j.Level.ERROR,NATIVE_SAVE_ERROR).size();
+        require(marked.size()==1 && all==1,"M4_PENDING_NATIVE_ERROR：原生存檔的 ERROR 必須恰一則、帶 TICK marker：marked="+marked.size()+" all="+all);
+        var entry=marked.getFirst();
+        require(entry.message().contains("需要重啟伺服器才能收斂") && entry.thrown()!=null,"M4_PENDING_NATIVE_ERROR：ERROR 必須寫明需要重啟伺服器才能收斂並附 cause："+entry.message());
+        var stack=new java.io.StringWriter(); stack.write(entry.message()+System.lineSeparator()); entry.thrown().printStackTrace(new java.io.PrintWriter(stack));
+        require(stack.toString().contains("JOURNAL_PENDING_RESTART_REQUIRED") && !stack.toString().contains("JOURNAL_PENDING_EXACT_ATTEMPT_RESTART_REQUIRED"),"M4_PENDING_FENCE：native 錯誤原因不符");
+        require(before.equals(hash(data("quantumchamber_sessions.dat"))) && current.equals(journal.records().get(sid)) && preFault.equals(record()) && journal.isDirty(),
+                "M4_PENDING_AUTHORITY：native 改變權威");
+        write(config.evidence().resolve("pending-native-refusal.txt"),stack.toString());
+        proof.put("nativeRefusalSha256",hash(config.evidence().resolve("pending-native-refusal.txt")));proof.put("nativeJournalHash",before);
+        proof.put("nativeSaveReturned",saved);proof.put("nativeRefusedWithoutThrow",true);
+    }
+    /**
+     * T4 P2：readback-fault 的停服已完成（SERVER_STOPPED；停服存檔把 journal 的例外丟進原版鏈時不會走到這裡）。只讀檔案：磁碟上仍是那份 exact attempt（hash 與 NBT 都不變）、
+     * 記憶體仍 dirty 並保留 pending、level.dat 已寫出停服前改的 gamerule、停服時的存檔沒有重記 ERROR。寫 {@code pending-stopped.json}（不產生正常 final.json）。
+     */
+    private void pendingStopped() {
+        var stopped=new LinkedHashMap<String,Object>();
+        stopped.put("producer","M4CandidateRecoveryProbe");stopped.put("phase",config.phase());stopped.put("nonce",config.nonce());stopped.put("startupNonce",config.startupNonce());
+        stopped.put("pid",ProcessHandle.current().pid());stopped.put("stoppingSeen",Boolean.TRUE.equals(proof.get("stoppingSeen")));stopped.put("stoppedSeen",true);
+        var problems=new ArrayList<String>();
+        try {
+            var path=data("quantumchamber_sessions.dat");
+            var after=hash(path); stopped.put("journalHashAfterStop",after);
+            if(!after.equals(proof.get("journalHash"))) problems.add("M4_PENDING_DISK：停服覆寫 exact attempt");
+            if(!diskJournalAtReadback.equals(SessionJournalStore.read(path).getCompound("data"))) problems.add("M4_PENDING_DISK：停服後正式檔不是那份 exact attempt");
+            stopped.put("exactAttemptKept",problems.isEmpty());
+            boolean held=journal.isDirty() && journal.pendingSessions().containsKey(sid);
+            stopped.put("pendingKept",held); if(!held) problems.add("M4_PENDING_MEMORY：停服存檔不得清掉 dirty 或 pending");
+            var rules=NbtIo.readCompressed(config.root().resolve("world/level.dat"),NbtSizeTracker.ofUnlimitedBytes()).getCompound("Data").getCompound("GameRules");
+            boolean level="false".equals(rules.getString("announceAdvancements"));
+            stopped.put("levelSaved",level); if(!level) problems.add("M4_PENDING_LEVEL：停服沒有寫出 level.dat");
+            int errors=pendingLogs==null ? -1 : pendingLogs.matching(org.apache.logging.log4j.Level.ERROR,NATIVE_SAVE_ERROR).size();
+            stopped.put("nativeErrorsAfterStop",errors); if(errors!=1) problems.add("M4_PENDING_NATIVE_ERROR：停服時的存檔不得重記 ERROR："+errors);
+        } catch(Exception | AssertionError failure) { problems.add("M4_PENDING_STOPPED："+failure); }
+        finally { if(pendingLogs!=null) pendingLogs.close(); }
+        stopped.put("failures",problems);
+        stopped.put("status",problems.isEmpty() && Boolean.TRUE.equals(stopped.get("stoppingSeen")) ? "PENDING_STOPPED" : "FAIL");
+        write(config.evidence().resolve("pending-stopped.json"),JSON.toJson(stopped)); event("pending-stopped"); active=null; nativeFault=null;
     }
     private void pendingRefusal(String label,Checked action,SessionRecoveryRecord current,String before) throws Exception {
         Exception refused=null;try {action.run();}catch(Exception failure){refused=failure;}
@@ -687,6 +755,7 @@ public final class M4CandidateRecoveryProbe implements ModInitializer {
     private void stop() { finished=true; proof.put("stopRequested",true); server.stop(false); }
     private void stopped(MinecraftServer owner) {
         if(owner!=server) return;
+        if(config.phase().equals("readback-fault")) { pendingStopped(); return; }
         guarded(() -> {
             proof.put("stoppedSeen",true);
             proof.put("universeStopped",universeEvidence());
