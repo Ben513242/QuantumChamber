@@ -215,10 +215,12 @@ public final class SessionRecoveryState extends PersistentState {
     // 「讀回已確認之後才出現的例外」最近一次 WARN 的去重鍵（FailureText.dedupeKey），以 session 為單位；該 session 下一次乾淨的
     // 寫出（讀回確認、沒有例外）或終局成功時移除。
     private final Map<UUID, String> confirmedFailureWarnings = new HashMap<>();
-    // T4 P1：寫出前核對到收據不符（或無法核對）而已記過管理員 ERROR 的 session；每個 instance 每個 SID 只記一次。
-    private final java.util.Set<UUID> receiptMismatchReported = new HashSet<>();
+    // T4 P1／P2（P1-M1）：寫出前核對到收據不符（或無法核對）而已記過管理員 ERROR 的類別；每個 instance 每個 SID 的每一類只記一次。
+    private final java.util.Set<ReceiptReport> receiptMismatchReported = new HashSet<>();
     // T4 P1：目前這次 save 是否來自 checked flush（{@link #flush}）。不是時就是原版的原生存檔（autosave、/save-all、停服）。
     private boolean checkedWrite;
+    // T4 P2：原生存檔已記過 ERROR 的 journal 寫出失敗類別；每個 instance 每一類只記一次（見 {@link #reportNativeSaveFailure}）。
+    private final java.util.EnumSet<NativeSaveFailure> nativeSaveFailureReported = java.util.EnumSet.noneOf(NativeSaveFailure.class);
     private String loadError;
     private MinecraftServer owner;
     private InstalledState installation;
@@ -946,8 +948,8 @@ public final class SessionRecoveryState extends PersistentState {
         checkedSave(path(server).toFile(), server.getRegistryManager());
     }
     /**
-     * checked flush 的寫出：與原生存檔走同一個 {@link #save}，差別只在收據核對擋下寫出時（T4 P1）——這裡照舊丟出，由 caller 以 flushed 判定失敗並退避；
-     * 原生存檔則不丟出、保持 dirty（見 {@link #receiptHold}）。
+     * checked flush 的寫出：與原生存檔走同一個 {@link #save}，差別只在寫出失敗時——這裡照舊丟出，由 caller 以 flushed 判定失敗並退避；
+     * 原生存檔則不丟出、保持未寫出的狀態（收據核對擋下時見 {@link #receiptHold}，T4 P1；其他 journal 寫入失敗見 {@link #reportNativeSaveFailure}，T4 P2）。
      */
     void checkedSave(File file, RegistryWrapper.WrapperLookup lookup) {
         boolean outer = checkedWrite;
@@ -1018,72 +1020,126 @@ public final class SessionRecoveryState extends PersistentState {
             Object manager = owner == null ? installation.manager.get() : owner.getOverworld().getPersistentStateManager();
             requireOwned(installationServer, manager, installation, this);
         } else if (owner != null) throw new IllegalStateException("JOURNAL_UNINSTALLED_OWNER");
-        requireHealthy();
-        // 即使 caller 已清 dirty，也不能藉 autosave／stop 或 cache hit 丟棄未確認的 attempt。
-        if (pending != null) {
-            try { reconcilePending(file.toPath().toAbsolutePath().normalize()); }
-            catch (IOException | RuntimeException failure) {
-                throw new UncheckedIOException("journal pending 未確認，拒絕覆寫", failure instanceof IOException io
-                        ? io : new IOException("journal pending 解析失敗", failure));
-            }
-        }
-        if (!isDirty()) return;
-        var wrapped = new NbtCompound(); wrapped.put("data", writeNbt(new NbtCompound()));
-        NbtHelper.putDataVersion(wrapped);
-        var expected = Map.copyOf(writable());
+        // 以上（執行緒與 journal owner 的核對）是程式錯誤的守門，原生存檔照舊丟出（T4 P2 使用者裁示 2）。以下任何 journal 寫入失敗：checked flush 照舊丟出；
+        // 原生存檔（autosave、/save-all、停服）不丟進原版存檔鏈（T4 P2，使用者 2026-11-17 裁示），保持未寫出的狀態與 M5 的 pending／dirty 語意，見 reportNativeSaveFailure。
+        var stage = NativeSaveFailure.UNHEALTHY;
         try {
-            if (wrapped.getCompound("data").getInt("SchemaVersion") >= 5) {
-                var candidate = new SessionRecoveryState[1];
-                var prepared = SessionJournalStore.prepareSchemaFive(wrapped, data -> {
-                    var decoded = fromNbt(data, intentValidator); decoded.requireHealthy();
-                    if (!expected.equals(decoded.allSessions())) throw new IllegalStateException("schema"+wrapped.getCompound("data").getInt("SchemaVersion")+" preflight records 不符");
-                    candidate[0] = decoded;
-                });
-                var target = file.toPath().toAbsolutePath().normalize();
-                if(prepared.schema()==6) {
-                    var hold=receiptHold(target,expected);
-                    if(hold!=null) {
-                        // T4 P1：原生存檔（autosave、/save-all、停服）不把收據不符丟進原版存檔鏈：這次不寫出、保持 dirty，原版照常存完其他
-                        // PersistentState 與各世界。checked flush 照舊丟出（caller 回報失敗並退避）。
-                        if(!checkedWrite) return;
-                        throw hold;
+            requireHealthy();
+            // 即使 caller 已清 dirty，也不能藉 autosave／stop 或 cache hit 丟棄未確認的 attempt。
+            if (pending != null) {
+                stage = NativeSaveFailure.PENDING;
+                try { reconcilePending(file.toPath().toAbsolutePath().normalize()); }
+                catch (IOException | RuntimeException failure) {
+                    throw new UncheckedIOException("journal pending 未確認，拒絕覆寫", failure instanceof IOException io
+                            ? io : new IOException("journal pending 解析失敗", failure));
+                }
+            }
+            if (!isDirty()) return;
+            stage = NativeSaveFailure.PREPARE;
+            var wrapped = new NbtCompound(); wrapped.put("data", writeNbt(new NbtCompound()));
+            NbtHelper.putDataVersion(wrapped);
+            var expected = Map.copyOf(writable());
+            try {
+                if (wrapped.getCompound("data").getInt("SchemaVersion") >= 5) {
+                    var candidate = new SessionRecoveryState[1];
+                    var prepared = SessionJournalStore.prepareSchemaFive(wrapped, data -> {
+                        var decoded = fromNbt(data, intentValidator); decoded.requireHealthy();
+                        if (!expected.equals(decoded.allSessions())) throw new IllegalStateException("schema"+wrapped.getCompound("data").getInt("SchemaVersion")+" preflight records 不符");
+                        candidate[0] = decoded;
+                    });
+                    var target = file.toPath().toAbsolutePath().normalize();
+                    if(prepared.schema()==6) {
+                        var hold=receiptHold(target,expected);
+                        if(hold!=null) {
+                            // T4 P1：原生存檔（autosave、/save-all、停服）不把收據不符丟進原版存檔鏈：這次不寫出、保持 dirty，原版照常存完其他
+                            // PersistentState 與各世界。checked flush 照舊丟出（caller 回報失敗並退避）。
+                            if(!checkedWrite) return;
+                            throw hold;
+                        }
                     }
+                    boolean sameCheckedPath = target.equals(checkedPath);
+                    pending = new PendingAttempt(target, prepared, candidate[0].allFlushedSessions(),
+                            sameCheckedPath ? checkedWrapped : null, flushed, sameCheckedPath && checkedAbsent);
+                    stage = NativeSaveFailure.WRITE;
+                    try { SessionJournalStore.writePrepared(file.toPath(), prepared); }
+                    catch (SessionJournalStore.WriteFailure failure) {
+                        if (!failure.possiblyMoved()) pending = null;
+                        throw failure;
+                    }
+                } else {
+                    stage = NativeSaveFailure.WRITE;
+                    legacyWriteUnconfirmed = true;
+                    SessionJournalStore.write(file.toPath(), wrapped);
                 }
-                boolean sameCheckedPath = target.equals(checkedPath);
-                pending = new PendingAttempt(target, prepared, candidate[0].allFlushedSessions(),
-                        sameCheckedPath ? checkedWrapped : null, flushed, sameCheckedPath && checkedAbsent);
-                try { SessionJournalStore.writePrepared(file.toPath(), prepared); }
-                catch (SessionJournalStore.WriteFailure failure) {
-                    if (!failure.possiblyMoved()) pending = null;
-                    throw failure;
+                stage = NativeSaveFailure.READBACK;
+                var actual = readback.read(file.toPath());
+                var decoded = fromNbt(actual.getCompound("data"), intentValidator);
+                decoded.requireHealthy();
+                if (!wrapped.equals(actual) || !expected.equals(decoded.allSessions())) {
+                    throw new IOException("journal 正式檔 exact readback 不符");
                 }
-            } else {
-                legacyWriteUnconfirmed = true;
-                SessionJournalStore.write(file.toPath(), wrapped);
+                var checkedCopy = actual.copy();
+                flushed = decoded.allFlushedSessions();
+                authorityHistory.putAll(flushed);
+                checkedAuthority.putAll(flushed);
+                candidateInitialized |= actual.getCompound("data").getInt("SchemaVersion") >= 3;
+                schemaFiveEvidence |= actual.getCompound("data").getInt("SchemaVersion") >= 5;
+                schemaSixEvidence |= actual.getCompound("data").getInt("SchemaVersion") == 6;
+                legacyWriteUnconfirmed = false;
+                checkedWrapped = checkedCopy; checkedPath = file.toPath().toAbsolutePath().normalize(); checkedAbsent = false;
+                pending = null;
+                // roll-forward 尚未確認的 session：讀回確認 flushed 已等於 current 時清除。
+                rollForwardPending.removeIf(sid -> Objects.equals(flushed.get(sid), records.get(sid)));
+            } catch (IOException | RuntimeException exception) {
+                throw new UncheckedIOException("journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot",
+                        exception instanceof IOException io ? io : new IOException("journal strict readback 失敗", exception));
             }
-            var actual = readback.read(file.toPath());
-            var decoded = fromNbt(actual.getCompound("data"), intentValidator);
-            decoded.requireHealthy();
-            if (!wrapped.equals(actual) || !expected.equals(decoded.allSessions())) {
-                throw new IOException("journal 正式檔 exact readback 不符");
-            }
-            var checkedCopy = actual.copy();
-            flushed = decoded.allFlushedSessions();
-            authorityHistory.putAll(flushed);
-            checkedAuthority.putAll(flushed);
-            candidateInitialized |= actual.getCompound("data").getInt("SchemaVersion") >= 3;
-            schemaFiveEvidence |= actual.getCompound("data").getInt("SchemaVersion") >= 5;
-            schemaSixEvidence |= actual.getCompound("data").getInt("SchemaVersion") == 6;
-            legacyWriteUnconfirmed = false;
-            checkedWrapped = checkedCopy; checkedPath = file.toPath().toAbsolutePath().normalize(); checkedAbsent = false;
-            pending = null;
-            // roll-forward 尚未確認的 session：讀回確認 flushed 已等於 current 時清除。
-            rollForwardPending.removeIf(sid -> Objects.equals(flushed.get(sid), records.get(sid)));
-        } catch (IOException | RuntimeException exception) {
-            throw new UncheckedIOException("journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot",
-                    exception instanceof IOException io ? io : new IOException("journal strict readback 失敗", exception));
+            setDirty(false);
+        } catch (RuntimeException failure) {
+            if (checkedWrite) throw failure;
+            reportNativeSaveFailure(stage, file, failure);
         }
-        setDirty(false);
+    }
+
+    /**
+     * T4 P2：原生存檔的 journal 寫入失敗類別（{@link #save} 失敗時所在的階段；收據不符另由 {@link #receiptHold} 處理）。
+     * 不丟出之後各類保持的狀態與收斂者：
+     * <ul>
+     * <li>{@code UNHEALTHY}：開服時讀不到 journal；本 instance 永不寫出，管理員修檔後重啟收斂。</li>
+     * <li>{@code PENDING}：上一次寫出的結果尚未確認、核對磁碟失敗；未確認的寫入不覆寫。核對失敗後本 instance 停寫（M5 既有），重啟後由開服 strict 載入收斂。</li>
+     * <li>{@code PREPARE}：編碼或寫出前檢查（schema、strict decode、preflight、預算）失敗；尚未建立 pending，保持 dirty。</li>
+     * <li>{@code WRITE}：寫入正式檔失敗（例如 Windows atomic move 的 AccessDenied）；possiblyMoved 時保留 pending，下一次寫出先核對磁碟，否則保持 dirty。</li>
+     * <li>{@code READBACK}：正式檔已替換但讀回失敗或不符；保留 pending（下一次寫出依 M5 既有規則判定是否需要重啟）。</li>
+     * </ul>
+     * 後三類由下一次原生存檔與 recovery 的 journal 退避重試（{@code SessionRecoveryManager}）收斂；不新增短暫重試。
+     */
+    private enum NativeSaveFailure {
+        UNHEALTHY("journal 不健康（開服時無法讀取）"),
+        PENDING("上一次寫出的結果尚未確認（pending），核對磁碟失敗"),
+        PREPARE("編碼或寫出前檢查失敗"),
+        WRITE("寫入正式檔失敗"),
+        READBACK("正式檔讀回失敗或與寫出的內容不符");
+
+        final String text;
+        NativeSaveFailure(String text) { this.text = text; }
+    }
+
+    /**
+     * T4 P2：原生存檔的 journal 寫入失敗不丟進原版存檔鏈（原版照常存完其他 PersistentState、level.dat 與各世界，停服照常完成），只記 ERROR。
+     * 每個 instance 每一類只記一次；不屬於任何 session，帶 {@code CollapseService.TICK_LOG_MARKER}（父 marker 是 {@code LOG_MARKER}）並附 cause。
+     * 訊息依失敗後的狀態說明收斂方式。
+     */
+    private void reportNativeSaveFailure(NativeSaveFailure kind, File file, RuntimeException failure) {
+        if (!nativeSaveFailureReported.add(kind)) return;
+        String convergence;
+        if (loadError != null) convergence = "本 instance 不會寫出 journal；需要修復或移走損壞的 journal 檔，再重啟伺服器才能收斂";
+        else if (pendingRestartRequired) convergence = "已無法證實磁碟上的權威，本 instance 不再寫出 journal（未確認的寫入不會被覆寫）；需要重啟伺服器才能收斂（開服 strict 載入）";
+        else if (pending != null) convergence = "保留 pending：下一次寫出（原生存檔，或 recovery 的 journal 退避重試）會先核對磁碟仍是上一份權威才重寫，不覆寫未確認的寫入";
+        else convergence = "保持 dirty：由下一次原生存檔或 recovery 的 journal 退避重試收斂";
+        org.slf4j.LoggerFactory.getLogger("quantumchamber").error(dev.quantumchamber.collapse.CollapseService.TICK_LOG_MARKER,
+                "原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗：{}：不丟進原版存檔流程，原版照常存完其他資料與各世界；journal 這次沒有寫出"
+                        + "（dirty={}，pending={}）；{}。每個 instance 這一類只記一次：path={}：{}",
+                kind.text, isDirty(), pending != null, convergence, file.toPath().toAbsolutePath().normalize(), FailureText.describe(failure), failure);
     }
 
     /**
@@ -1093,7 +1149,7 @@ public final class SessionRecoveryState extends PersistentState {
      * <li>本次有變動的列（不等於 {@link #flushed}，或 target 不是上一次 checked 讀回的同一個檔）與收據不符時，回傳擋下這次寫出的原因：
      *     寫出的 bytes 永不含「本次有變動、而且與收據不符」的列。</li>
      * <li>未變動、已在 target 上的列與收據不符時不擋：照原樣重寫不會擴大不一致，其他 SID 的進度照常落盤。</li>
-     * <li>兩種情形都不改那一列與收據原件（熱列仍在，同艙仍占用），每個 instance 每個 SID 只記一次管理員 ERROR（{@link #reportReceiptMismatch}）。</li>
+     * <li>兩種情形都不改那一列與收據原件（熱列仍在，同艙仍占用），記管理員 ERROR（{@link #reportReceiptMismatch}；每個 instance 每個 SID 的每一類只記一次）。</li>
      * </ul>
      * 無法建立收據 store（存檔根無法解析）時，每一列都當成無法核對處理。
      * @return 擋下寫出的原因；可以寫出時為 null
@@ -1101,9 +1157,10 @@ public final class SessionRecoveryState extends PersistentState {
     private IOException receiptHold(Path target, Map<UUID, JournalSession> rows) {
         if (rows.isEmpty()) return null;
         boolean onDisk = target.equals(checkedPath) && !checkedAbsent;
+        var saveRoot = target.getParent().getParent();
         HomeReceiptStore store = null;
         IOException unavailable = null;
-        try { store = new HomeReceiptStore(target.getParent().getParent()); }
+        try { store = new HomeReceiptStore(saveRoot); }
         catch (IOException failure) { unavailable = failure; }
         IOException hold = null;
         for (var row : rows.values()) {
@@ -1114,7 +1171,7 @@ public final class SessionRecoveryState extends PersistentState {
             }
             var sid = row.sessionUuid();
             boolean unchanged = onDisk && row.equals(flushed.get(sid));
-            reportReceiptMismatch(sid, unchanged, failure);
+            reportReceiptMismatch(new ReceiptReport(sid, receiptReadable(store, row), unchanged), saveRoot, failure);
             if (unchanged) continue;
             var blocked = new IOException("回程收據與本次要寫出的熱列不符：session=" + sid + "：" + failure.getMessage(), failure);
             if (hold == null) hold = blocked; else hold.addSuppressed(blocked);
@@ -1122,13 +1179,40 @@ public final class SessionRecoveryState extends PersistentState {
         return hold;
     }
 
-    /** {@link #receiptHold} 的管理員 ERROR：帶 {@code CollapseService.LOG_MARKER} 與 {@code session=<SID>}，每個 instance 每個 SID 只記一次。 */
-    private void reportReceiptMismatch(UUID sid, boolean unchanged, Exception failure) {
-        if (!receiptMismatchReported.add(sid)) return;
+    /** 收據 ERROR 的去重鍵（T4 P2，P1-M1）：SID 加類別——收據讀得出而內容不符（{@code mismatch}）或無法核對、這一列未變動或本次有變動。 */
+    private record ReceiptReport(UUID sid, boolean mismatch, boolean unchanged) {}
+
+    /**
+     * {@link #receiptHold} 核對失敗之後才分類（不在成功路徑多讀檔）：再以 {@link HomeReceiptStore#lookup} 讀一次。讀得出、而且不是這一列的結案快照
+     * （或這一列尚未結案）才算「不符」；讀不出（IO 錯誤、權限、路徑不是一般檔案、內容無法解析）、檔案不見，或讀出的內容等於這一列（第一次的失敗來自讀取）
+     * 都算「無法核對」，ERROR 不寫成竄改或損壞。
+     */
+    private static boolean receiptReadable(HomeReceiptStore store, JournalSession row) {
+        if (store == null) return false;
+        java.util.Optional<HomeSessionRecord> stored;
+        try { stored = store.lookup(row.sessionUuid()); }
+        catch (IOException | RuntimeException unreadable) { return false; }
+        if (stored.isEmpty()) return false;
+        if (!(row instanceof HomeSessionRecord h) || !(h.home().closeIntent() instanceof HomeSessionRecord.Close)) return true;
+        return !stored.get().equals(h);
+    }
+
+    /**
+     * {@link #receiptHold} 的管理員 ERROR：帶 {@code CollapseService.LOG_MARKER} 與 {@code session=<SID>}，附收據檔路徑、處理方式與 cause；每個 instance 每個 SID 的
+     * 每一類（{@link ReceiptReport}）只記一次。本次有變動的那一類會擋下整份 journal 的寫出，訊息註明全服 journal 寫入已暫停。
+     */
+    private void reportReceiptMismatch(ReceiptReport report, Path saveRoot, Exception failure) {
+        if (!receiptMismatchReported.add(report)) return;
+        var receipt = saveRoot.resolve("data").resolve("quantumchamber_home_receipts").resolve(report.sid() + ".dat").toAbsolutePath().normalize();
+        String kind = report.mismatch() ? "與熱列不符（外部竄改、損壞或備份錯拼）"
+                : "無法讀取或核對（例如檔案被其他程式鎖定、權限不足、路徑不是一般檔案，或內容無法解析；這不代表收據被改過）";
+        String scope = report.unchanged() ? "這一列未變動，journal 照原樣寫出，其他旅程不受影響"
+                : "這一列本次有變動，本次不寫出 journal、保持 dirty；處理之前全服 journal 寫入已暫停（原生存檔不寫出 journal，所有旅程的 checked 提交都會失敗並退避）";
+        String handling = report.mismatch() ? "確認收據檔是否屬於這一列，刪除它或還原成原本發佈的那一份，下一次存檔或 owner 重試就會恢復，不必重啟"
+                : "排除讀取問題（解除鎖定、修正權限），或刪除、還原該收據檔，下一次存檔或 owner 重試就會恢復，不必重啟";
         org.slf4j.LoggerFactory.getLogger("quantumchamber").error(dev.quantumchamber.collapse.CollapseService.LOG_MARKER,
-                "回程收據與熱列不符或無法核對（外部竄改或損壞）：保留熱列、收據原件與占用，需要管理員處理（{}）：session={}：{}",
-                unchanged ? "這一列未變動，journal 照原樣寫出" : "這一列本次有變動，不寫出 journal、保持 dirty",
-                sid, FailureText.describe(failure), failure);
+                "回程收據{}：保留熱列、收據原件與占用，需要管理員處理（{}）：session={}：收據檔={}：處理方式：{}：{}",
+                kind, scope, report.sid(), receipt, handling, FailureText.describe(failure), failure);
     }
 
     /** 只讀收斂：原 checked exact 才解除；原 attempt exact 也不得在本 instance 復活已 abort 的 current。 */
