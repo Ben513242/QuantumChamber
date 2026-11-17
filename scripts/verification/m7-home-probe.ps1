@@ -67,9 +67,12 @@ function Assert-M7Identity($receipt,$spec,[string]$Phase,[string]$Nonce,[string]
     if($receipt.runtimeScope -cne 'testmod-present' -or 'quantumchamber-testmod' -cnotin @($receipt.loadedModIds)){throw "M7_HOME_RUNTIME_SCOPE：$($spec.row)/$Phase"}
     if(@($receipt.failures).Count){throw "M7_HOME_JAVA_FAILURES：$($spec.row)/$Phase $(@($receipt.failures) -join ' | ')"}
 }
+# 正式 checkpoint 呼叫：relevant 集合只含 B、等於 homeChunks，而且涵蓋 B 門 25 格所在的每一個 chunk（setup.doorChunks 由 Java 以幾何獨立計算，不經 production，B1 審查 M2）。
 function Assert-M7Checkpoint($call,$setup,[bool]$ReceiptPresent) {
     $worlds=@($call.worlds)
     if($worlds.Count -ne 1 -or $worlds[0].world -cne $setup.entryWorld -or (@($worlds[0].chunks) -join '|') -cne (@($setup.homeChunks) -join '|') -or $call.activeClose -ne $true -or $call.bDoor -cne 'OPEN/NONE' -or $call.receiptPresent -ne $ReceiptPresent){throw 'M7_HOME_CHECKPOINT'}
+    $door=@($setup.doorChunks)
+    if($door.Count -eq 0 -or @($door | Where-Object {$_ -cnotin @($worlds[0].chunks)}).Count){throw 'M7_HOME_CHECKPOINT_DOOR_CHUNKS'}
 }
 # crash：halt 乾淨、事件序列恰為 cut 之前的前綴、crash 當下的磁碟／記憶體狀態依預期終局表。
 function Assert-M7Crash($receipt,$spec,[string]$Nonce,[string]$StartupNonce) {
@@ -240,6 +243,14 @@ if(-not(Test-Path -LiteralPath $Gradle -PathType Leaf)){throw "M7_HOME_GRADLE_MI
 $selection=Get-M7Selection
 $selected=@($selection.rows | ForEach-Object {Get-M7Spec $_})
 $runId=[guid]::NewGuid().ToString('N').Substring(0,12)
+# 路徑預算（B1 審查 M7）：Windows MAX_PATH 是 260（含結尾 NUL，可用 259 字元）。root 之下已知最長的子路徑是 B 世界的 entity region
+# \world\dimensions\quantumchamber\universe\<36 字元 UUID>\overworld\entities\r.-1.-1.mca，共 110 字元（B1 實測：全長 240＝root 130＋110）；另預留到 120 字元給 region 座標變長與其他檔名。
+# 啟動前對每一個選到的列先算 root 長度，超過就以具名錯誤拒絕，不在執行中途才撞到上限。
+$pathLimit=259;$pathReserve=120
+foreach($spec in $selected){
+    $rootLength=(Join-Path (Join-Path $project 'run') "m7-home-$runId-$($spec.row)").Length
+    if($rootLength+$pathReserve -gt $pathLimit){throw "M7_HOME_PATH_BUDGET：$($spec.row) 的 root 長度 $rootLength＋預留 $pathReserve 超過 $pathLimit；請改用較短的 checkout 路徑"}
+}
 $context=[pscustomobject]@{Project=$project;Gradle=$Gradle;InitScript=(Join-Path $PSScriptRoot 'runtime.init.gradle');RunId=$runId;RootPrefix='m7-home';EvidencePrefix='m7-home';EvidenceOwner='';Task='runM7HomeProbe';PropertyPrefix='m7Home';NonceProperty='quantumchamber.m7home.startupNonce';IdleSeconds=$IdleSeconds;PhaseMinutes=$PhaseMinutes;GradleEncoding=[Text.Encoding]::GetEncoding($GradleCodePage);LogEncoding=[Text.Encoding]::UTF8}
 if(-not $EvidenceRoot){$EvidenceRoot=Join-Path $project '.superpowers/verification'}
 $EvidenceRoot=Resolve-Evidence -Context $context -Path $EvidenceRoot

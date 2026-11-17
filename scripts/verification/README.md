@@ -728,13 +728,14 @@ I2正式reserve錯與32slot反證移T2，不再採T1舊上界；I7超M6殘留不
 
 ## M7 home probe（T4 Phase B1：Windows 原生 close 矩陣）
 
-`m7-home-probe.ps1` 是 M7 回程終局的跨 JVM crash／reopen probe（M7 spec §5.3、§9.2、§10、V10；plan Task 4 的 Windows native 固定矩陣）。39 列 `close-{ordinary|sealed|passable}-{cut}`，十三個 cut 逐字為 `before-close, after-close, before-door, after-door, before-checkpoint, after-checkpoint, after-temp-force, before-publish, after-publish, after-readback, after-recheck, before-remove, after-remove`。精確集合同時存在三處，啟動時逐項比對：runner 的 manifest、`m7-inventory.json` 的 `windows.native`、Java phase 表（receipt 的 `rowTable`）。只放 Windows；Ubuntu 不跑原生鏈，不記 skip 或 PASS。
+`m7-home-probe.ps1` 是 M7 回程終局的跨 JVM crash／reopen probe（M7 spec §5.3、§9.2、§10、V10；plan Task 4 的 Windows native 固定矩陣）。39 列 `close-{ordinary|sealed|passable}-{cut}`，十三個 cut 逐字為 `before-close, after-close, before-door, after-door, before-checkpoint, after-checkpoint, after-temp-force, before-publish, after-publish, after-readback, after-recheck, before-remove, after-remove`。精確集合同時存在三處：runner 的 manifest 與 `m7-inventory.json` 的 `windows.native` 在 runner 啟動時逐項比對；Java phase 表（receipt 的 `rowTable`）在驗證每一份 receipt 時與 manifest 逐項比對。只放 Windows；Ubuntu 不跑原生鏈，不記 skip 或 PASS。
 
 | 檔案 | 內容 |
 | --- | --- |
 | `src/testmod/java/dev/quantumchamber/gametest/M7HomeProbe.java` | entrypoint：只有 `quantumchamber.m7home.*` 存在時才建立 runner；`reached` 給 mixin 呼叫，沒啟用時不做任何事 |
 | `src/testmod/java/dev/quantumchamber/gametest/M7HomeClosurePhases.java` | phase 表（三門態×十三 cut、群組 A～D 的預期終局）、fixture、halt／final receipt 與斷言 |
-| `src/testmod/java/dev/quantumchamber/gametest/mixin/M7HomeCloseWindowMixin.java` | cut 點：`HomeClosure.latch`／`converge` 的交接呼叫（`M7HomeCloseWindowMixin`）與 `HomeReceiptStore.publishOrVerify` 內部（同檔的 `M7HomeReceiptWindowMixin`），只通知、不改參數與結果 |
+| `src/testmod/java/dev/quantumchamber/gametest/mixin/M7HomeCloseWindowMixin.java` | cut 點：`HomeClosure.latch`／`converge` 的交接呼叫，只通知、不改參數與結果 |
+| `src/testmod/java/dev/quantumchamber/gametest/mixin/M7HomeReceiptWindowMixin.java` | cut 點：`HomeReceiptStore.publishOrVerify` 內部（B2a Step 0 自上一檔拆出），只通知、不改參數與結果 |
 | `build.gradle` 的 `m7HomeProbe` run | Gradle `runM7HomeProbe`，runDir `run/m7-home-<nonce>`，只轉入 `-Pm7Home{Phase,Nonce,StartupNonce,Root}` |
 
 ```powershell
@@ -748,6 +749,9 @@ pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifySummary <m7-
 - `crash`：fresh 世界蓋 A 原艙（不供電，參與者帶 QuantumState 在艙內，以正式 `attemptArm` 登記），物化 B 投影（COMPLETE projection ledger），經正式 journal 入口走到 HOME DORMANT，參與者站在 B 艙內；以正式 `ChamberLifecycleService.setEnabled(false)` 停用 A（`HomeRootFence` checked latch `ROOT_DISABLED`），以原生 `ChunkSaveCheckpoint.save` 做基線存檔（registry 停用、stop latch、B 門初始狀態都落盤）後 arm cut。下一個 tick 由正式 `HomeClosure` 推進，走到該 cut 時寫 `halt.json`（CREATE_NEW＋force）並 `Runtime.halt(77)`。乾淨 halt 的條件：cut 第一次 hit、Java 沒有記下失敗、停服尚未開始、事件序列恰為 cut 之前的前綴；否則 `HALT_REFUSED`、exit 78。
 - `reopen`：新 JVM 開同一個世界。開服前先讀 crash 留下的 journal 檔 hash 與收據目錄清單（必須與 halt 當下相同），開服時載入 B／A 讀門格（磁碟狀態），參與者以 crash 基線存下的 playerdata 登入；之後等正式 owner 從磁碟續做到 checked 移除，核對事件序列、收據、檔案、兩側門格、資源與零移動，再把 B 門設為 CLOSED（模擬玩家之後自己關門）觀察 40 tick 不被舊旅程打開，正常停服寫 `final.json`。
 - 正式 B 來源票到 T5 才有：兩個 phase 都以測試票保持 B 艙體外擴 4 格的 chunks（沿 Phase A 的 `holdChunks`）。
+- 注入點數量：每個注入點 `require=1`；沒有 ordinal 的注入點另加 `allow=1`（多出第二處呼叫時套用 mixin 就失敗）。`applyTarget` 與 `verify` 靠 ordinal 0／1 定位，假設 `HomeClosure.converge` 恰有 2 次 `applyTarget`、`HomeReceiptStore.publishOrVerify` 恰有 2 次 `verify`；改這兩個方法時要同步檢查注入點與事件序列。
+- region 證據的範圍：新 JVM 在任何 tick 之前載入 B 門所在 chunk 讀門格（不是 raw MCA 解析），證明門格的磁碟內容。正式 checkpoint 呼叫的 relevant 集合只含 B、等於 `PassageTransferPolicy.homeChunks`；另以幾何獨立計算 B 門 25 格所在的 chunk（`setup.doorChunks`），斷言都在 relevant 集合內。`ChunkSaveCheckpoint.save` 實際是全伺服器存檔，A 的 dirty chunk 也會寫出；A 不變只以「A 門格各時點等於基線」證明，不宣稱 checkpoint 不寫 A。
+- 路徑預算：Windows MAX_PATH 是 260（含結尾 NUL，可用 259 字元）。root 之下已知最長的子路徑是 B 世界的 entity region（`world/dimensions/quantumchamber/universe/<UUID>/overworld/entities/r.-1.-1.mca`，含開頭分隔字元 110 字元；B1 實測全長 240＝root 130＋110）。runner 啟動前對每一個選到的列計算 `run/m7-home-<runId>-<列名>` 的絕對路徑長度，加上預留 120 字元（region 座標變長與其他檔名）超過 259 就以 `M7_HOME_PATH_BUDGET` 拒絕，不在執行中途才撞到上限。新增列名或改用更深的 checkout 路徑時，以這條規則先檢查。
 - 預期終局（群組）：A＝before-close（重開重新 mint ROOT_DISABLED，事件 13 個）；B＝after-close～before-publish（從已凍結 CLOSE 續做並發佈；checkpoint 之前的 cut 重開時 B 門仍是初始狀態、outcome APPLIED，之後 UNCHANGED；暫存檔保留）；C＝after-publish～before-remove（收據已存在只驗 exact、不覆寫，事件含 `verify-existing`）；D＝after-remove（什麼都不做、沒有 checkpoint）。細節見 SDD `t4b1-report.md` 的預期終局表；runner 的 `Assert-M7Crash`／`Assert-M7Reopen` 與 Java 各自核對同一張表。
 - 兩種結束都核對：receipt 的 PID、StartTime（±1 秒）、startupNonce 與實際 JVM 相符、標示 testmod runtime；JVM 已結束；`world/session.lock` 可獨占開啟；latest.log 恰有一行 `M7_HOME_BEGIN`（reopen 另恰有一行 `M7_HOME_END`）。crash 另要求 Gradle 非 0、JVM 77、Gradle 輸出有 `finished with non-zero exit value 77`、沒有 `final.json`；reopen 要求 Gradle 與 JVM 都是 0、沒有 `halt.json`。
 - 逾時沿 `probe-common.ps1`：`-IdleSeconds`（預設 90）、`-PhaseMinutes`（預設 5）、`-BlockMinutes`（預設 240）；逾時 FAIL、保留 root，不可同 root 重跑。啟動前已有非 daemon Java 就拒絕。

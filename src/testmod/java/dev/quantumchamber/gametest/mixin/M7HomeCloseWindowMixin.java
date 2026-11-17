@@ -7,17 +7,10 @@ import dev.quantumchamber.chamber.ChamberDoorService;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.collapse.HomeClosure;
 import dev.quantumchamber.gametest.M7HomeProbe;
-import dev.quantumchamber.persistence.ChunkSaveCheckpoint;
-import dev.quantumchamber.persistence.HomeReceiptStore;
 import dev.quantumchamber.persistence.HomeSessionRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
-import java.nio.channels.FileChannel;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
-import net.minecraft.nbt.NbtCompound;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.ChunkPos;
@@ -34,12 +27,17 @@ import org.spongepowered.asm.mixin.injection.At;
  * <li>{@code after-recheck}：第二次 {@code applyTarget} 回傳 {@code UNCHANGED} 時（其他 outcome 記 {@code recheck-changed}）。</li>
  * <li>{@code before-remove}／{@code after-remove}：{@code SessionRecoveryState.finishHomeClose}（after 只在 {@code removed()} 時，否則記 {@code remove-rejected}）。</li>
  * </ul>
- * 收據內部的 cut 在同檔的 {@link M7HomeReceiptWindowMixin}。只通知、不改參數與結果、不吞例外；probe 沒有啟用（沒有 {@code quantumchamber.m7home.*}）時
- * {@link M7HomeProbe#reached} 不做任何事。每個注入點 {@code require=1}：正式 owner 的呼叫改名、刪除或簽名改變時，套用 mixin 就失敗。
+ * 收據內部的 cut 在 {@link M7HomeReceiptWindowMixin}（T4 Phase B2a Step 0 拆成獨立檔，B1 審查 M6）。只通知、不改參數與結果、不吞例外；probe 沒有啟用
+ * （沒有 {@code quantumchamber.m7home.*}）時 {@link M7HomeProbe#reached} 不做任何事。
+ * <p>注入點的數量（B1 審查 M5）：每個注入點都是 {@code require=1}，正式 owner 的呼叫改名、刪除或簽名改變時，套用 mixin 就失敗。沒有 ordinal 的注入點
+ * （{@code latchHomeClose}、{@code ChunkSaveCheckpoint.save}、{@code finishHomeClose}）另加 {@code allow=1}：同一個方法裡多出第二處呼叫時，套用 mixin 也失敗，
+ * 不會把 cut 套到每一處。{@code applyTarget} 靠 ordinal 0／1 區分「第一次改門」與「移除前再確認」，假設 {@code HomeClosure.converge} 裡
+ * <b>恰有 2 次</b> {@code ChamberDoorService.applyTarget}；T5／T6 改 {@code converge} 時（例如在前面插入新的 {@code applyTarget}），ordinal 會無聲位移，
+ * 必須同步檢查這兩個注入點與 {@code m7-home-probe.ps1} 的事件序列。
  */
 @Mixin(value=HomeClosure.class,remap=false)
 abstract class M7HomeCloseWindowMixin {
-    @WrapOperation(method="latch",remap=false,require=1,at=@At(value="INVOKE",remap=false,
+    @WrapOperation(method="latch",remap=false,require=1,allow=1,at=@At(value="INVOKE",remap=false,
             target="Ldev/quantumchamber/persistence/SessionRecoveryState;latchHomeClose(Lnet/minecraft/server/MinecraftServer;Ldev/quantumchamber/collapse/HomeClosure$CloseMint;)Ldev/quantumchamber/persistence/SessionRecoveryState$CommitResult;"))
     private static SessionRecoveryState.CommitResult quantumchamberTest$close(SessionRecoveryState journal,MinecraftServer server,HomeClosure.CloseMint mint,
             Operation<SessionRecoveryState.CommitResult> original) {
@@ -61,7 +59,7 @@ abstract class M7HomeCloseWindowMixin {
         return result;
     }
 
-    @WrapOperation(method="converge",remap=false,require=1,at=@At(value="INVOKE",remap=false,
+    @WrapOperation(method="converge",remap=false,require=1,allow=1,at=@At(value="INVOKE",remap=false,
             target="Ldev/quantumchamber/persistence/ChunkSaveCheckpoint;save(Lnet/minecraft/server/MinecraftServer;Ljava/util/Map;)V"))
     private static void quantumchamberTest$checkpoint(MinecraftServer server,Map<ServerWorld,Set<ChunkPos>> relevant,Operation<Void> original,
             @Local(argsOnly=true) HomeSessionRecord row) {
@@ -79,7 +77,7 @@ abstract class M7HomeCloseWindowMixin {
         return result;
     }
 
-    @WrapOperation(method="converge",remap=false,require=1,at=@At(value="INVOKE",remap=false,
+    @WrapOperation(method="converge",remap=false,require=1,allow=1,at=@At(value="INVOKE",remap=false,
             target="Ldev/quantumchamber/persistence/SessionRecoveryState;finishHomeClose(Lnet/minecraft/server/MinecraftServer;Ldev/quantumchamber/persistence/HomeSessionRecord;Ldev/quantumchamber/collapse/HomeClosure$HomeClosureProof;)Ldev/quantumchamber/persistence/SessionRecoveryState$TerminalResult;"))
     private static SessionRecoveryState.TerminalResult quantumchamberTest$remove(SessionRecoveryState journal,MinecraftServer server,HomeSessionRecord expected,
             HomeClosure.HomeClosureProof proof,Operation<SessionRecoveryState.TerminalResult> original) {
@@ -87,48 +85,5 @@ abstract class M7HomeCloseWindowMixin {
         var result=original.call(journal,server,expected,proof);
         M7HomeProbe.reached(result.removed() ? "after-remove" : "remove-rejected",expected.sessionUuid(),result.status());
         return result;
-    }
-}
-
-/**
- * 僅 testmod（M7 T4 Phase B1）：同上，單 SID 收據 {@link HomeReceiptStore#publishOrVerify} 內的 cut 點。mixin 一個類別只能有一個 target，所以與
- * {@link M7HomeCloseWindowMixin} 同檔、各自是 package-private 的 top-level 類別。
- * <ul>
- * <li>{@code verify-existing}：收據已存在時的 exact 驗證（第 1 個 {@code verify}；不是 cut，只記事件）。</li>
- * <li>{@code after-temp-force}：完整暫存檔 {@code FileChannel.force(true)} 之後。</li>
- * <li>{@code before-publish}／{@code after-publish}：原子不覆寫發佈 {@code Files.createLink} 之前、回傳之後。</li>
- * <li>{@code after-readback}：發佈後 exact 讀回（第 2 個 {@code verify}）之後、刪暫存檔之前。</li>
- * </ul>
- */
-@Mixin(value=HomeReceiptStore.class,remap=false)
-abstract class M7HomeReceiptWindowMixin {
-    @WrapOperation(method="publishOrVerify",remap=false,require=1,at=@At(value="INVOKE",ordinal=0,remap=false,
-            target="Ldev/quantumchamber/persistence/HomeReceiptStore;verify(Ljava/util/Optional;Lnet/minecraft/nbt/NbtCompound;)V"))
-    private void quantumchamberTest$verifyExisting(Optional<?> actual,NbtCompound expected,Operation<Void> original,
-            @Local(argsOnly=true) HomeSessionRecord frozen) {
-        original.call(actual,expected);
-        M7HomeProbe.reached("verify-existing",frozen.sessionUuid(),null);
-    }
-
-    @WrapOperation(method="publishOrVerify",remap=false,require=1,at=@At(value="INVOKE",remap=false,target="Ljava/nio/channels/FileChannel;force(Z)V"))
-    private void quantumchamberTest$force(FileChannel channel,boolean metaData,Operation<Void> original,@Local(argsOnly=true) HomeSessionRecord frozen) {
-        original.call(channel,metaData);
-        M7HomeProbe.reached("after-temp-force",frozen.sessionUuid(),null);
-    }
-
-    @WrapOperation(method="publishOrVerify",remap=false,require=1,at=@At(value="INVOKE",remap=false,
-            target="Ljava/nio/file/Files;createLink(Ljava/nio/file/Path;Ljava/nio/file/Path;)Ljava/nio/file/Path;"))
-    private Path quantumchamberTest$publish(Path link,Path existing,Operation<Path> original,@Local(argsOnly=true) HomeSessionRecord frozen) {
-        M7HomeProbe.reached("before-publish",frozen.sessionUuid(),link.getFileName().toString());
-        var published=original.call(link,existing);
-        M7HomeProbe.reached("after-publish",frozen.sessionUuid(),link.getFileName().toString());
-        return published;
-    }
-
-    @WrapOperation(method="publishOrVerify",remap=false,require=1,at=@At(value="INVOKE",ordinal=1,remap=false,
-            target="Ldev/quantumchamber/persistence/HomeReceiptStore;verify(Ljava/util/Optional;Lnet/minecraft/nbt/NbtCompound;)V"))
-    private void quantumchamberTest$readback(Optional<?> actual,NbtCompound expected,Operation<Void> original,@Local(argsOnly=true) HomeSessionRecord frozen) {
-        original.call(actual,expected);
-        M7HomeProbe.reached("after-readback",frozen.sessionUuid(),null);
     }
 }

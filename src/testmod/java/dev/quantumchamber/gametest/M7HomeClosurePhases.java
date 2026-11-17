@@ -103,7 +103,7 @@ import org.slf4j.LoggerFactory;
  *     下一個 tick 由正式 {@code HomeClosure} 推進，走到該 cut 時寫 {@code halt.json}（CREATE_NEW＋force）並 {@code Runtime.halt(77)}。</li>
  * <li>{@code reopen}：新 JVM 開同一個世界，從磁碟續做，收尾後模擬玩家自己關 B 門、觀察不被舊旅程打開，正常停服（{@code final.json}）。</li>
  * </ul>
- * 預期終局由 {@link Row} 依 cut 推導（群組 A～D，見 SDD {@code t4b1-report.md}）；runner 與 {@code m7-home-probe.ps1} 各自核對同一張表。
+ * 預期終局由 {@link Row} 依 cut 推導（群組 A～D，見 SDD {@code t4b1-report.md}）；Java（本類）與 runner（{@code m7-home-probe.ps1}）各自核對同一張表。
  */
 final class M7HomeClosurePhases {
     static final Logger LOGGER = LoggerFactory.getLogger("quantumchamber-m7-home");
@@ -269,7 +269,6 @@ final class M7HomeClosurePhases {
         private String participantName;
         private ConnectedGameTestPlayer participant;
         private Map<String, Object> pose;
-        private Runnable releaseA = () -> { }, releaseB = () -> { };
         private Step step = Step.SETUP;
         private int stepTicks, ticks, cutHits;
         private boolean armed, finished, passed;
@@ -404,7 +403,7 @@ final class M7HomeClosurePhases {
             // A：M5 collapse probe 的原艙寫法（基岩外殼、bulkhead 門、Controller），不供電；參與者帶 QuantumState 在艙內，以正式 attemptArm 登記。
             overworld.getChunk(FRAME.controllerPos());
             placeChamber(overworld);
-            releaseA = M7HomeClosureGameTests.holdChunks(overworld, FRAME);
+            M7HomeClosureGameTests.holdChunks(overworld, FRAME);
             participantId = UUID.randomUUID();
             participantName = "m7-" + participantId.toString().substring(0, 8);
             participant = connect();
@@ -424,7 +423,7 @@ final class M7HomeClosurePhases {
             var pending = authorities.writeProjection(new ProjectionLedger.Entry(chamber, universe, DimensionRole.OVERWORLD, FRAME.controllerPos(),
                     FRAME.outwardFacing(), ProjectionLedger.Entry.Status.PENDING));
             index.confirmed(pending);
-            releaseB = M7HomeClosureGameTests.holdChunks(b, FRAME);
+            M7HomeClosureGameTests.holdChunks(b, FRAME);
             var written = ProjectionWriter.write(b, FRAME, ProjectionWriter.Mode.FIRST_WRITE);
             expect("projectionWritten", written.status() == ProjectionWriter.Status.WRITTEN, () -> "write=" + written);
             ((ChamberControllerBlockEntity) b.getBlockEntity(FRAME.controllerPos())).setInstanceKind(ChamberInstanceKind.PROJECTION);
@@ -450,6 +449,7 @@ final class M7HomeClosurePhases {
             setup.put("entryWorld", b.getRegistryKey().getValue().toString());
             setup.put("participant", Map.of("uuid", participantId.toString(), "name", participantName));
             setup.put("homeChunks", homeChunks);
+            setup.put("doorChunks", doorChunks());
             proof.put("setup", setup);
             step = Step.READY;
         }
@@ -589,8 +589,9 @@ final class M7HomeClosurePhases {
                     : flushed != null && expectedRow.equals(String.valueOf(flushed)) && flushed.equals(journal.allSessions().get(sid)),
                     () -> "flushed=" + flushed + " expected=" + expectedRow);
             // 兩側門格：開服時（正式 owner 還沒有推進）由磁碟載入的門。
-            releaseA = M7HomeClosureGameTests.holdChunks(overworld, FRAME);
-            releaseB = M7HomeClosureGameTests.holdChunks(b, FRAME);
+            // 測試票留到 JVM 結束（每個 phase 一個 JVM），不另外釋放。
+            M7HomeClosureGameTests.holdChunks(overworld, FRAME);
+            M7HomeClosureGameTests.holdChunks(b, FRAME);
             String diskDoor = row.doorCheckpointed() ? OPEN_NONE : row.initialDoorSummary();
             var bAtStart = doorSummary(b);
             expect("bDoorDiskState", diskDoor.equals(bAtStart) && (row.doorCheckpointed() || bAtStart.equals(text(baseline, "bDoorInitial"))),
@@ -775,9 +776,14 @@ final class M7HomeClosurePhases {
             return call;
         }
 
-        /** 本 phase 的正式 checkpoint：只寫 B 世界、chunk 集合等於 homeChunks、當下熱列仍在且 CLOSE 已凍結、門已是 OPEN/NONE。 */
+        /**
+         * 本 phase 的正式 checkpoint 呼叫：relevant 集合只含 B 世界、chunk 集合等於 homeChunks，而且涵蓋 B 門 25 格所在的每一個 chunk（{@link #doorChunks}，
+         * 以幾何獨立計算，不只拿 production 自己的 homeChunks 比，B1 審查 M2）；當下熱列仍在且 CLOSE 已凍結、門已是 OPEN/NONE。
+         * {@code ChunkSaveCheckpoint.save} 實際是全伺服器存檔，A 的 dirty chunk 也會寫出；A 不變只以 A 門格各時點等於基線證明，不宣稱 checkpoint 不寫 A。
+         */
         private boolean checkpointOk(Map<String, Object> call, boolean receiptPresent) {
             return JSON.toJsonTree(call.get("worlds")).equals(JSON.toJsonTree(List.of(Map.of("world", b.getRegistryKey().getValue().toString(), "chunks", homeChunks))))
+                    && homeChunks.containsAll(doorChunks())
                     && Boolean.TRUE.equals(call.get("activeClose")) && OPEN_NONE.equals(call.get("bDoor")) && Boolean.valueOf(receiptPresent).equals(call.get("receiptPresent"));
         }
 
@@ -871,6 +877,16 @@ final class M7HomeClosurePhases {
                 return pos.x + "," + pos.z;
             }).sorted().toList();
         } catch (ReflectiveOperationException failure) { throw new IllegalStateException("M7_HOME_CHUNKS_UNREADABLE", failure); }
+    }
+
+    /** B 門 25 格（{@code ChamberGeometry.localToWorld(FRAME, x, y, 0)}，x、y 為 1～5）所在的 chunks，依 {@code x,z} 排序；不經 production 的 homeChunks（B1 審查 M2）。 */
+    static List<String> doorChunks() {
+        var chunks = new java.util.TreeSet<String>();
+        for (int y = 1; y <= 5; y++) for (int x = 1; x <= 5; x++) {
+            var pos = new ChunkPos(ChamberGeometry.localToWorld(FRAME, x, y, 0));
+            chunks.add(pos.x + "," + pos.z);
+        }
+        return List.copyOf(chunks);
     }
 
     /** 門 25 格：全部相同時是 {@code 開關/膜}，否則 {@code MIXED}（沿 Phase A {@code Projection.doorSummary}）。 */
