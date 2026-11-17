@@ -37,7 +37,7 @@ import org.junit.jupiter.api.io.TempDir;
  *     PREPARE 類寫明保持 dirty、沒有 pending。</li>
  * </ul>
  * 收據不符的 ERROR（P1-M1）：收據檔路徑、處理方式、有變動時全服 journal 寫入已暫停；讀不出時寫「無法讀取或解析」，不寫成外部竄改，也不宣稱收據沒有被改過；
- * 去重鍵是 SID 加類別。
+ * 去重鍵是 SID 加類別，這個 SID 的收據核對通過時清除（T4 B2b-2，B2b1-M2）。
  * <p>atomic move 失敗以「目標是既存目錄」重現：Windows 的 {@code Files.move} 因此丟 {@code AccessDeniedException}（防毒或索引鎖檔時的同一個簽章），Linux 丟
  * {@code FileSystemException}；兩者都是真正的 {@code writePrepared} 失敗（possiblyMoved=true），不是假造的例外。
  */
@@ -304,6 +304,41 @@ class M7NativeSaveFailureTest {
         }
     }
 
+    /**
+     * T4 B2b-2（B2b1-M2）：收據 ERROR 的去重鍵在這個 SID 的收據核對（{@code verifyActive}）通過、也就是問題真的解除時清除。同一段不符期間核對一直失敗，
+     * 仍只記一則、不刷屏；修好之後同一個 SID 同一類再犯，會再記一則。以未變動的不符列重現：這類每次存檔都照原樣寫出成功，所以不能拿「寫出成功」當成解除。
+     * journal 另有一列沒有收據的 legacy 列，它的核對每次都通過；清除只限通過核對的那個 SID，不能連帶清掉不符列的鍵（否則同一段期間會重記）。
+     */
+    @Test void receiptErrorIsReportedAgainAfterTheReceiptIsFixed() throws Exception {
+        var frozen = M7HomeHistoryTest.closed(31);
+        var sid = frozen.sessionUuid();
+        var target = save.resolve("data/session.dat");
+        SessionJournalStore.write(target, M7BudgetSpikeTest.wrap(List.of(M7HomeJournalTest.other(), HomeJournalCodec.encode(frozen))));
+        new HomeReceiptStore(save).publishOrVerify(frozen);
+        var state = SessionRecoveryState.load(target); state.requireHealthy();
+        var path = receipt(save, sid);
+        byte[] published = Files.readAllBytes(path);
+        try (var logs = new Logs()) {
+            for (int period = 1; period <= 2; period++) {
+                NbtIo.writeCompressed(HomeReceiptStore.wrapper(M7HomeHistoryTest.closed(32)), path);
+                for (int round = 0; round < 2; round++) {
+                    state.markDirty();
+                    assertDoesNotThrow(() -> state.save(target.toFile(), null), "未變動的不符列不得讓原生存檔丟出");
+                    assertFalse(state.isDirty(), "未變動的不符列照原樣寫出");
+                }
+                var errors = texts(logs.sessionErrors(sid));
+                if (period == 1) assertEquals(1, errors.size(), "RECEIPT_ERROR_REPEATED：同一段不符期間只記一則：" + errors);
+                else assertEquals(2, errors.size(), "RECEIPT_ERROR_NOT_REPORTED_AGAIN：修好之後同一個 SID 同一類再犯，必須再記一則：" + errors);
+                assertTrue(errors.stream().allMatch(text -> text.contains("與熱列不符") && text.contains("這一列未變動")), errors.toString());
+                Files.write(path, published);
+                state.markDirty();
+                assertDoesNotThrow(() -> state.save(target.toFile(), null), "收據還原成原本發佈的那一份之後照常存檔");
+                assertEquals(period, logs.sessionErrors(sid).size(), "收據核對通過的存檔不記 ERROR");
+            }
+            assertEquals(frozen, new HomeReceiptStore(save).lookup(sid).orElseThrow(), "收據已還原成原本發佈的那一份");
+        }
+    }
+
     /** 本次有變動（未結案的熱列）旁出現同 SID 的收據檔：讀不出收據（目錄）時寫「無法核對」、不寫竄改；換成內容不同的收據後是「不符」，兩類各記一次。 */
     @Test void changedRowErrorsSeparateUnreadableFromMismatchAndSayWritesArePaused() throws Exception {
         var original = M7HomeJournalTest.measured(1);
@@ -346,8 +381,11 @@ class M7NativeSaveFailureTest {
         }
     }
 
-    /** 只收 {@code quantumchamber} logger 的 log4j appender；先送探針證明攔得到，不能以空結果冒充「沒有 ERROR」。 */
-    private static final class Logs extends AbstractAppender implements AutoCloseable {
+    /**
+     * 只收 {@code quantumchamber} logger 的 log4j appender；先送探針證明攔得到，不能以空結果冒充「沒有 ERROR」。
+     * 同 package 的 {@code SessionJournalSchemaFiveTest} 也用它斷言真實 PREPARE 失敗的 ERROR（T4 B2b-2，B2b1-M3）。
+     */
+    static final class Logs extends AbstractAppender implements AutoCloseable {
         private final org.apache.logging.log4j.core.LoggerContext context;
         private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
         Logs() {

@@ -404,7 +404,20 @@ class SessionJournalSchemaFiveTest {
             assertThrows(RuntimeException.class, disk::checkedSave);
             assertArrayEquals(before, Files.readAllBytes(disk.file)); assertEquals(checked, disk.state.flushedRecords()); assertTrue(disk.state.isDirty());
             // T4 P2：同一個寫出前檢查失敗在原生存檔不丟出，也不碰正式檔、保持 dirty（下一次存檔重試）。
-            assertDoesNotThrow(disk::save, "原生存檔的寫出前檢查失敗不得丟進原版存檔鏈");
+            // T4 B2b-2（B2b1-M3）：這是真實的 PREPARE 失敗（settings lease 已失效，編碼與 preflight 取不到 registry），不是反射製造的狀態；
+            // 原生存檔的 ERROR 必須記成 PREPARE 類、還沒有 pending、保持 dirty。
+            try (var logs = new M7NativeSaveFailureTest.Logs()) {
+                assertDoesNotThrow(disk::save, "原生存檔的寫出前檢查失敗不得丟進原版存檔鏈");
+                var errors = logs.nativeSaveErrors();
+                assertEquals(1, errors.size(), "PREPARE_ERROR_COUNT：原生存檔的寫出前檢查失敗記一則 ERROR：" + errors.stream().map(e -> e.getMessage().getFormattedMessage()).toList());
+                var text = errors.getFirst().getMessage().getFormattedMessage();
+                assertTrue(text.contains("編碼或寫出前檢查失敗"), "PREPARE_MISCLASSIFIED：真實的寫出前檢查失敗必須記成 PREPARE 類：" + text);
+                assertFalse(text.contains("journal 不健康") || text.contains("寫入正式檔失敗") || text.contains("讀回失敗") || text.contains("尚未確認（pending）"),
+                        "PREPARE_MISCLASSIFIED：" + text);
+                assertTrue(text.contains("journal 這次沒有寫出") && text.contains("pending=false") && text.contains("保持 dirty"), "PREPARE_DIRTY_TEXT：" + text);
+                assertTrue(FailureText.dedupeKey(errors.getFirst().getThrown()).contains("CONTEXT_UNAVAILABLE"),
+                        "PREPARE_CAUSE：ERROR 的 cause 是 lease 失效：" + FailureText.dedupeKey(errors.getFirst().getThrown()));
+            }
             assertArrayEquals(before, Files.readAllBytes(disk.file)); assertEquals(checked, disk.state.flushedRecords()); assertTrue(disk.state.isDirty());
             lease.valid = true; assertDoesNotThrow(disk::save);
             assertEquals(5, SessionJournalStore.read(disk.file).getCompound("data").getInt("SchemaVersion"));
