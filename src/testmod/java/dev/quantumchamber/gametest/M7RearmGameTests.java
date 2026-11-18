@@ -113,6 +113,8 @@ public final class M7RearmGameTests implements FabricGameTest {
     public void participant_close_latch_shows_idle_until_player_reclose(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var origin = Origin.open(c, hooks);
+        // T4A fix1：Ubuntu 上玩家親手關門之後的正式 start 走到原生 checkpoint 預檢被拒、記一則 WARN；去重記號是整個 server 共用的狀態，收尾時還原成本案開始前的值。
+        var checkpointMemo = CheckpointMemo.capture(hooks);
         var f = origin.f;
         var world = c.getWorld();
         var p = f.players.getFirst().player();
@@ -139,6 +141,8 @@ public final class M7RearmGameTests implements FabricGameTest {
                         return;
                     }
                     witness.put("noCheckpointPlatformStaysWithoutSession", !com.sun.jna.Platform.isWindows());
+                    // 解鎖之後的正式 start 確實走到原生 checkpoint 預檢（不是更早的拒絕）：本案開始時沒有去重記號時恰一則 WARN，已有記號時被去重、零則。
+                    witness.put("reclosedStartReachedTheCheckpointPrecheck", checkpointWarnings(origin.capture) == (checkpointMemo.prior() == null ? 1 : 0));
                     f.power();
                     origin.release();
                     c.assertTrue(!witness.containsValue(false), "參與者關門之後的比較器：" + witness);
@@ -287,6 +291,25 @@ public final class M7RearmGameTests implements FabricGameTest {
                 finish(c, f, hooks, witness, "/reload 之後");
             });
         });
+    }
+
+    /**
+     * T4A fix1：session manager 的原生 checkpoint 預檢 WARN 去重記號（{@code SuperpositionSessionManager.checkpointWarning}，整個 server 共用；只在預檢通過或停服時重設）。
+     * 建立時記下目前的值，hooks 收尾時以反射還原，只撤回本案造成的改變；production 的預檢本身每次入場都重新判斷，記號只影響 WARN 是否重複記錄。
+     * 不還原的話，之後的 {@code checkpoint_capability_remains_rejected_on_ubuntu} 看不到自己那一次入場的 WARN（CI 44259424086）。
+     */
+    private record CheckpointMemo(Object prior) {
+        static CheckpointMemo capture(M2CorridorGameTests.TestHooks hooks) {
+            var gateway = dev.quantumchamber.chamber.ChamberSessions.gateway();
+            var memo = new CheckpointMemo(M4CandidateTestAccess.get(gateway, "checkpointWarning"));
+            hooks.add(() -> M4CandidateTestAccess.set(gateway, "checkpointWarning", memo.prior()));
+            return memo;
+        }
+    }
+
+    /** {@code capture} 期間原生 checkpoint 預檢未通過的 WARN 數。 */
+    private static int checkpointWarnings(LogCapture capture) {
+        return capture.matching(Level.WARN, "玩家原生 checkpoint 能力預檢未通過").size();
     }
 
     /** NativeEntry 的正式 A（一位有 Buff 的玩家在艙內、門關著）：登記、以 collapse owner 的入口上鎖，再供電。 */
