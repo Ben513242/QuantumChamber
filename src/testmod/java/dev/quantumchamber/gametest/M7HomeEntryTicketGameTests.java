@@ -66,7 +66,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                 M7HomeClosureGameTests.until(c, label + "/unchecked", UNCHECKED_TICKS + 1, () -> {
                     unchecked.add(describe(journal, sid) + " lease=" + EntryTickets.describe(server, sid));
                     return unchecked.size() > UNCHECKED_TICKS;
-                }, () -> {
+                }, guard(p, hooks, () -> {
                     fail[0] = false;
                     witness.put("closeWasUncheckedDuringTheFault", unchecked.stream().skip(1).allMatch(line -> line.startsWith("current=CLOSE flushed=NONE rollForward=true")));
                     witness.put("noTicketBeforeTheCloseIsChecked", unchecked.stream().allMatch(line -> line.endsWith("lease=NONE")));
@@ -95,6 +95,10 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                         } catch (java.io.IOException failure) { p.close(); hooks.release(); throw new GameTestException("收據讀取失敗：" + failure); }
                     }), () -> pendingWithoutTicket(c, p, hooks, sid, label, "CLOSE_PENDING_WITHOUT_B_TICKET：CLOSE 已 checked、B 未載入時 " + CLOSE_TICKS
                             + " tick 內沒有收尾（B 無人無票就一直 pending）：row=" + describe(journal, sid) + " 票=" + seen + " unchecked=" + unchecked));
+                }), () -> {
+                    fail[0] = false;
+                    try { throw new GameTestException("UNCHECKED_WINDOW：觀察窗口沒有取滿 " + UNCHECKED_TICKS + " 個樣本：" + unchecked); }
+                    finally { p.close(); hooks.release(); }
                 });
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
