@@ -1,8 +1,190 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 進行中（見下節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見下節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
-## 最新：T4 Phase B 與 P1／P2 完成，待完整回歸與同 SHA CI（2026-11-17～18）
+## 最新：T4 CLOSED（2026-11-18）
+
+下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`，V 指 `.superpowers/verification/`，兩者都 gitignored。本節的事實讀自 S 的 `STATUS.md`（11:5x、11:1x、09:15、09:1x、08:4x 五段）、`user-t4-full-accessdenied-ruling-20261118.md`、`user-gameplay-analysis-ruling-20261118.md`、`t4-full-fail-investigation.md`、`gameplay-combination-analysis-20261118.md`、`t4-accept-check/`、`t4-closeout-docs-report.md`、`t4-closeout-final-docs-review.md`，V 的兩個 run-all root，以及 GitHub Actions 的 `gh run view --json jobs` 讀回。
+
+- **狀態**：T4 CLOSED。
+  - code pin `e28784c`，是最後一個 code commit。docs HEAD `72b3445` 只改文件：`git diff --stat e28784c 72b3445` 只列 AGENTS、本 note、plan、spec、`scripts/verification/README.md` 五個檔。origin 的 `codex/m7-return-home` 讀回是 `72b3445`。
+  - 完整回歸：第一次 FAIL，原判保留；依使用者 2026-11-18 09:14 第 1 題裁示換新 nonce 重跑一次，自然 `END ALL exit=0`，採計條件全部 PASS。
+  - 同 SHA CI：44207705353（`72b3445`）attempt 1 十個 job 全部 success；code pin 的 44198806056（`e28784c`）attempt 1 也是十個 job 全部 success。
+  - Phase A、Phase B 各段與 P1／P2 的審查都已清零，見下方歷史節。
+  - T4 結案不代表 M7 完成。main 合併、tag、人工代操作、worktree 退役仍各自另問使用者。
+
+### 完整回歸第一次 FAIL（原判保留）
+
+- holder `S/t4-full-holder-41b8aaae9a7a48499e6d4d4e94a2f46a` exit 1。run-all root `V/run-all-c1442b78de7c4b72ae1713408aba13d3`，HEAD `72b3445`，08:25:50 開始。第一個 gate `full`（gate root `gate-full-da1cad0e…`）記 `END full FAIL GameTest gate exit=1`，沒有 `END ALL`。
+  - default GameTest 第 10、16 案失敗；第 41 案執行中失敗後，T13 trusted owner 送出 STOP_REQUESTED，server 停服，沒有寫出 GameTest XML。所以第 10、16 案的確切失敗文字從原件取不到。
+- 起點（證實）：第 10 案 `m2corridorgametests.native_shared_entry_preserves_frozen_relative_pose_east_windows` 的候選 checked 提交遇到真實的 Windows atomic move AccessDenied。
+  - 簽章：`runtime-full.log:1806` 的 WARN「候選 checked 提交失敗 … journal checked 落盤失敗 …」，cause 是 `java.nio.file.AccessDeniedException`，目標是 `run\gametest\world\data\quantumchamber_sessions.dat.<nonce>.tmp -> quantumchamber_sessions.dat`。
+  - production 照既有規則 fail-closed：CAS 還原、租約等待安全返還，原 session `77fd5639` 已安全移除。
+- 連坐（因果鏈見調查報告第 2 節；第 10、16 案的確切失敗點是推論）：
+  - 第 10 案：拉桿仍在高位，同一座艙立刻開出第二個 session `a10cb6c6`。測試 callback 仍拿第一個 session 的 SID 處理而失敗（推論最可能是 `未知 session`）；這條失敗路徑不收尾，`a10cb6c6` 一直留在 SUPERPOSITION（占走廊 slot 0、帶 344 個 M6 NEW 候選），兩個假玩家也留在線上，直到停服。
+  - 第 16 案 `m4candidatedoorgametests.native_start_readback_fault_overwrites_unacknowledged_arming_and_dedupes_warning_windows`：testmod probe 以兩參數的 `SessionJournalStore.write` 寫整份 journal，這條路會拒絕帶 M6 NEW intent 的 snapshot（`M6 snapshot 缺少 server-bound validator`）。殘留的 `a10cb6c6` 讓 probe 寫不出（證實），推論是 `M4CandidateDoorGameTests.java:333` 的見證斷言失敗。
+  - 第 41 案 `m2corridorgametests.trusted_pin_cap_includes_players_and_items_windows`：入場條件是全部 Space 為空，殘留的 Space 讓這個條件 10 秒內都不成立，以 `pin-cap原有限等待逾時` 失敗。
+- 與 T4 改動的關係：調查找不到 T4 改動參與的證據。以下五項是證實，另兩項是推論：
+  - 原生存檔沒有任何 journal 寫入失敗（log 搜「原生存檔」「回程收據」都是 0 筆），P2 的原生存檔路徑沒有觸發；
+  - `M7NativeSaveFault` 沒有武裝，AccessDenied 的目標是真的 journal 檔，不含 `m7-t4p2-native-fault`；
+  - HOME 的 B1 mixin 沒有經過，journal 始終是 schema 5、沒有 HOME 列；
+  - 第 16 案依賴的 `REJECT_M6` 與第 10 案的測試收尾都是 M6 既有程式，M7 沒有改；
+  - 同一份 code 在 CI 44198806056 windows-native 的 default GameTest 是 166/166 PASS。
+  - 另有兩項是推論（其他 T4 production 與三案的路徑沒有交集；AccessDenied 本身找不到與 M7 的關聯），見調查報告第 3 節。
+- 分類：已知類型（Windows atomic move AccessDenied 加上失敗連坐）。觸發點屬環境因素，持鎖的程序從原件無法證明；找不到 M7 改動造成真實缺陷的證據。
+- 原 root 與 holder 都保留 FAIL，世界 `exactRestored=true`（S `STATUS.md` 09:15 段）。當時 M7 的 AccessDenied 額度 1/1 已用完，這次又混有連坐，M6 T14～T21 的單次重跑規則也不適用，所以 controller 停下交使用者裁示。
+
+### 使用者原文（2026-11-18 09:14）
+
+AskUserQuestion，題目與選項由 controller 撰寫；S 原文檔 `user-t4-full-accessdenied-ruling-20261118.md`。原文檔的背景段是 controller 寫的說明，不是使用者原文。
+
+- 第 1 題（header「T4 重跑」）「T4 完整回歸失敗的起點是 Windows 存檔時檔案被鎖住（AccessDenied），後面兩案是被它連帶拖垮的。M7 的重跑額度已經用完，要怎麼處理？」
+  - 使用者選「換新 nonce 重跑一次（建議）」。選項說明原文：「保留失敗的原 root。起點是已知的環境問題，和 T4 改動無關；同一份程式碼在 CI 上兩次都通過。連帶失敗的測試缺口記下來，交給 T5 Step 0 處理。」
+  - 未選：「先修測試缺口再重跑」、「先停在這裡」。
+- 第 2 題（header「日後規則」）「M7 之後如果完整回歸又只遇到 AccessDenied（沒有其他失敗），要不要訂一條固定規則？」
+  - 使用者選「比照 M6，每個 code pin 一次（建議）」。選項說明原文：「只限唯一失敗是 AccessDenied、沒有混其他失敗的情況。保留原 root，換新 nonce 重跑一次，不用再問；同一 pin 第二次發生就停下來回報。」
+  - 未選：「維持每次都問」。
+- controller 的執行說明（不是使用者裁示）：
+  - 本次重跑用掉第 1 題授權的一次；這次若再 FAIL（任何簽章），就停下回報，不再重跑。
+  - 第 2 題的規則從裁示時起適用於 M7 之後的完整回歸。本次 FAIL 混有連坐，不屬第 2 題範圍，是由第 1 題授權重跑。（「M7 之後」的範圍，使用者已在同日 11:5x 第 4 題確認，見下方「遊玩條件組合分析與使用者裁示」。）
+  - 連坐缺口列入 T5 Step 0（見下方清單）。
+  - 只改 docs 不重置同一 code pin 的次數（比照 M6 規則原文）。
+
+### 重跑（依 09:14 第 1 題，換新 nonce）
+
+- holder `S/t4-full-holder-d07e74ac8e3043689c0cc2f471edb1c9`：holder PID 21672、run-all PID 40576，01:15:51Z 開始，`CHILD_CODEPAGES=65001,65001,65001`，`exit.txt` 為 0。腳本副本的 SHA 與前次相同（S `STATUS.md` 09:15 段，`5AC80EDD…`）。
+- run-all root `V/run-all-5c0458b73555465bafbade703b7df4c0`，HEAD `72b3445`。09:15:51 開始，11:04:24 自然 `END ALL exit=0 HEAD=72b3445154bff9cf6a5cfb5a710d0fb94e97407d`；console 沒有任何 `END … FAIL`。本筆讀回時 `console.log` 的 SHA-256 是 `0D5B9D2F…D0F7`，`summary.json` 是 `D7E0A44F…42C8`。
+- `SUMMARY` 行（逐字）：
+
+  ```
+  SUMMARY default=166/166 windows=76 legacy=1/1 m5=60/60 m6=35/35 m6pace=37.8 normal=13/13 perTest=43+13+1 junit=1194 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=632entries/585classes sources=275 testmodHits=0 mainOnly=PASS m3=4+5 recovery=25 m5collapse=69 m6native=DIAGNOSTIC:2,FUNCTIONAL:25 ci=win:PASS,ubuntu:PASS m7native=COMPLETE:46 m7scale=PASS:11
+  ```
+
+- 其他關鍵行，都帶 `HEAD=72b3445…`：
+  - `M6_NATIVE_VERIFIED PASS chains=9 phases=27 negativeChecks=479`；
+  - `M7_VERIFIED PASS platform=Windows junit=48 gametest=29`（launched True、False 各一行）；
+  - `M7_SCALE_VERIFIED PASS platform=Windows junit=11`（launched True、False 各一行）；
+  - `M7_HOME_VERIFIED_COMPLETE PASS rows=46 phases=92 negativeChecks=376 selection=all`。
+- B2b-5 的 `m7-scale` step 與 `summary.json` 的 `m7HomeScale` 在這次第一次實跑；B2b-4 的 `m7HomeNative` 也在這次取得真實的 46 列 COMPLETE 正例。
+- 這次 full gate log 裡的 `AccessDeniedException`，只出自刻意製造的案例（M5 H3 受控 readback、`m2_final_flush` 持 handle）。
+- P2-M7 的提醒：run-all root 內各 gate 的 runtime log（`latest.log`、`runtime-*.log`），原生存檔 ERROR（「原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗」）只出現在 M7 gate 的刻意注入案；default、legacy、M4 normal、M5、M6 GameTest 的 log 都是 0 則。M4 recovery、M5 collapse 與 M6／M7 原生列的 runtime log 不在 run-all root 內，本筆沒有核對。
+- 原「下一步」第 2 點要另外確認的項目：
+  - Phase A 審查指定由完整回歸涵蓋的共用 setter（`setEnabled`、`removeOrigin`），沒有造成任何 gate 失敗；
+  - artifact oracle 是 `testmodHits=0`、`mainOnly=PASS`；`M7HomeFenceStartupProbe` 不進 release 或 main-only，是以這兩項判讀；
+  - B1、B2a 的 mixin 與 probe 套用到所有 testmod run 之後，default、M5、M6 GameTest、M4 recovery、M5 collapse、M6 native、main-only 都通過。
+
+### 採計條件
+
+- 條件來源：S `t4b2b3-review.md`「B2b-4 審查」第 2 節，加上「B2b-5 審查」第 4 節的延伸。
+- controller 以唯讀腳本逐項核對，25 項全 PASS（`ACCEPT_FAILS=0`），另 controller 唯讀 `-VerifySummary -RequireComplete -SelfTest` 一次（見本節最後一點）。原件在 S `t4-accept-check/`：`t4-accept-check.ps1`（SHA-256 `e9d08ca3cead9d64…`）、`t4-accept-check-result.json`（SHA-256 `00134520aeb109ac…`）。核對內容（`<pin>` 指 run-all 的 HEAD `72b3445`，它的 code 與 `e28784c` 相同，只多 docs）：
+  - 乾淨 code pin：console 第 2 行 `STATUS ` 後面是空的，tracked tree 乾淨。這一項由 controller 讀 console 確認，不在 25 項腳本內；
+  - `END ALL exit=0 HEAD=<pin>` 恰一行，沒有 `END … FAIL`；
+  - `m7HomeNative` 為 COMPLETE、46 列、92 phase，記錄的 SHA 與重算一致（`m7-home-run-59ae9ca48825.json`，`F1AB34D4…AE5F`）；
+  - console 有 `HEAD=<pin>` 的 46 列 COMPLETE verify 行、`END m7-home-native exit=0`、`negativeChecks=376` 的 COMPLETE 行；
+  - `SUMMARY` 行尾有 `m7native=COMPLETE:46` 與 `m7scale=PASS:11`；
+  - `END m7-home exit=0`，`M7_VERIFIED PASS … junit=48 gametest=29`；
+  - `END m7-scale exit=0`，launched 與 VerifyOnly 兩行 `M7_SCALE_VERIFIED PASS`；
+  - `m7HomeScale` 的 scope、status、head 相符，11 案等於 inventory 的 `scale.portable.junit`；`m7Home.junitCases` 恰 48 個、不含 `M7HomeHistoryScaleTest`，兩者聯集 59；
+  - 規模段的 `execution.json` 為 600／90、`phaseDeadline` 為空，`command` 只有一個 `--tests`；M7 gate 的 `execution.json` 不含規模測試。
+- controller 另對原生 summary 唯讀跑 `-VerifySummary -RequireComplete -SelfTest`：`M7_HOME_VERIFIED_COMPLETE PASS rows=46 phases=92 negativeChecks=376`，前後 hash 不變，tracked tree 乾淨（S `STATUS.md` 11:1x 段）。
+
+### 同 SHA CI
+
+本筆以 `gh -R Ben513242/QuantumChamber run view <id> --json jobs` 讀回。
+
+| run | head | 結果 | 說明 |
+| --- | --- | --- | --- |
+| 44207705353 | `72b3445` | attempt 1，event push，十個 job 全部 success | build、m7-validation（Ubuntu、Windows）、m7-home-native 四片（ordinary、sealed、passable、restart-receipt）、m7-home-native-aggregate、m6-native、windows-native。最晚完成的是 windows-native（00:25:37Z→01:11:40Z） |
+| 44198806056 | `e28784c` | attempt 1，event push，十個 job 全部 success | code pin 本身的 CI，耗時見下方歷史節的 CI 表 |
+
+### plan Task 4 核取框
+
+判定規則（controller 的派工要求，不是使用者裁示）：完全達成才勾；有偏離（做法改變、項目交後續、依裁示取消），或找不到具名測試、原件證實的子項，就不勾，在該行末註明。12 項中勾 4 項（:263、:267、:268、:272），8 項不勾：
+
+- :253 RED：`permanent_seal_cannot_be_archived` 的 RED 不成立（T2 的 `HomeSessionRecord` 已拒絕），改以 JUnit `permanentSealCannotBeArchived` 守門加 Phase A M4 mutation；`restart-enable-before-entry` 的跨 JVM 部分以 B2a 原生列加 rm1、rm2 mutation 證明，不是在舊 production 上取得的 RED。
+- :255：「UNKNOWN 不 mint ROOT」只有程式（`HomeRootFence.java:116`），Phase A 審查只概括寫「開服 fence 核實」、沒有點名 UNKNOWN 分支，也沒有具名測試；開服掃描遇到 destroyed 與 exact 撤銷的分支也沒有具名測試（disabled 有 B2a 原生主鏈）。
+- :257：「結構觀測」的通知沒有 production 呼叫端（Phase A 審查 M6，交 T5／T6）。
+- :259：「普通缺載 B 保持 pending」在 T4 以測試票保持 B 的區塊（B1 假設 (c)），要等 T5 以正式 B 來源票重驗。
+- :261：ENTRY_STOPPED 的 LOW／INVALID 正式 mint 路徑沒有呼叫端（B 端在 T6），沒有 GameTest 驅動與 mutation。
+- :265：原生列以測試票保持 B 的區塊，T5 要以真票重驗。
+- :270：「再操作 B」以 journal 的 MEASURED→COLLAPSING 提交邊代表（B2a-M3，交 T5／T6）。
+- :274：沒有用候選 commit `feat: 持久完成回程終局並重建停用防線`，改成各段分開 commit；其餘結案條件都已完成。
+
+勾選項的具名證據：
+
+- :263：GT `ordinary_closed_door_needs_native_checkpoint`、`sealed_door_closes_out_as_ordinary_open`、`passable_door_closes_out_as_ordinary_open`、`participant_close_keeps_door_open_when_doorway_occupied`、`participant_close_closes_door_when_doorway_clear`、`checkpoint_failure_keeps_close_and_lock`、`existing_receipt_mismatch_keeps_lock`、`published_receipt_mismatch_keeps_lock`、`ownerless_membrane_yields_to_home_busy`；原生 39 列的交接順序斷言（checkpoint 當下 CLOSE 已凍結、門已是 OPEN/NONE，S `t4b1-review.md` §2）、B 門 chunk 的 `M7_HOME_CHECKPOINT_DOOR_CHUNKS`、原生列 `receipt-player-closed`。
+- :267：S `t4b1-report.md`，runner 沿用 `probe-common.ps1`，PID＋啟動時間、receipt hash、VerifySummary＋SelfTest（319 個負控）。「沒有 T1 PoC、不另做退休提交或 CI」見本 note 歷史節 T1 收斂裁示；「既有 M6 標準不改」：T4 範圍內 `probe-common.ps1` 與 `m6-*` 腳本沒有 commit，重跑 console 仍是 `M6_NATIVE_VERIFIED PASS chains=9 phases=27 negativeChecks=479`。
+- :268：該行既有註記寫明完整回歸與 CI 通過後才勾，條件已成立。
+- :272：六項各有 KILLED 並逐位元還原的 direct mutation，gate root 與 XML 見 S `t4b2a-report.md` 階段 4b。
+
+### 殘留交 T5 Step 0
+
+T5 Step 0 要處理：
+
+1. 連坐缺口兩處，都是 M6 既有的 testmod 缺口；依 09:14 第 1 題選項說明「連帶失敗的測試缺口記下來，交給 T5 Step 0 處理」。修法由 T5 Step 0 決定，本筆不預設。
+   - `sharedEntry` 外層的失敗不收尾：`M2CorridorGameTests.java:1979-2002` 的 `when(… fixture::activeReady, publishedTick -> {…})` callback 沒有 try/catch，只有內層 `runAtTick(publishedTick+25)` 失敗時會 `fixture.close()`；8-H 的 NativeEntry 自清只涵蓋等待逾時，不涵蓋斷言失敗或例外。
+   - readback probe 受其他案例殘留影響：`M4CandidateDoorGameTests.java:333` 一帶。probe 以兩參數的 `SessionJournalStore.write` 寫整份 journal，遇到他案殘留的 M6 列就丟例外；失敗後只走 `hooks.releaseAfter`，沒有 `fixture.close()`。
+2. B2b5-M1：M7 JUnit 的宣告掃描只認 `@Test void`。只用其他寫法、又沒列進 inventory 的新 `M7*Test` 類別，兩段都不會執行；要補類別層級的核對與負例。
+3. B2b5-M2：CI 規模段的新 step 沒有 `timeout-minutes`，Main 失敗時規模段會被連帶跳過。審查建議執行 step 20 分、驗證 step 10 分，要互不連坐可加 `if: ${{ !cancelled() }}`。
+4. `SessionRecoveryState.java:1027` 的註解寫「T4 P2 使用者裁示 2」，指執行緒與 owner 守門照舊丟出。這其實是 controller 的決定，要改正歸屬（見下方歷史節「production 註解的歸屬」）。
+5. B2b2-M1：SelfTest 上限 479 的餘量策略。門態組合目前是 426，每多一列原生多 8 個逐列負控，約第 53 列會超過；T5～T8 加原生列前要先定策略，需要超過 479 時交使用者裁示。
+
+原 note「帶到後續」已交 T5（或 T5／T6）的項目，T5 開工時一併處理或決定（原文見下方歷史節，不刪）：
+
+6. B1 假設 (c)：T5 有正式 B 來源票之後，以真票重驗，並確認重開時 B 無人無票會保持 pending（spec §5.3 :173）。
+7. B2a-M3：`restart-enable-before-entry` 的「再操作 B」在 T5／T6 有正式 B 端續行後，以真實 B 端操作重跑；是否補進 plan Task 5／6 的核取項，T5 開工時決定。
+8. Phase A 審查 M6：選定後重驗 A 時，要呼叫 `checkRoot` 與 `onRootEvent(INVALID_STRUCTURE/IDENTITY_MISMATCH)`（交 T5／T6）。
+9. 呼叫端持有同 SID guard 的限制（交 T5／T6）：T6 的 B 門攔截不得包在同 SID 的 guard 內，GameTest 要走真實的門路徑；`onEntryStopped` 的 LOW／INVALID 正式 mint 路徑目前沒有 GameTest 驅動與 mutation。
+10. Phase A 審查 M7：每個 Projection 案例都物化 U 而且不卸載，後續測試不得斷言絕對世界數。
+
+原本交 T5 Step 0 的 B2b4-M1 已在 B2b-5 處理，不再列入。
+
+### 計數
+
+- AccessDenied：改用 09:14 第 2 題的新規則。只限完整回歸唯一失敗是 Windows atomic move AccessDenied、沒有混其他失敗，且 production 仍 fail-closed／退避（這個前提依 M6 原文補上，是 controller 的解讀）；保留原 root，換新 nonce 重跑一次，不用再問；同一 code pin 第二次就停下回報。混有其他 FAIL 不適用，停下回報。
+  - 範圍：使用者 11:5x 第 4 題選「M7 從現在起適用（建議）」，選項說明原文「M7 剩下的 T5～T8 都照這條。」（題目原文見下方「遊玩條件組合分析與使用者裁示」）。
+  - 其餘條款（不授權改 production／OS／oracle、不豁免完整回歸與同 SHA CI、只改 docs 不重置次數）比照 M6 T14–T21 規則原文；這是 controller 對「比照 M6」的解讀（S `user-gameplay-analysis-ruling-20261118.md` 的 controller 執行說明第 4 點），不是使用者裁示。
+  - `e28784c`（controller 的決定，不是使用者裁示）：它的 AccessDenied 已由 09:14 第 1 題授權的那次重跑處理；同一 pin 若再發生，視為第二次、停下回報。之後的新 code pin 各自一次。
+  - 規則全文見 AGENTS「M7 Windows atomic-move AccessDenied 單次重跑規則（使用者 2026-11-18）」。下方歷史節與 T2、T3 各節記的舊規則（M7 AccessDenied 額度 1/1 已用完、不刷新，再遇到就停下來問使用者）保留為當時的規則，已被新規則取代。
+- 完整回歸啟動器歷史 2/3 不變。第一次 FAIL 是 runtime 的 AccessDenied 與連坐，不是啟動器問題（S `STATUS.md` 08:4x 段；該段「這不是 AccessDenied」已在 09:1x 段更正）。
+- `participantCloses` fixture 與 T3 `only_exact` fixture：沒有新的非預期失敗。第一次完整回歸停在 full gate，沒有跑到 M7 gate；重跑的 M7 gate 與兩次 CI 的 m7-validation 都 PASS。兩者的規則照舊。
+
+### 遊玩條件組合分析與使用者裁示（2026-11-18）
+
+- 分析：使用者 2026-11-17 10:17 要求的只讀分析（原文見下方歷史節「使用者原文」），報告在 S `gameplay-combination-analysis-20261118.md`（HEAD `72b3445`）。
+- controller 抽查證實兩項（S `user-gameplay-analysis-ruling-20261118.md` 背景段）：
+  - 永久 SEALED 的艙拆不掉：`SuperpositionSessionManager.java:115`、`ChamberPowerCoordinator.java:212-216`、`ChamberLifecycleService.java:32`；
+  - 停用沒有權限檢查：`ChamberMaintenanceInteraction.java:77-91`。
+  - 報告中其餘標「推論」的項目沒有實機確認。
+- 使用者裁示（2026-11-18 11:5x，AskUserQuestion，題目與選項由 controller 撰寫；S 原文檔 `user-gameplay-analysis-ruling-20261118.md`）：
+  - 第 1 題（header「再出發」）「回程到家、或參與者關門取消之後，如果艙仍有電、門關著、玩家藥效還在，現在會立刻再出發。要改成怎樣？」
+    - 使用者選「要玩家親手重新關門（建議）」。選項說明原文：「家艙 A 和投影端 B 一致：系統代關的門不算，要有玩家親手關門一次才會再出發。同時修正 M6 已出貨的「取消後立刻再出發」。放 M7，改動小。」
+    - 未選：「要斷電再供電一次」、「維持現狀」。
+  - 第 2 題（header「B 門歸屬」）「回程進行中（從投影端 B 出發回家），B 的門現在任何人都能開關。要怎麼管？」
+    - 使用者選「比照原艙門（建議）」。選項說明原文：「回程期間由 session 管：參與者在 B 關門就是取消回程（包括等家艙載入的期間），非參與者開關一律拒絕。」
+    - 未選：「只擋外人」、「照一般門」。
+  - 第 3 題（header「其餘分類」）「分析的其餘項目，照建議分類處理嗎？」
+    - 使用者選「照建議分類（建議）」。選項說明原文：「M7 加兩項：回程收尾時替 B 取有界票（避免全員回家後家艙永遠鎖住）；永久封存的艙給一條最小解除路徑。停用與拆除權限、離線參與者、原地重建艙、等待上限與狀態提示放 M8。PREPARE 無限等待、投影清空容器、不調整 Y 只記為已知行為。」
+    - 未選：「M7 只加替 B 取票」、「這兩項也延到 M8」。
+  - 第 4 題（header「規則範圍」）「剛才訂的 AccessDenied 規則，我題目寫「M7 之後」，有兩種讀法。你指的是哪個？」
+    - 使用者選「M7 從現在起適用（建議）」。選項說明原文：「M7 剩下的 T5～T8 都照這條。」
+    - 未選：「M7 結束後才適用」。
+- controller 的執行說明（不是使用者裁示）：
+  - 第 1～3 題會改變 M7 範圍：先修 spec（v1.6）與 plan，經獨立審查 C/I 清零，才派 T5。具體設計（重新關門的判定、B 門攔截的範圍、B 取票的上限、永久 SEALED 最小解除路徑的形式）由 controller 依裁示起草，審查時逐一對照選項說明。
+  - 第 1 題要修 M6 已出貨行為，屬 production 改動，走完整門檻。
+  - 第 3 題列為放 M8 與只記為已知行為的項目，會寫進 M7 note 與 spec 的範圍外清單，M7 不實作。
+  - 第 4 題的落地見上方「計數」。
+- 本筆沒有改 spec，也沒有改 plan 的任務內容，第 3 題的範圍外清單也還沒寫進本 note 的「不在 M7 範圍」節；這些在下一步的 spec v1.6 與 plan 修訂一起處理。
+
+### 下一步
+
+1. 本筆結案 docs 的一席文件審查；清零後 commit、正常 push。這筆 docs commit 的 CI 終局先記在 S，下次文件提交收錄，不為寫回 CI 另外觸發 CI。
+2. 依 11:5x 第 1～3 題修 spec v1.6 與 plan，經獨立審查 C/I 清零。
+3. 之後才派 T5（含上方的 T5 Step 0 清單），依修訂後的 plan Task 5 實作。
+   - 先修 spec 與 plan、再派 T5，是 controller 的排序，不是使用者裁示。
+4. main 合併、tag、人工代操作、worktree 退役、PR、LICENSE 仍各自另問使用者。
+
+## 歷史：T4 Phase B 與 P1／P2 完成，待完整回歸與同 SHA CI（2026-11-17～18）
 
 下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`（gitignored，是本節數字與 SHA 的唯一來源，見 `S/STATUS.md` 與各 `t4*-report.md`、`t4*-review.md`）。
 

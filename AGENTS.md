@@ -85,7 +85,7 @@ milestone implementation → automated gates → required manual smoke → task�
 
 **T14–T21 Windows atomic-move AccessDenied單次重跑規則（使用者2026-11-10）：** 某code pin的full唯一失敗為Windows原子移動AccessDenied簽章，production仍fail-closed／退避且沒有其他FAIL時，保原root/FAIL，用新nonce可重跑一次、不必再問；同一pin第二次發生立即停報，不再重跑。其他簽章或混有其他FAIL不適用。只docs變更不重置相同code的重跑次數，不得以換docs SHA迴避止損。這不授權改production／OS／oracle，也不豁免完整full與同SHA CI。
 
-**判定說明補充（controller，不是使用者裁示）：** M7 T4 P2（2026-11-17）之後，真實的 Windows atomic move AccessDenied 若發生在 journal 檔（`quantumchamber_sessions.dat`）的原生存檔（autosave、`/save-all`、停服，或 `ChunkSaveCheckpoint` 內的 `server.save`），不再讓伺服器崩潰，也不會留下 `Exception stopping the server`；它的樣貌是一則 ERROR（marker `QUANTUMCHAMBER_COLLAPSE_TICK`），開頭是 `原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗：寫入正式檔失敗`，cause 鏈含 `AccessDeniedException`，同一段失敗期間只記一則。checked 寫入遇到 AccessDenied 的既有樣貌（例如 M5 GameTest 的 `WRITE_FAILED`）不變。M7 GameTest gate 與 M7 原生列的 log 另有刻意注入的 `AccessDeniedException`，路徑含 `m7-t4p2-native-fault`（`M7NativeSaveFault` 把寫出目標導向既存目錄），不能算真實簽章。這段只說明怎麼辨識簽章，上面的規則本文不變；上面那條重跑規則的適用範圍仍是 M6 T14～T21，M7 的 AccessDenied 額度以 M7 note 的「計數」為準。
+**判定說明補充（controller，不是使用者裁示）：** M7 T4 P2（2026-11-17）之後，真實的 Windows atomic move AccessDenied 若發生在 journal 檔（`quantumchamber_sessions.dat`）的原生存檔（autosave、`/save-all`、停服，或 `ChunkSaveCheckpoint` 內的 `server.save`），不再讓伺服器崩潰，也不會留下 `Exception stopping the server`；它的樣貌是一則 ERROR（marker `QUANTUMCHAMBER_COLLAPSE_TICK`），開頭是 `原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗：寫入正式檔失敗`，cause 鏈含 `AccessDeniedException`，同一段失敗期間只記一則。checked 寫入遇到 AccessDenied 的既有樣貌（例如 M5 GameTest 的 `WRITE_FAILED`）不變。M7 GameTest gate 與 M7 原生列的 log 另有刻意注入的 `AccessDeniedException`，路徑含 `m7-t4p2-native-fault`（`M7NativeSaveFault` 把寫出目標導向既存目錄），不能算真實簽章。這段只說明怎麼辨識簽章，上面的規則本文不變；上面那條重跑規則的適用範圍仍是 M6 T14～T21，M7 的 AccessDenied 額度以 M7 note 的「計數」為準。M7 自 2026-11-18 起另有同構的規則，見「目前接手入口」的「M7 Windows atomic-move AccessDenied 單次重跑規則（使用者 2026-11-18）」。
 
 1. 先讀 binding spec、implementation plan、SDD ledger，以及「目前接手入口」指定的文件。`docs/handoffs/` 是歷史紀錄；除非接手入口明確指向，否則不作為接手依據。
 2. 使用 Subagent-Driven Development：一個 implementer完成一個task或fix round，之後必有獨立task reviewer。
@@ -121,7 +121,32 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-18 最新：T4 Phase B 與 P1／P2 完成，各段審查清零（B2b-5 C0/I0/M2）；下一步 T4 完整回歸與同 SHA CI。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「T4 Phase B 與 P1／P2 完成，待完整回歸與同 SHA CI」節。
+**2026-11-18 最新：T4 CLOSED。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T4 CLOSED（2026-11-18）」節。
+- code pin `e28784c`；docs HEAD `72b3445` 只改文件，origin 讀回相同。同 SHA CI 44207705353（`72b3445`）與 code pin 的 44198806056（`e28784c`），attempt 1 都是十個 job 全部 success。
+- 完整回歸：
+  - 第一次 `run-all-c1442b78…` FAIL，原判保留。起點是第 10 案的真實 Windows atomic move AccessDenied，第 16、41 案是連坐；調查找不到 T4 改動參與的證據（其中兩項是推論，見 note）。
+  - 使用者 2026-11-18 09:14 第 1 題選「換新 nonce 重跑一次（建議）」。重跑 `run-all-5c0458b7…` 自然 `END ALL exit=0`，`m7native=COMPLETE:46`、`m7scale=PASS:11`，採計條件全部 PASS。
+- 使用者 2026-11-18 09:14 第 2 題選「比照 M6，每個 code pin 一次（建議）」，成為下方的「M7 Windows atomic-move AccessDenied 單次重跑規則」。
+- 殘留交 T5 Step 0：連坐缺口兩處（M6 既有）、B2b5-M1、B2b5-M2、`SessionRecoveryState.java:1027` 的註解歸屬、B2b2-M1（SelfTest 上限 479，目前 426）；原 note 已交 T5（或 T5／T6）的項目一併列在 note 的清單。
+- plan Task 4 的 12 個核取框勾 4 個；8 個有偏離、交後續或缺具名證據，不勾，並在行末註明。
+- 計數：
+  - AccessDenied 改用新規則；`e28784c` 已由第 1 題授權重跑處理，同一 pin 再發生視為第二次、停報（controller 的決定）；
+  - 完整回歸啟動器歷史 2/3 不變；
+  - `participantCloses` fixture 與 T3 fixture 的規則照舊。
+- 遊玩條件組合分析已完成（M7 SDD `gameplay-combination-analysis-20261118.md`）。使用者 2026-11-18 11:5x 四題都選建議項：回家或取消後要玩家親手重新關門才再出發；回程期間 B 門比照原艙門；其餘照建議分類（M7 加 B 有界票與永久 SEALED 最小解除路徑）；AccessDenied 規則 M7 從現在起適用。原文見 note「遊玩條件組合分析與使用者裁示」。
+- 下一步：本筆結案 docs 一席審查、commit、push → 依 11:5x 第 1～3 題修 spec v1.6 與 plan、獨立審查清零 → 派 T5（含 T5 Step 0）。這是 controller 的排序，不是使用者裁示。main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**M7 Windows atomic-move AccessDenied 單次重跑規則（使用者 2026-11-18）：** 題目「M7 之後如果完整回歸又只遇到 AccessDenied（沒有其他失敗），要不要訂一條固定規則？」，使用者選「比照 M6，每個 code pin 一次（建議）」。選項說明原文：「只限唯一失敗是 AccessDenied、沒有混其他失敗的情況。保留原 root，換新 nonce 重跑一次，不用再問；同一 pin 第二次發生就停下來回報。」原文檔：M7 SDD `user-t4-full-accessdenied-ruling-20261118.md`，題目與選項由 controller 撰寫。
+- 與「開發與 review 流程」的 M6「T14–T21 Windows atomic-move AccessDenied單次重跑規則」同構：唯一失敗是 AccessDenied 簽章、沒有其他 FAIL，且 production 仍 fail-closed／退避（這個前提選項說明沒有寫，依 M6 原文補上，是 controller 的解讀）；保留原 root；換新 nonce 重跑一次，不用再問；同一 pin 第二次就停報；混有其他 FAIL 不適用。
+- 範圍：同日 11:5x 第 4 題「剛才訂的 AccessDenied 規則，我題目寫「M7 之後」，有兩種讀法。你指的是哪個？」，使用者選「M7 從現在起適用（建議）」。選項說明原文：「M7 剩下的 T5～T8 都照這條。」原文檔：M7 SDD `user-gameplay-analysis-ruling-20261118.md`。
+- controller 的解讀與決定（不是使用者裁示）：
+  - 其餘條款（不授權改 production／OS／oracle、不豁免完整回歸與同 SHA CI、只改 docs 不重置次數）比照 M6 T14–T21 規則原文，這是 controller 對「比照 M6」的解讀（11:5x 原文檔的 controller 執行說明第 4 點）；
+  - `e28784c` 的 AccessDenied 已由 09:14 第 1 題授權的那次重跑處理，同一 pin 若再發生，視為第二次、停下回報；之後的新 code pin 各自一次。
+- 簽章的辨識方式見「開發與 review 流程」的判定說明補充；該段寫明 M7 GameTest 與原生列刻意注入、路徑含 `m7-t4p2-native-fault` 的不算真實簽章。
+- 2026-11-18 T4 完整回歸那次 FAIL 混有連坐，不屬本規則，是由同日 09:14 第 1 題的單次授權重跑。
+- 本規則取代下方各節的舊規則：M7 AccessDenied 額度 1/1 已用完、不刷新，再遇到就停下來問使用者（各節原文用詞不完全相同）；舊文保留為歷史。
+
+**（歷史）2026-11-18：T4 Phase B 與 P1／P2 完成，各段審查清零（B2b-5 C0/I0/M2）；下一步 T4 完整回歸與同 SHA CI。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「T4 Phase B 與 P1／P2 完成，待完整回歸與同 SHA CI」節。
 - HEAD `e28784c`（已 push）；`926425c` 的 CI 44117707536 與 `e28784c` 的 CI 44198806056，十個 job 都全部 success（都是過程中的 CI，T4 結案以最終 SHA 為準）。Phase B 拆成 B0、B1、B2a、B2b-1～B2b-5，P1、P2 是期間插入的 production 修正輪；這個切分是 controller 的決定，不是使用者裁示。
 - 使用者 2026-11-17～18 另有四份裁示或要求，原文見 note：
   - 2026-11-17 10:17 遊玩條件組合分析要求：使用者還沒回覆時機，controller 建議在 T4 結案後、T5 開工前做；
@@ -131,7 +156,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 - Phase B 期間的 production 改動：`HomeClosure`（B0）、`SessionRecoveryState`（P1、P2、B2b-1、B2b-2）、`HomeReceiptStore`（B2b-2；B2b-3 只改 Javadoc）、`ChunkSaveCheckpoint`（B2b-1，只改 Javadoc）。
 - 驗證面：Windows 原生 M7 home 共 46 列；CI 新增 `m7-home-native` 四片與 `m7-home-native-aggregate`；run-all 新增 `m7-home-native` step 與 `summary.json` 的 `m7HomeNative`。B2b-5 起，M7 gate 不再執行 `M7HomeHistoryScaleTest`（junit 48），規模測試另成一段（junit 11）：本機 `gates.ps1 -Mode M7ScaleTest`、run-all 的 `m7-scale` step 與 `m7HomeScale`、CI `m7-validation` 兩平台新增的 step。管理員遇到回程收據與熱列不符時的處理方式，見 `scripts/verification/README.md`「管理員說明：回程收據與熱列不符」。
 - 計數保留：
-  - AccessDenied 1/1 已用完、不刷新，完整回歸啟動器歷史 2/3：Phase B 沒有跑完整回歸，沒有變動。T4 完整回歸若出現 AccessDenied 或下一次非預期的啟動器失敗，就停下來問使用者；
+  - AccessDenied 1/1 已用完、不刷新，完整回歸啟動器歷史 2/3：Phase B 沒有跑完整回歸，沒有變動。T4 完整回歸若出現 AccessDenied 或下一次非預期的啟動器失敗，就停下來問使用者（AccessDenied 的部分已被 2026-11-18「M7 Windows atomic-move AccessDenied 單次重跑規則」取代，這段保留為歷史）；
   - `participantCloses` fixture 修正後再有任何非預期失敗，就停下來問使用者；
   - T3 fixture 依 Phase A 第 1 題裁示的規則照舊。
 - T4 結案順序：B2b-5 的一席審查（C0/I0/M2）與本筆 docs 的一席審查（C0/I0/M11）都已清零 → commit（plan 第 8 行的 spec SHA 在 stage 後計算填入）→ 只讀核對既有 W10 producer 與 child 65001（不重建）→ holder 完整 run-all → push → 同 SHA 全部 required CI 全綠。main 合併、tag、人工代操作、worktree 退役仍各自另問。
@@ -145,7 +170,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
   - T3 fixture「授權一次有界調查＋修正（建議）」；
   - DISABLED「當成不會發生，寫成勘誤（建議）」，已寫成 spec v1.4 的勘誤。
 - 計數保留：
-  - AccessDenied 1/1 已用完；
+  - AccessDenied 1/1 已用完（已被 2026-11-18「M7 Windows atomic-move AccessDenied 單次重跑規則」取代，保留為歷史）；
   - 完整回歸啟動器歷史 2/3；
   - T3 fixture 修正後再有任何非預期失敗就停下來問使用者。
 - T4 要 Phase B 完成、完整回歸、push、同 SHA 五個 required CI 全綠才結案。main 合併、tag、人工代操作、worktree 退役仍各自另問。
@@ -158,7 +183,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
   有具名 RED、GREEN、三個 mutation 都 KILLED 並還原。
 - N2 的 M3（`OriginDoors` 在套用時看不到 HOME 的 BUSY）帶到 T4，T4 開工時必須處理或請使用者裁示。
 - 計數全部照交接保留，不重置：
-  - AccessDenied 重跑額度 1/1 已用完；
+  - AccessDenied 重跑額度 1/1 已用完（已被 2026-11-18「M7 Windows atomic-move AccessDenied 單次重跑規則」取代，保留為歷史）；
   - 完整回歸啟動器歷史 2/3；
   - fixture 3/3；
   - mutation 兩事件。

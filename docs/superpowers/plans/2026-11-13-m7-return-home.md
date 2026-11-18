@@ -15,7 +15,7 @@
 - 每 task 同範圍記 N0、每整改 N1/N2…（Important 總數含新項）；任一連續兩整改輪窗口未下降即停報，不做下一輪。不得藉重命名、nonce、docs 或無證據重新分類洗數；Critical 永不帶過。
 - 驗證工具依穩定 problem ID 記連續非預期失敗，同問題第三次即停，安全收回相關自有 owner 並保全原件；expected RED／negative／mutation 正確拒絕分列不算工具缺陷。production bug 與工具 bug 依證據分開；既有 Evidence3／NativeStartup3／main-only2 歷史原判保留，已移除框架不復活，不任意合併無關問題或拆簽章迴避。
 - 每新 task fresh implementer＋一位獨立 task reviewer（spec＋quality 同席），fix 回原作者。controller `/root/m7_t2_onward` 是 note／AGENTS／plan 核取／progress／STATUS 唯一 writer。每 closed 短報 task／code pin／CI run／殘留／下一 task。
-- 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。
+- 人工代操作開始（方式已選 Claude）、main ff-only、tag、PR／LICENSE、worktree 退役仍各自未授。正常 feature push 已授；既有 W10 producer 只核身分／hash／非reparse／owner／locks，不重建或重套 patch。保全部原 world／FAIL／UNKNOWN，修正用新 nonce/root。**2026-11-18 追加（AccessDenied）**：使用者 2026-11-18 09:14 第 2 題選「比照 M6，每個 code pin 一次（建議）」；適用範圍依同日 11:5x 第 4 題為 M7 剩下的 T5～T8。原文與 controller 執行說明見 [M7 note「最新：T4 CLOSED」](../../implementation-notes/2026-11-13-m7-return-home.md)與 AGENTS「M7 Windows atomic-move AccessDenied 單次重跑規則（使用者 2026-11-18）」。完整回歸唯一失敗是 Windows atomic move AccessDenied、沒有其他 FAIL，且 production 仍 fail-closed／退避（依 M6 原文補上的前提，controller 解讀）時，保留原 root，換新 nonce 重跑一次、不用再問；同一 code pin 第二次就停報；只改 docs 不重置次數（controller 執行說明）。本檔 Task 2（:134、:138）與 Task 3（:182）記的 AccessDenied 1/1 已用完、不刷新是當時的規則，保留為歷史，已被這條取代。（本段接在同一行，是為了不讓 Task 4 核取項的行號位移。）
 
 以下 T1 單輪／不 T2 流程是歷史；本節已解除舊 hold，不變更已審玩法／資料／task 契約。原文見 M7 note 最上方同名節。
 
@@ -135,7 +135,7 @@
 
 2026-11-14 fix3候選0a36323已Windows focused128/M7 26/4、真FS9/9與兩owner mutation；controller已核原件，原席N3已C0/I0/M1（I07已解，M03留診斷殘留）。非Windows真對應待新UbuntuCI，不預勾跨平台驗證或最末閉合項。
 
-N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC895B…），新SHA首次CI仍待，T2閉合未勾；AccessDenied full額度1/1不可刷新，舊CI不rerun。
+N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC895B…），新SHA首次CI仍待，T2閉合未勾；AccessDenied full額度1/1不可刷新，舊CI不rerun。（2026-11-18 起 AccessDenied 改用新規則，見本檔「2026-11-13 現行續行授權與止損」節；本段保留為歷史。）
 
 **消費**　`SessionRecoveryRecord.Participant`、`SessionRecoveryRecord.SpaceLease`、`ChamberOriginAuthority`、`UniverseId`、`SessionRecoveryState.CommitResult/TerminalResult`。
 
@@ -179,7 +179,7 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 
 **N0終局／fix1（2026-11-14）**：C0/I6/M1（Important總6），原作者fix1處理正式I01～I06；report task-3-review.md與M7 note，FIX_BASE35e0f40。N1含新項總數，C/I0才full；原fixture3/3與再任一非預期即停不變。
 
-**2026-11-14恢復裁示**：真user選「允許 N0 後續完整門檻（建議）」；原題/條件見M7 note與SDD user-t3-resume-ruling-20261114.md。從sourcea506既有證據freshN0，C/I0才完整full/新SHA首次五CI；保原fixture3/3、任何新同fixture非預期即停、AccessDenied1/1不刷新。下段STOP是歷史，不自動要求重跑已齊focused/mutations。
+**2026-11-14恢復裁示**：真user選「允許 N0 後續完整門檻（建議）」；原題/條件見M7 note與SDD user-t3-resume-ruling-20261114.md。從sourcea506既有證據freshN0，C/I0才完整full/新SHA首次五CI；保原fixture3/3、任何新同fixture非預期即停、AccessDenied1/1不刷新。下段STOP是歷史，不自動要求重跑已齊focused/mutations。（2026-11-18 起 AccessDenied 改用新規則，見本檔「2026-11-13 現行續行授權與止損」節；AccessDenied1/1 保留為歷史。）
 
 **2026-11-14 STOP（未結案）**：同M7HomeAuthority／runGameTestM7 fixture三次非預期（665空A UUID／3ec初載範圍／6ae400tick卸載）3/3，依user止損＋root分組停報；sourcea5061383、定向HEADee2437e凍結，已在途996自然PASS不抵銷。N0/full/CI/push與下一task全部HOLD，僅只讀必要收尾／本機truthdocs；詳M7 note及SDD t3-fixture-stop.json，不自行恢復。
 
@@ -250,28 +250,28 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 
 **Windows native固定矩陣（T4的權威來源，不依賴已取消/可清除的T1 source）** `close-{ordinary|sealed|passable}-{cut}`；十三cut逐字為 `before-close,after-close,before-door,after-door,before-checkpoint,after-checkpoint,after-temp-force,before-publish,after-publish,after-readback,after-recheck,before-remove,after-remove`。三門態×十三cut=39列；每列唯一nonce/root/save，依序crash（預定halt77）→新獨立JVM reopen（正常stop0），保留實際原件。以M6 manifest/receipt/readonly+SelfTest做法精確比對此列表/phase/退出，不以單純總數39或改名窗口替代。這是原已採固定矩陣的移置，不新增高於M6的框架要求。
 
-- [ ] RED：`ordinary_closed_door_needs_native_checkpoint` 在舊膜 cleanup 遇 NONE 會留下普通關門；`restart-enable-before-entry` 的首個 maintenance call 不應跳過尚未落盤的 stop；`permanent_seal_cannot_be_archived` 拒偽造 evidence。
+- [ ] RED：`ordinary_closed_door_needs_native_checkpoint` 在舊膜 cleanup 遇 NONE 會留下普通關門；`restart-enable-before-entry` 的首個 maintenance call 不應跳過尚未落盤的 stop；`permanent_seal_cannot_be_archived` 拒偽造 evidence。（T4 結案：`ordinary_closed_door_needs_native_checkpoint` 有具名 RED／GREEN；`permanent_seal_cannot_be_archived` 的 RED 不成立（T2 的 `HomeSessionRecord` 已拒絕，現行 production 原件 PASS），改以 JUnit `permanentSealCannotBeArchived` 守門加 Phase A M4 mutation；`restart-enable-before-entry` 的同 JVM 部分在 Phase A `root_disable_latches_before_ack_and_reenable` 有 RED／GREEN，跨 JVM 部分以 B2a 原生列加 rm1、rm2 mutation 證明，不是在舊 production 上取得的 RED，見 M7 note）
 
-- [ ] 開服 strict journal＋registry／ownership 完成後、任何 maintenance enable／entry 操作前掃 active selected（含無 runtime 的 DORMANT），不掃 receipt。registry confirmed disabled/destroyed/exact 撤銷 → per-root fence，逐 SID first-wins event。已確定根停用再重啟先 enable 仍 pending；UNKNOWN 不 mint ROOT。初始化失敗維持阻擋。
+- [ ] 開服 strict journal＋registry／ownership 完成後、任何 maintenance enable／entry 操作前掃 active selected（含無 runtime 的 DORMANT），不掃 receipt。registry confirmed disabled/destroyed/exact 撤銷 → per-root fence，逐 SID first-wins event。已確定根停用再重啟先 enable 仍 pending；UNKNOWN 不 mint ROOT。初始化失敗維持阻擋。（T4 結案：開服掃描、含 DORMANT（fix1 M6、B2a rm1）、disabled 的重啟先 enable 仍 pending（B2a 原生主鏈）、初始化失敗（fix1 M17）都有具名證據；缺具名證據的是「UNKNOWN 不 mint ROOT」（只有 `HomeRootFence.java:116`；Phase A 審查只概括寫開服 fence 核實，沒有點名這個分支）與開服掃描遇 destroyed、exact 撤銷的分支，見 M7 note）
 
-- [ ] `setEnabled`、`setOriginEnabled`、`completeRemoval`／真正移除的持久提交點（含原生 setter）與結構觀測都通知同服務。註冊順序保 journal／M5 ready；普通 LOW 不發通知。registry 已落、stop 未落不能回報成功／允許復啟；同 tick disable→enable 仍先 checked latch。選後全階段可同 state latch，包含無 B runtime／部分返還。A 保護自 B provisional 起到 checked 終局；正常拆 A 拒，但管理員停用仍可。
+- [ ] `setEnabled`、`setOriginEnabled`、`completeRemoval`／真正移除的持久提交點（含原生 setter）與結構觀測都通知同服務。註冊順序保 journal／M5 ready；普通 LOW 不發通知。registry 已落、stop 未落不能回報成功／允許復啟；同 tick disable→enable 仍先 checked latch。選後全階段可同 state latch，包含無 B runtime／部分返還。A 保護自 B provisional 起到 checked 終局；正常拆 A 拒，但管理員停用仍可。（T4 結案：持久提交點（含原生 setter）的通知、同 tick 停用→啟用、journal 未收斂時排隊、registry 已落而 stop 未落不回報成功、A 保護都已完成；「結構觀測」的通知沒有 production 呼叫端（`checkRoot`、`onRootEvent(INVALID_STRUCTURE/IDENTITY_MISMATCH)`），依 Phase A 審查 M6 交 T5／T6，見 M7 note）
 
-- [ ] 新事件優先序：未確定 move／永久 TRR → pending journal 收斂 → 既有 CLOSE → root latch／queue → 普通終局。TRR、ENTRY_AUTHORITY_INVALID、AUTHORITY_CORRUPT 不可歸檔；未返完／有 lease 時停止旅行、保留 pending 給 T5 的返 B／清租約，不提前 CLOSE。普通缺載 B 保持 pending，不改 A。
+- [ ] 新事件優先序：未確定 move／永久 TRR → pending journal 收斂 → 既有 CLOSE → root latch／queue → 普通終局。TRR、ENTRY_AUTHORITY_INVALID、AUTHORITY_CORRUPT 不可歸檔；未返完／有 lease 時停止旅行、保留 pending 給 T5 的返 B／清租約，不提前 CLOSE。普通缺載 B 保持 pending，不改 A。（T4 結案：優先序與不可歸檔原因已在 `HomeClosure.decide` 與事件入口實作、JUnit 覆蓋，「未返完」依本項只做到不提前 CLOSE；「普通缺載 B 保持 pending」在 T4 以測試票保持 B 的區塊（B1 假設 (c)），B1 審查要求 T5 有正式 B 來源票後，以真票確認重開時 B 無人無票保持 pending，見 M7 note）
 
-- [ ] 唯一 owner 依 §9.2 矩陣 mint 原因與 evidence：ALL_CROSSED、EXPIRED、PARTICIPANT_CLOSED（PREPARE/PASSAGE）、ENTRY_STOPPED（LOW/DISABLED/INVALID；DISABLED 不可達、一律拒絕，見 spec「T4 ENTRY_STOPPED DISABLED 勘誤」）、RESTART_CLOSED、四個 ROOT_*。要求 closed≥各原時間、actor 是本人、expiry 真到、來源 phase／observed exact。close latch 用 roll-forward，未確認不改門；checked 後列凍結。具名 `participantCloseKeepsActualActorAndPhase` 同一 READY 列分別由兩位參與者於獨立 fixture 操作，Evidence 各核原 actor／時間；無互動或錯 phase 不得由 step mint。加入非 startup 呼叫無法生成 RESTART_CLOSED。
+- [ ] 唯一 owner 依 §9.2 矩陣 mint 原因與 evidence：ALL_CROSSED、EXPIRED、PARTICIPANT_CLOSED（PREPARE/PASSAGE）、ENTRY_STOPPED（LOW/DISABLED/INVALID；DISABLED 不可達、一律拒絕，見 spec「T4 ENTRY_STOPPED DISABLED 勘誤」）、RESTART_CLOSED、四個 ROOT_*。要求 closed≥各原時間、actor 是本人、expiry 真到、來源 phase／observed exact。close latch 用 roll-forward，未確認不改門；checked 後列凍結。具名 `participantCloseKeepsActualActorAndPhase` 同一 READY 列分別由兩位參與者於獨立 fixture 操作，Evidence 各核原 actor／時間；無互動或錯 phase 不得由 step mint。加入非 startup 呼叫無法生成 RESTART_CLOSED。（T4 結案：其餘原因的 mint、`participantCloseKeepsActualActorAndPhase`、非 startup 不能生成 RESTART_CLOSED 都已完成（Phase A JUnit 具名 RED／GREEN、M3），DISABLED 依裁示一律拒絕；ENTRY_STOPPED 的 LOW／INVALID 正式 mint 路徑沒有呼叫端（B 端在 T6），目前沒有 GameTest 驅動與 mutation，交 T5／T6，見 M7 note）
 
-- [ ] 對 exact B，普通／sealed／passable 均實際套 DoorGoal，逐格驗門、所有 B 相關 chunks 原生 checkpoint，`publishOrVerify`、再驗 B 門＋checkpoint、checked remove（restore CAS）後放鎖。PARTICIPANT_CLOSED 防夾 CLOSE_IF_CLEAR_ELSE_OPEN，其餘 OPEN，不能以 ownerless membrane queue 代替。遇未知或錯配保原件與 busy；移除後不得修舊門。
+- [x] 對 exact B，普通／sealed／passable 均實際套 DoorGoal，逐格驗門、所有 B 相關 chunks 原生 checkpoint，`publishOrVerify`、再驗 B 門＋checkpoint、checked remove（restore CAS）後放鎖。PARTICIPANT_CLOSED 防夾 CLOSE_IF_CLEAR_ELSE_OPEN，其餘 OPEN，不能以 ownerless membrane queue 代替。遇未知或錯配保原件與 busy；移除後不得修舊門。
 
-- [ ] GREEN：正式 owner 的 `close-{ordinary|sealed|passable}-{cut}` 在Windows逐一以正式39列／兩phase（T1原生PoC已取消，不抵正式集合） 驗 §5.3；另跑 `receipt-existing`，另測 checkpoint unknown／跨檔不符／已存 target 異值／成功後玩家主動關門。逐 phase 核兩側門格、region、識別、active與歷史 hash、資源、零移動。經正式發布與刪活列完成 >4096 個互異 SID，仍可新 admission，舊單檔 exact 可讀，禁止全目錄掃描或虛增獨立歷史計數。
+- [ ] GREEN：正式 owner 的 `close-{ordinary|sealed|passable}-{cut}` 在Windows逐一以正式39列／兩phase（T1原生PoC已取消，不抵正式集合） 驗 §5.3；另跑 `receipt-existing`，另測 checkpoint unknown／跨檔不符／已存 target 異值／成功後玩家主動關門。逐 phase 核兩側門格、region、識別、active與歷史 hash、資源、零移動。經正式發布與刪活列完成 >4096 個互異 SID，仍可新 admission，舊單檔 exact 可讀，禁止全目錄掃描或虛增獨立歷史計數。（T4 結案：Windows 39 列／78 phase、`receipt-existing`、checkpoint 結果未知／跨檔不符／已存 target 異值／成功後玩家主動關門、>4096 都已完成；原生列的 B 區塊以測試票保持載入（B1 假設 (c)，正式 B 來源票到 T5 才有），B1 審查要求 T5 以真票重驗，見 M7 note）
 
-- [ ] T4 Windows正式39保持；native runner優先薄接固定M6 probe-common owned機制、PID+start、receipt hashes、readonly summary+SelfTest；沒有T1 PoC/退休額外提交或CI。超M6的全class/argfile/ZIP seal等標殘留不擋，不默認必做；如需提高標準先交使用者。功能契約仍由原39及正式owner斷言證明，既有M6標準不改。
-- [ ] 日期工具TODO：來源為使用者提供Claude pwsh7.7.0重現，原ParseExact object[]誤綁單format。若恢復此呼叫，format集合明確`[string[]]@(...)`（或依M6原解析做法，不新造框架）；具名正例3/6/9位小數秒均接受、錯格式拒絕，保實際原件。cast碼存在不能當三種都已驗；本T1不重演/改造日期工具。（2026-11-17 註記：T4 B2b-3 已 grep，`scripts/verification/` 沒有任何 `ParseExact`／`TryParseExact`，M7 runner 只用 `[DateTimeOffset]::Parse`、`ConvertFrom-Json -DateKind String` 與 cast；判定為未恢復此呼叫、不適用，未新增 3／6／9 位小數秒正例。這是 implementer 的結論，controller 採用，不是使用者裁示；核取框等 T4 完整回歸與 CI 通過後才勾。）
+- [x] T4 Windows正式39保持；native runner優先薄接固定M6 probe-common owned機制、PID+start、receipt hashes、readonly summary+SelfTest；沒有T1 PoC/退休額外提交或CI。超M6的全class/argfile/ZIP seal等標殘留不擋，不默認必做；如需提高標準先交使用者。功能契約仍由原39及正式owner斷言證明，既有M6標準不改。
+- [x] 日期工具TODO：來源為使用者提供Claude pwsh7.7.0重現，原ParseExact object[]誤綁單format。若恢復此呼叫，format集合明確`[string[]]@(...)`（或依M6原解析做法，不新造框架）；具名正例3/6/9位小數秒均接受、錯格式拒絕，保實際原件。cast碼存在不能當三種都已驗；本T1不重演/改造日期工具。（2026-11-17 註記：T4 B2b-3 已 grep，`scripts/verification/` 沒有任何 `ParseExact`／`TryParseExact`，M7 runner 只用 `[DateTimeOffset]::Parse`、`ConvertFrom-Json -DateKind String` 與 cast；判定為未恢復此呼叫、不適用，未新增 3／6／9 位小數秒正例。這是 implementer 的結論，controller 採用，不是使用者裁示；核取框等 T4 完整回歸與 CI 通過後才勾。）（T4 結案：完整回歸 `run-all-5c0458b7…` 與同 SHA CI 44207705353 都已通過，依上述註記勾選，見 M7 note）
 
-- [ ] `restart-enable-before-entry` 真跨 JVM 留 registry disabled 已存、stop 尚未落盤，startup 先 direct enable 再操作 B；另驗 DORMANT、同 tick 復啟、部分 Crossed、stop 已落後 A 修復均不復活，普通 LOW 無 latch。對已有 READY 無已確認 root 的 startup 僅 RESTART_CLOSED，不等待 A FULL。
+- [ ] `restart-enable-before-entry` 真跨 JVM 留 registry disabled 已存、stop 尚未落盤，startup 先 direct enable 再操作 B；另驗 DORMANT、同 tick 復啟、部分 Crossed、stop 已落後 A 修復均不復活，普通 LOW 無 latch。對已有 READY 無已確認 root 的 startup 僅 RESTART_CLOSED，不等待 A FULL。（T4 結案：跨 JVM 主鏈與 DORMANT、同 tick 復啟、部分 Crossed、stop 已落後 A 修復不復活、普通 LOW 無 latch、READY 無已確認 root 只走 RESTART_CLOSED 且不等 A FULL 都已完成（B2a）；「再操作 B」因 T4 沒有 B 端續行 owner，以 journal 的 MEASURED→COLLAPSING 提交邊代表，T5／T6 有正式 B 端續行後要以真實 B 端操作重跑（B2a-M3），見 M7 note）
 
-- [ ] 變異掃描僅有 runtime、略過 direct setter、close 前提省略 checkpoint、先刪 active 再發 receipt、漏核 existing exact、TRR 允許 ROOT close。focused 跑 M7CloseMatrixTest／M7 GameTest／上述全鏈與 SelfTest，確認每個 production mutation killed、還原。
+- [x] 變異掃描僅有 runtime、略過 direct setter、close 前提省略 checkpoint、先刪 active 再發 receipt、漏核 existing exact、TRR 允許 ROOT close。focused 跑 M7CloseMatrixTest／M7 GameTest／上述全鏈與 SelfTest，確認每個 production mutation killed、還原。
 
-- [ ] Controller 同步、逐檔 stage T4 清單、候選 `feat: 持久完成回程終局並重建停用防線`。核 W10、完整 run-all、獨立規格／品質 C/I 清零、push 並核同 SHA CI 才 closed。
+- [ ] Controller 同步、逐檔 stage T4 清單、候選 `feat: 持久完成回程終局並重建停用防線`。核 W10、完整 run-all、獨立規格／品質 C/I 清零、push 並核同 SHA CI 才 closed。（T4 結案：沒有用這個候選 commit，改成 Phase A、B0～B2b-5、P1、P2 各段分開 commit；W10 由 run-all 的 w10-preflight 核對（兩次都 exit 0）、完整回歸（第一次 FAIL 後依使用者 2026-11-18 09:14 第 1 題裁示換 nonce 重跑）、各段審查 C/I 清零、push 與同 SHA CI 44207705353 都已完成，T4 已結案，見 M7 note）
 
 **擴檔（2026-11-17～18，Phase B／P1／P2 實際改動，controller 補列）**　以 `git diff --name-status cc92b66..HEAD`（HEAD `e28784c`）與逐檔 `git log` 核對；該範圍內的 `AGENTS.md`、M7 note、本 plan 與 spec 是 docs commit `c74bf79` 的改動，不列。上方「新增」「修改」與 Phase A 擴檔以外，另有：
 - production：
