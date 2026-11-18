@@ -52,16 +52,16 @@ function One([string]$prefix,[string]$suffix=''){ $d=@(Get-ChildItem -LiteralPat
 function Read-Json([string]$path){return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -DateKind String}
 function Hash([string]$path){return (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()}
 # M7 T4 B2b-4（B2b3-M2）：summary step 唯讀重驗 m7-home-native step 留下的那一份 summary（恰一份、-RequireComplete；負控已在該 step 跑過，這裡不再跑），
-# 回傳寫進 summary.json 的 m7HomeNative（路徑、SHA-256、46 列、92 phase、COMPLETE）。
+# 回傳寫進 summary.json 的 m7HomeNative（路徑、SHA-256、47 列、94 phase、COMPLETE；T4B 起多 restart-close-unloaded-b 一列）。
 function Get-M7HomeNativeProof([string]$ExpectedHead) {
     $files=@(Get-ChildItem -LiteralPath $runRoot -File | Where-Object {$_.Name -cmatch '^m7-home-run-[0-9a-f]{12}\.json$'})
     if($files.Count -ne 1){throw "M7_HOME_RUNALL_SUMMARY：run root 必須恰一份 m7-home-run summary（$($files.Count)）"}
     $file=$files[0].FullName;$sha=Hash $file
     $verify=@(& (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -VerifySummary $file -ExpectedHead $ExpectedHead -RequireComplete)
-    $line=@($verify | Where-Object {"$_" -cmatch ('^M7_HOME_VERIFIED_COMPLETE PASS rows=46 phases=92 .* selection=all HEAD='+[regex]::Escape($ExpectedHead)+'（')})
-    if($line.Count -ne 1){throw 'M7_HOME_RUNALL_NOT_COMPLETE：summary step 重驗沒有恰一行 46 列的 M7_HOME_VERIFIED_COMPLETE PASS'}
+    $line=@($verify | Where-Object {"$_" -cmatch ('^M7_HOME_VERIFIED_COMPLETE PASS rows=47 phases=94 .* selection=all HEAD='+[regex]::Escape($ExpectedHead)+'（')})
+    if($line.Count -ne 1){throw 'M7_HOME_RUNALL_NOT_COMPLETE：summary step 重驗沒有恰一行 47 列的 M7_HOME_VERIFIED_COMPLETE PASS'}
     $saved=Read-Json $file
-    if((Hash $file) -cne $sha -or $saved.head -cne $ExpectedHead -or @($saved.rows).Count -ne 46 -or $saved.phaseCount -ne 92){throw 'M7_HOME_RUNALL_SUMMARY_CHANGED：重驗前後 summary 不同或內容不符'}
+    if((Hash $file) -cne $sha -or $saved.head -cne $ExpectedHead -or @($saved.rows).Count -ne 47 -or $saved.phaseCount -ne 94){throw 'M7_HOME_RUNALL_SUMMARY_CHANGED：重驗前後 summary 不同或內容不符'}
     return [ordered]@{summary=$file;sha256=$sha;rows=@($saved.rows).Count;phases=$saved.phaseCount;status='COMPLETE';verify="$($line[0])"}
 }
 function Assert-W10FullEvidence($Collapse,[string]$ExpectedHead) {
@@ -291,14 +291,14 @@ Step 'm3' { & $gates -Mode M3 -Label m3 -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'recovery' { & (Join-Path $PSScriptRoot 'm4-recovery-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm5-collapse' { & (Join-Path $PSScriptRoot 'm5-collapse-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm6-native' { & (Join-Path $PSScriptRoot 'm6-universe-probe.ps1') -AllEnabled -EvidenceRoot $runRoot -Gradle $Gradle }
-# M7 T4 B2b-3：Windows 原生 M7 回程終局跨 JVM 鏈，完整 46 列一次跑完；唯一一份 summary 必須是 T4 完整 PASS（-RequireComplete：分片 PASS 不算），並跑全部負控。
+# M7 T4 B2b-3：Windows 原生 M7 回程終局跨 JVM 鏈，完整 47 列（T4B 起）一次跑完；唯一一份 summary 必須是 T4 完整 PASS（-RequireComplete：分片 PASS 不算），並跑全部負控。
 Step 'm7-home-native' {
     & (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -EvidenceRoot $runRoot -Gradle $Gradle
     $m7Summaries=@(Get-ChildItem -LiteralPath $runRoot -File | Where-Object {$_.Name -cmatch '^m7-home-run-[0-9a-f]{12}\.json$'})
     if($m7Summaries.Count -ne 1){throw "M7_HOME_RUNALL_SUMMARY：run root 必須恰一份 m7-home-run summary（$($m7Summaries.Count)）"}
     $m7Verify=@(& (Join-Path $PSScriptRoot 'm7-home-probe.ps1') -VerifySummary $m7Summaries[0].FullName -ExpectedHead $startHead -RequireComplete -SelfTest)
     $m7Verify
-    if(@($m7Verify | Where-Object {"$_" -cmatch ('^M7_HOME_VERIFIED_COMPLETE PASS rows=46 phases=92 .* selection=all HEAD='+[regex]::Escape($startHead)+'（')}).Count -ne 1){throw 'M7_HOME_RUNALL_NOT_COMPLETE：沒有恰一行 46 列的 M7_HOME_VERIFIED_COMPLETE PASS'}
+    if(@($m7Verify | Where-Object {"$_" -cmatch ('^M7_HOME_VERIFIED_COMPLETE PASS rows=47 phases=94 .* selection=all HEAD='+[regex]::Escape($startHead)+'（')}).Count -ne 1){throw 'M7_HOME_RUNALL_NOT_COMPLETE：沒有恰一行 47 列的 M7_HOME_VERIFIED_COMPLETE PASS'}
 }
 Step 'ci-rule' {
     $normal=One 'gate-m4-normal-'; $full=One 'gate-full-'; $m5=One 'gate-m5-gametest-'

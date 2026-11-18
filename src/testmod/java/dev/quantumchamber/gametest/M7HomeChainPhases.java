@@ -101,6 +101,9 @@ import net.minecraft.world.World;
  * <li>{@code restart-ready-stop-crossed}：READY、部分 Crossed、stop 已持久、A 已修復時 crash；reopen 以 ROOT_DISABLED（不是 RESTART_CLOSED）收尾，Crossed 保留。</li>
  * <li>{@code restart-ready-low-no-root}：READY、部分 Crossed、A 只是普通斷電（LOW）時 crash；reopen 開服掃描不 latch，以 RESTART_CLOSED 收尾，A 的 chunk 一直未載入。
  *     世界出生點移到遠離 A 的位置（T4 B2b-2），讓參與者登入時 vanilla 的出生搜尋在幾何上碰不到 A。</li>
+ * <li>{@code restart-close-unloaded-b}（T4B，M7 spec v1.6 C）：READY、部分 Crossed 時 crash；reopen 時 B 無人（參與者收尾之後才登入）、沒有測試票，正式回程終局 owner
+ *     以 B 收尾票（{@code HomeEntryTickets}，≤4 refs）有界載入 B，以 RESTART_CLOSED 收尾、A 解除 busy、Crossed 原樣保留（不重播）；收尾的每一個事件當下 B 都有這份票、
+ *     B 沒有玩家，收尾後票已釋放。</li>
  * <li>{@code receipt-existing}：收據已發佈、熱列移除失敗（journal flush 故障，RESTORED）時 crash；reopen 從 CLOSE 續做，只驗既有收據 exact、不覆寫、移除前不解鎖。</li>
  * <li>{@code receipt-player-closed}：成功收尾後玩家以正式方塊互動關 B 門、checkpoint 之後 crash；reopen 舊 SID 不重開門。</li>
  * <li>{@code receipt-mismatch-stop}（T4 P1）：同 {@code receipt-existing} 走到熱列移除失敗（RESTORED，journal dirty）之後，把收據換成同 SID、內容不同的合法收據，
@@ -114,7 +117,7 @@ import net.minecraft.world.World;
  * 預期終局見 SDD {@code t4b2a-report.md}；Java（本類）與 runner（{@code m7-home-probe.ps1}）各自核對。
  */
 final class M7HomeChainPhases {
-    static final List<String> NAMES = List.of("restart-enable-before-entry", "restart-ready-stop-crossed", "restart-ready-low-no-root",
+    static final List<String> NAMES = List.of("restart-enable-before-entry", "restart-ready-stop-crossed", "restart-ready-low-no-root", "restart-close-unloaded-b",
             "receipt-existing", "receipt-player-closed", "receipt-mismatch-stop", "receipt-write-fail-stop");
     /** 收尾的完整事件序列（正式 owner 從沒有 CLOSE 起推進到 checked 移除）。 */
     static final List<String> FULL = M7HomeClosurePhases.CUTS;
@@ -122,6 +125,8 @@ final class M7HomeChainPhases {
     static final List<String> FROM_EXISTING = List.of("before-door", "after-door", "before-checkpoint", "after-checkpoint", M7HomeClosurePhases.VERIFY_EXISTING,
             "after-recheck", "before-remove", "after-remove");
     static final int READY_TICKS = 200, CUT_TICKS = 200, CLOSE_TICKS = 400, QUIET_TICKS = 40;
+    /** CLOSE 凍結的兩個事件（{@code HomeClosure.latch}）；T4B 的 B 收尾票只在凍結之後才取。 */
+    static final List<String> PRE_CLOSE = List.of("before-close", "after-close");
     /**
      * restart-ready-low-no-root 的世界出生點 XZ（T4 B2b-2）。reopen 時參與者登入，vanilla 1.21 的 {@code ServerPlayerEntity} 建構子以 overworld 呼叫
      * {@code getWorldSpawnPos}：在出生點 ±i 內以不固定 seed 的亂數挑欄，交給 {@code SpawnLocating.findOverworldSpawn} 同步載入那一欄的 chunk（之後玩家資料才把人放回 B）。
@@ -136,6 +141,8 @@ final class M7HomeChainPhases {
         RESTART_ENABLE("restart-enable-before-entry", "restart", "ordinary", "registry-saved"),
         RESTART_READY_STOP("restart-ready-stop-crossed", "restart", "passable", "repaired-saved"),
         RESTART_READY_LOW("restart-ready-low-no-root", "restart", "passable", "low-saved"),
+        /** T4B：reopen 時 B 無人無票，由正式 B 收尾票載入 B 收尾。 */
+        RESTART_CLOSE_UNLOADED_B("restart-close-unloaded-b", "restart", "passable", "ready-saved"),
         RECEIPT_EXISTING("receipt-existing", "receipt", "ordinary", "remove-rejected"),
         RECEIPT_PLAYER_CLOSED("receipt-player-closed", "receipt", "ordinary", "player-closed"),
         /** halt 點 {@code stopped}：正常停服完成之後（SERVER_STOPPED），不是正式 owner 的事件。 */
@@ -154,7 +161,10 @@ final class M7HomeChainPhases {
             throw new IllegalStateException("M7_HOME_ROW_UNKNOWN：" + row);
         }
 
-        boolean ready() { return this == RESTART_READY_STOP || this == RESTART_READY_LOW; }
+        boolean ready() { return this == RESTART_READY_STOP || this == RESTART_READY_LOW || this == RESTART_CLOSE_UNLOADED_B; }
+
+        /** reopen 時 B 無人無票（不以測試票保持、開服時不讀 B 門、參與者收尾之後才登入）。 */
+        boolean unloadedB() { return this == RESTART_CLOSE_UNLOADED_B; }
 
         /** crash 當下收據已發佈、熱列仍在（RESTORED）：reopen 從已凍結的 CLOSE 續做、只驗既有收據。 */
         boolean existingReceipt() { return this == RECEIPT_EXISTING || stopsNormally(); }
@@ -165,7 +175,7 @@ final class M7HomeChainPhases {
         /** crash phase 在 halt 之前的收尾事件。 */
         List<String> crashEvents() {
             return switch (this) {
-                case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW -> List.of();
+                case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW, RESTART_CLOSE_UNLOADED_B ->List.of();
                 case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP, RECEIPT_WRITE_FAIL_STOP -> {
                     var events = new ArrayList<>(FULL.subList(0, FULL.indexOf("before-remove") + 1));
                     events.add("remove-rejected");
@@ -177,7 +187,7 @@ final class M7HomeChainPhases {
 
         List<String> reopenEvents() {
             return switch (this) {
-                case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW -> FULL;
+                case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW, RESTART_CLOSE_UNLOADED_B ->FULL;
                 case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP, RECEIPT_WRITE_FAIL_STOP -> FROM_EXISTING;
                 case RECEIPT_PLAYER_CLOSED -> List.of();
             };
@@ -186,7 +196,7 @@ final class M7HomeChainPhases {
         /** reopen 第一次改門的 outcome；不改門時為空。 */
         List<String> reopenDoorOutcome() {
             return switch (this) {
-                case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW -> List.of("APPLIED");
+                case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW, RESTART_CLOSE_UNLOADED_B ->List.of("APPLIED");
                 case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP, RECEIPT_WRITE_FAIL_STOP -> List.of("UNCHANGED");
                 case RECEIPT_PLAYER_CLOSED -> List.of();
             };
@@ -575,6 +585,16 @@ final class M7HomeChainPhases {
                     expect("aDoorUnchanged", aBefore.equals(doorSummary(overworld)), () -> aBefore + "→" + doorSummary(overworld));
                     halt();
                 }
+                case RESTART_CLOSE_UNLOADED_B -> {
+                    // 基線：READY、部分 Crossed、沒有 stop，A 啟用；A、B 的 chunks 與參與者（在 B 艙內）落盤之後 crash。
+                    var readyRow = (HomeSessionRecord) journal.allFlushedSessions().get(sid);
+                    checkpoint(chunks, true);
+                    var baseline = baseline(readyRow);
+                    expect("baselineReady", readyRow.state() == SessionState.PASSAGE_READY && readyRow.home().stopReason().isEmpty() && !queued()
+                            && Boolean.TRUE.equals(baseline.get("registryEnabled")), () -> "baseline=" + baseline);
+                    expect("aDoorUnchanged", aBefore.equals(doorSummary(overworld)), () -> aBefore + "→" + doorSummary(overworld));
+                    halt();
+                }
                 case RECEIPT_EXISTING, RECEIPT_PLAYER_CLOSED, RECEIPT_MISMATCH_STOP, RECEIPT_WRITE_FAIL_STOP -> {
                     expect("disableAcked", lifecycle.setEnabled(chamber, false), () -> "停用沒有回報成功");
                     var stopped = journal.allFlushedSessions().get(sid);
@@ -947,6 +967,14 @@ final class M7HomeChainPhases {
                     expect("inStartupSet", startupContains(), () -> "開服收尾集合沒有本列");
                     closingRowText = String.valueOf(current);
                 }
+                case RESTART_CLOSE_UNLOADED_B -> {
+                    expect("readyFromCrash", current instanceof HomeSessionRecord h && h.equals(flushed) && text(baseline, "row").equals(String.valueOf(h))
+                            && h.state() == SessionState.PASSAGE_READY && h.home().stopReason().isEmpty(), () -> "row=" + current);
+                    expect("inStartupSet", startupContains(), () -> "開服收尾集合沒有本列");
+                    // B 無人無票：開服時 B 的 home chunks 都沒有載入（只查詢、不載入）。
+                    expect("bNotLoadedAtStart", !bAnyLoaded(), () -> "B 開服時已有 chunk 載入：" + homeChunks);
+                    closingRowText = String.valueOf(current);
+                }
                 case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP, RECEIPT_WRITE_FAIL_STOP -> {
                     var atFlushed = atHalt.getAsJsonObject("flushed");
                     expect("closeFromCrash", current instanceof HomeSessionRecord h && h.equals(flushed) && text(atFlushed, "text").equals(String.valueOf(h))
@@ -965,10 +993,12 @@ final class M7HomeChainPhases {
             }
             startupInstance = startupInstance();
             proof.put("startupInstance", String.valueOf(startupInstance));
-            // B 門：開服時由磁碟載入（正式 owner 還沒有推進）。A：LOW 列不載入（核對收尾不等 A），其他列載入核門格。
-            M7HomeClosureGameTests.holdChunks(b, FRAME);
-            var bAtStart = doorSummary(b);
-            expect("bDoorDiskState", chain.diskDoorAtReopen().equals(bAtStart), () -> "B 門=" + bAtStart + " 預期=" + chain.diskDoorAtReopen());
+            // B 門：開服時由磁碟載入（正式 owner 還沒有推進）。T4B 的 B 無人無票列不保持、不讀 B（之後由正式 B 收尾票載入）。A：LOW 列不載入（核對收尾不等 A），其他列載入核門格。
+            if (!chain.unloadedB()) {
+                M7HomeClosureGameTests.holdChunks(b, FRAME);
+                var bAtStart = doorSummary(b);
+                expect("bDoorDiskState", chain.diskDoorAtReopen().equals(bAtStart), () -> "B 門=" + bAtStart + " 預期=" + chain.diskDoorAtReopen());
+            }
             if (chain != Chain.RESTART_READY_LOW) {
                 M7HomeClosureGameTests.holdChunks(overworld, FRAME);
                 expect("aDoorAtStart", text(baseline, "aDoor").equals(doorSummary(overworld)), () -> "A 門=" + doorSummary(overworld));
@@ -976,10 +1006,12 @@ final class M7HomeChainPhases {
             // T4 P1：停服前才放的標記方塊在兩個世界都已落盤。
             if (chain.stopsNormally()) expect("stopSavedMarkers", overworld.getBlockState(marker()).isOf(Blocks.SPONGE) && b.getBlockState(marker()).isOf(Blocks.SPONGE),
                     () -> "A=" + overworld.getBlockState(marker()) + " B=" + b.getBlockState(marker()));
-            // 零移動：參與者以 crash 前存下的 playerdata 登入。
-            participant = connect();
-            pose = M7HomeClosurePhases.pose(participant.player());
-            expect("participantLoginPose", JSON.toJsonTree(pose).equals(baseline.get("pose")), () -> "login=" + pose + " baseline=" + baseline.get("pose"));
+            // 零移動：參與者以 crash 前存下的 playerdata 登入。T4B 的 B 無人無票列：參與者在收尾之後才登入（awaitClose），B 在收尾期間沒有玩家。
+            if (!chain.unloadedB()) {
+                participant = connect();
+                pose = M7HomeClosurePhases.pose(participant.player());
+                expect("participantLoginPose", JSON.toJsonTree(pose).equals(baseline.get("pose")), () -> "login=" + pose + " baseline=" + baseline.get("pose"));
+            }
             // T4 B2b-2：登入本身（vanilla 的出生搜尋）不得載入 A；之後的收尾事件另由 aNeverLoadedDuringClose 核對。
             if (chain == Chain.RESTART_READY_LOW) expect("aNotLoadedAfterLogin", !aLoaded(overworld), this::spawnSearchDetail);
             proof.put("start", snapshot());
@@ -988,9 +1020,17 @@ final class M7HomeChainPhases {
         }
 
         private void awaitClose() throws Exception {
-            expect("participantStill", M7HomeClosurePhases.pose(participant.player()).equals(pose), () -> "pose=" + M7HomeClosurePhases.pose(participant.player()));
+            if (participant != null)
+                expect("participantStill", M7HomeClosurePhases.pose(participant.player()).equals(pose), () -> "pose=" + M7HomeClosurePhases.pose(participant.player()));
             var journal = SessionRecoveryState.get(server);
             boolean gone = !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid);
+            if (gone && chain.unloadedB() && participant == null) {
+                // T4B：收尾完成（B 收尾票已釋放）之後參與者才登入，以 crash 前存下的 playerdata 回到 B 的原位（零移動）。
+                participant = connect();
+                pose = M7HomeClosurePhases.pose(participant.player());
+                var baselinePose = crash.getAsJsonObject("baseline").get("pose");
+                expect("participantLoginPose", JSON.toJsonTree(pose).equals(baselinePose), () -> "login=" + pose + " baseline=" + baselinePose);
+            }
             if (chain == Chain.RECEIPT_PLAYER_CLOSED) {
                 expect("closedDoorKeptAfterRestart", gone && events.isEmpty() && "CLOSED/NONE".equals(doorSummary(b)) && !gate().globalChamberBusy(server, chamber),
                         () -> "events=" + eventNames() + " door=" + doorSummary(b));
@@ -1033,7 +1073,7 @@ final class M7HomeChainPhases {
                 case RESTART_ENABLE, RESTART_READY_STOP -> expect("receiptClose", close instanceof Close k && k.reason() == CloseReason.ROOT_DISABLED
                         && k.doorGoal() == DoorGoal.OPEN && k.evidence().equals(new RootStop(RootReason.ROOT_DISABLED, expectedStoppedAt))
                         && k.closedAtGameTime() >= expectedStoppedAt, () -> "close=" + close + " stoppedAt=" + expectedStoppedAt);
-                case RESTART_READY_LOW -> expect("receiptClose", close instanceof Close k && k.reason() == CloseReason.RESTART_CLOSED && k.doorGoal() == DoorGoal.OPEN
+                case RESTART_READY_LOW, RESTART_CLOSE_UNLOADED_B -> expect("receiptClose", close instanceof Close k && k.reason() == CloseReason.RESTART_CLOSED && k.doorGoal() == DoorGoal.OPEN
                         && startupInstance != null && k.evidence().equals(new RestartClosed(startupInstance, k.closedAtGameTime()))
                         && receipt.home().stopReason().isEmpty(), () -> "close=" + close + " instance=" + startupInstance);
                 case RECEIPT_EXISTING, RECEIPT_MISMATCH_STOP, RECEIPT_WRITE_FAIL_STOP -> expect("receiptClose", receiptClose.equals(atHalt.getAsJsonObject("flushed").get("close")),
@@ -1050,7 +1090,7 @@ final class M7HomeChainPhases {
             var end = listing(receiptsDir());
             var crashReceipts = atHalt.getAsJsonArray("receipts");
             boolean receiptsOk = switch (chain) {
-                case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW -> M7HomeClosurePhases.names(end).equals(List.of(sid + ".dat")) && crashReceipts.isEmpty();
+                case RESTART_ENABLE, RESTART_READY_STOP, RESTART_READY_LOW, RESTART_CLOSE_UNLOADED_B ->M7HomeClosurePhases.names(end).equals(List.of(sid + ".dat")) && crashReceipts.isEmpty();
                 case RECEIPT_EXISTING, RECEIPT_PLAYER_CLOSED, RECEIPT_MISMATCH_STOP, RECEIPT_WRITE_FAIL_STOP -> JSON.toJsonTree(end).equals(crashReceipts) && M7HomeClosurePhases.names(end).equals(List.of(sid + ".dat"));
             };
             expect("receiptFiles", receiptsOk, () -> "end=" + end + " crash=" + crashReceipts);
@@ -1065,7 +1105,13 @@ final class M7HomeChainPhases {
             expect("aDoorUntouched", text(baseline, "aDoor").equals(doorSummary(overworld)), () -> "A 門=" + doorSummary(overworld));
             boolean repaired = chain == Chain.RESTART_ENABLE || chain.ready();
             expect("registryEnd", registryEnabled() == repaired, () -> "registryEnabled=" + registryEnabled());
-            expect("resourcesReleased", !gate().globalChamberBusy(server, chamber) && !rootLeasePresent(), () -> "busy=" + gate().globalChamberBusy(server, chamber));
+            expect("resourcesReleased", !gate().globalChamberBusy(server, chamber) && !rootLeasePresent() && !entryLeasePresent(),
+                    () -> "busy=" + gate().globalChamberBusy(server, chamber) + " entryTicket=" + entryLeasePresent());
+            // T4B（v1.6 C）：CLOSE 凍結之前（before-close、after-close）不取 B 收尾票；凍結之後的交接事件（before-door 起）當下都持有這份票，B 一直沒有玩家。
+            if (chain.unloadedB())
+                expect("bClosedByTheEntryTicket", !events.isEmpty() && events.stream().allMatch(event -> Boolean.valueOf(!PRE_CLOSE.contains(event.get("event")))
+                        .equals(event.get("entryTicket")) && Integer.valueOf(0).equals(event.get("bPlayers"))), () -> "events=" + events);
+            else expect("noEntryTicket", events.stream().allMatch(event -> Boolean.FALSE.equals(event.get("entryTicket"))), () -> "events=" + events);
             proof.put("end", snapshot());
         }
 
@@ -1096,6 +1142,9 @@ final class M7HomeChainPhases {
                 record.put("detail", M7HomeClosurePhases.describe(detail));
                 record.put("busy", gate().globalChamberBusy(server, chamber));
                 record.put("aLoaded", aLoaded(overworld));
+                // T4B：事件當下這個 SID 是否持有 B 收尾票、B 有幾位玩家（B 無人無票列要求每個收尾事件都有票、B 沒有玩家；其他列 B 由測試票保持，不取 B 收尾票）。
+                record.put("entryTicket", entryLeasePresent());
+                record.put("bPlayers", b == null ? -1 : b.getPlayers().size());
                 events.add(record);
                 if (sid == null || !sid.equals(session)) failures.add("foreignSession：" + name + " session=" + session);
                 if (crashPhase() && !armed) failures.add("eventBeforeArm：" + name);
@@ -1201,7 +1250,8 @@ final class M7HomeChainPhases {
             try { s.put("registrySha256", sha256(registryFile())); } catch (IOException failure) { s.put("registrySha256", "ERROR:" + failure); }
             try { s.put("receipts", listing(receiptsDir())); } catch (IOException failure) { s.put("receipts", "ERROR:" + failure); }
             s.put("receipt", receiptFacts());
-            s.put("bDoor", doorSummary(b));
+            // T4B 的 B 無人無票列：B 還沒有載入時不讀門格（讀方塊會同步載入 B），記成 NOT_LOADED。其他列 B 一直由測試票保持，照舊讀門格。
+            s.put("bDoor", chain.unloadedB() && bAnyUnloaded() ? "NOT_LOADED" : doorSummary(b));
             s.put("aLoaded", aLoaded(overworld));
             s.put("aDoor", aLoaded(overworld) ? doorSummary(overworld) : "NOT_LOADED");
             s.put("pose", participant == null ? "NONE" : M7HomeClosurePhases.pose(participant.player()));
@@ -1209,6 +1259,7 @@ final class M7HomeChainPhases {
             s.put("registryEnabled", registryEnabled());
             s.put("registryPowerState", powerState());
             s.put("rootTicketLease", rootLeasePresent());
+            s.put("entryTicketLease", entryLeasePresent());
             s.put("gameTime", overworld.getTime());
             return s;
         }
@@ -1342,6 +1393,28 @@ final class M7HomeChainPhases {
                 var owner = servers.get(server);
                 return owner != null && ((Map<?, ?>) M7HomeClosurePhases.field(type, owner, "leases")).containsKey(sid);
             } catch (ReflectiveOperationException failure) { throw new IllegalStateException("M7_HOME_ROOT_TICKETS_UNREADABLE", failure); }
+        }
+
+        /** B 收尾票 owner（{@code HomeEntryTickets}，T4B）是否有本 SID 的 lease（反射讀 private 欄位，只讀）。 */
+        private boolean entryLeasePresent() {
+            try {
+                var type = Class.forName("dev.quantumchamber.collapse.HomeEntryTickets");
+                var servers = (Map<?, ?>) M7HomeClosurePhases.field(type, null, "servers");
+                var owner = servers.get(server);
+                return owner != null && ((Map<?, ?>) M7HomeClosurePhases.field(type, owner, "leases")).containsKey(sid);
+            } catch (ReflectiveOperationException failure) { throw new IllegalStateException("M7_HOME_ENTRY_TICKETS_UNREADABLE", failure); }
+        }
+
+        /** B（同 FRAME 的 homeChunks）是否有任一 chunk 以 FULL 載入；只查詢、不載入。 */
+        private boolean bAnyLoaded() {
+            for (var pos : chunkSet()) if (b.getChunkManager().getWorldChunk(pos.x, pos.z) != null) return true;
+            return false;
+        }
+
+        /** B 的 homeChunks 是否有任一 chunk 尚未以 FULL 載入；只查詢、不載入。 */
+        private boolean bAnyUnloaded() {
+            for (var pos : chunkSet()) if (b.getChunkManager().getWorldChunk(pos.x, pos.z) == null) return true;
+            return false;
         }
 
         private List<String> eventNames() { return events.stream().map(event -> (String) event.get("event")).toList(); }

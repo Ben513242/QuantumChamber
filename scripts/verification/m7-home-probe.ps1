@@ -1,11 +1,12 @@
 # M7 T4 Phase B1／B2a／P1：Windows 原生跨 JVM 鏈。close 矩陣 close-{ordinary|sealed|passable}-{cut}（39 列，B1）與 B2a 的其餘鏈（restart-*、receipt-*，5 列），
-# 以及 T4 P1 的 receipt-mismatch-stop（收據不符時正常停服；halt 點在停服完成之後）與 T4 P2 的 receipt-write-fail-stop（journal 正式寫出故障期間正常停服）。
+# 以及 T4 P1 的 receipt-mismatch-stop（收據不符時正常停服；halt 點在停服完成之後）、T4 P2 的 receipt-write-fail-stop（journal 正式寫出故障期間正常停服）
+# 與 T4B 的 restart-close-unloaded-b（reopen 時 B 無人無票，由正式 B 收尾票收尾）。
 # 每列一個全新 owned root（永久保留），兩個 phase 各一個獨立 JVM：crash 在預定點 halt(77)，reopen 以新 JVM 重開、正常停服 exit 0。沿 probe-common.ps1 的 owned phase 機制
 # （PID＋啟動時間身分、逾時停止、log 收集）與 m6-universe-probe.ps1 的 readonly summary＋VerifySummary＋SelfTest 做法。
 # 參數：
 #   -Only <列名,...>     只跑指定列（manifest 順序）；-DoorState ordinary|sealed|passable 只跑 close 矩陣該門態的 13 列（B2 CI 分片）；
 #   -Family close|restart|receipt 只跑該族的列（close＝39 列）。三個 -DoorState 分片與 restart、receipt 兩族的聯集恰為全部列、互不重疊。
-#   -VerifySummary <檔>  唯讀重驗已存 summary（逐列、逐 phase、逐退出碼與 receipt hash／內容）；-SelfTest 另跑負控（不改原件）。只有選擇 all、恰為 windows.native 全部 46 列、
+#   -VerifySummary <檔>  唯讀重驗已存 summary（逐列、逐 phase、逐退出碼與 receipt hash／內容）；-SelfTest 另跑負控（不改原件）。只有選擇 all、恰為 windows.native 全部 47 列（T4B 起）、
 #                        treeClean=true 的那一份才輸出 M7_HOME_VERIFIED_COMPLETE PASS（T4 完整 PASS）；其他（-Only、-DoorState、-Family）只輸出 M7_HOME_VERIFIED_SHARD PASS
 #                        （分片 PASS）。-RequireComplete 時分片以 M7_HOME_NOT_COMPLETE 失敗。treeClean 不是 true 的 summary 一律以 M7_HOME_SAVED_TREE_DIRTY 拒絕。
 #   -VerifyAggregate <檔,...>  唯讀彙總多份分片 summary（T4 B2b-2）：成員全部 treeClean、同一個 HEAD、各自通過單份驗證，列的聯集恰為 windows.native、沒有重疊；
@@ -51,6 +52,10 @@ $extras=@(
     [pscustomobject]@{row='restart-ready-low-no-root';family='restart';door='passable';cut='low-saved';index=-1;crash=@();reopen=@($cuts);outcome=@('APPLIED')
         crashObserved=@($extraSetup+$readySetup+@('spawnChunkRadiusZero','spawnSearchAvoidsA','aPowered','poweredNoLatch','aLow','lowNoLatch','baselineLow','aDoorUnchanged'))
         reopenObserved=@($extraReopen+@('playerClosedDoor','readyLowFromCrash','scanNoLatchOnLow','aNotLoadedAtStart','spawnSearchAvoidsA','aNotLoadedAfterLogin','inStartupSet','crossedKept','aNeverLoadedDuringClose'))}
+    # T4B（spec v1.6 C）：READY 時 crash，reopen 時 B 無人無票（不讀 B 門、參與者收尾之後才登入），正式 B 收尾票載入 B 收尾；所以沒有 bDoorDiskState。
+    [pscustomobject]@{row='restart-close-unloaded-b';family='restart';door='passable';cut='ready-saved';index=-1;crash=@();reopen=@($cuts);outcome=@('APPLIED')
+        crashObserved=@($extraSetup+$readySetup+@('baselineReady','aDoorUnchanged'))
+        reopenObserved=@(@($extraReopen | Where-Object {$_ -cne 'bDoorDiskState'})+@('aDoorAtStart','playerClosedDoor','readyFromCrash','inStartupSet','bNotLoadedAtStart','crossedKept','bClosedByTheEntryTicket'))}
     [pscustomobject]@{row='receipt-existing';family='receipt';door='ordinary';cut='remove-rejected';index=-1;crash=@($cuts[0..11]+@('remove-rejected'));reopen=$fromExisting;outcome=@('UNCHANGED')
         crashObserved=@($extraSetup+@('disableAcked','stopLatched'))
         reopenObserved=@($extraReopen+@('aDoorAtStart','playerClosedDoor','closeFromCrash','busyAtStart'))}
@@ -73,7 +78,7 @@ $manifest=@(@(foreach($door in $doors){for($i=0;$i -lt $cuts.Count;$i++){[pscust
 $inventory=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'm7-inventory.json') -Raw | ConvertFrom-Json
 if(@($inventory.windows.native).Count -ne $manifest.Count -or (@($inventory.windows.native) -join ',') -cne ($manifest.row -join ',')){throw 'M7_HOME_INVENTORY：m7-inventory.json windows.native 與固定矩陣不符'}
 $shards=@(@(foreach($door in $doors){,@($manifest | Where-Object {$_.family -ceq 'close' -and $_.door -ceq $door} | ForEach-Object row)})+@(foreach($name in 'restart','receipt'){,@($manifest | Where-Object family -CEQ $name | ForEach-Object row)}))
-if(((@($shards | ForEach-Object {$_.Count})) -join ',') -cne '13,13,13,3,4' -or ((@($shards | ForEach-Object {$_}) | Sort-Object) -join ',') -cne (($manifest.row | Sort-Object) -join ',') -or @($shards | ForEach-Object {$_} | Sort-Object -Unique).Count -ne $manifest.Count){throw 'M7_HOME_SHARDS：三個 -DoorState 分片與 restart、receipt 兩族的聯集必須恰為全部列且互不重疊'}
+if(((@($shards | ForEach-Object {$_.Count})) -join ',') -cne '13,13,13,4,4' -or ((@($shards | ForEach-Object {$_}) | Sort-Object) -join ',') -cne (($manifest.row | Sort-Object) -join ',') -or @($shards | ForEach-Object {$_} | Sort-Object -Unique).Count -ne $manifest.Count){throw 'M7_HOME_SHARDS：三個 -DoorState 分片與 restart、receipt 兩族的聯集必須恰為全部列且互不重疊'}
 
 function Get-M7Group($spec) {
     if($spec.family -cne 'close'){return $spec.family.ToUpperInvariant()}
@@ -220,6 +225,11 @@ function Assert-M7ExtraCrash($receipt,$spec,[string]$Nonce,[string]$StartupNonce
             $h.flushed.present -and $h.flushed.state -ceq 'PASSAGE_READY' -and $h.flushed.stopReason -ceq 'NONE' -and $h.flushed.text -ceq $b.row -and $h.queued -eq $false -and
             $h.registryEnabled -eq $true -and $h.registryPowerState -ceq 'RETURNING' -and @($b.crossed).Count -eq 1 -and @($h.receipts).Count -eq 0 -and $h.busy -eq $true -and $h.bDoor -ceq 'OPEN/PASSABLE_X'
         }
+        'restart-close-unloaded-b' {
+            $h.flushed.present -and $h.flushed.state -ceq 'PASSAGE_READY' -and $h.flushed.stopReason -ceq 'NONE' -and $h.flushed.close.kind -ceq 'NONE' -and $h.flushed.text -ceq $b.row -and
+            $h.queued -eq $false -and $h.registryEnabled -eq $true -and @($b.crossed).Count -eq 1 -and @($h.receipts).Count -eq 0 -and $h.busy -eq $true -and $h.bDoor -ceq 'OPEN/PASSABLE_X' -and
+            $h.entryTicketLease -eq $false
+        }
         'receipt-existing' {
             $h.flushed.present -and $h.current.present -and $h.current.text -ceq $h.flushed.text -and $h.flushed.close.kind -ceq 'CLOSE' -and $h.flushed.close.reason -ceq 'ROOT_DISABLED' -and
             -not $h.pending -and -not $h.rollForwardPending -and -not $h.quarantined -and ((Get-M7Names $h.receipts) -join ',') -ceq $dat -and $h.receipt.present -eq $true -and
@@ -272,11 +282,15 @@ function Assert-M7ExtraReopen($receipt,$spec,$crash,[string]$Nonce,[string]$Star
     if($sf.journalSha256 -cne $crash.atHalt.journalSha256 -or $sf.registrySha256 -cne $crash.atHalt.registrySha256 -or -not (Test-M7Json @($sf.receipts) @($crash.atHalt.receipts))){throw "M7_HOME_REOPEN_START_FILES：$($spec.row)"}
     $e0=$receipt.early;$s=$receipt.start;$e=$receipt.end;$b=$crash.baseline
     $existing=$spec.row -cin @('receipt-existing','receipt-mismatch-stop','receipt-write-fail-stop')
-    $diskDoor=if($existing){'OPEN/NONE'}else{$initialDoor[$spec.door]}
-    if($s.bDoor -cne $diskDoor -or $s.busy -ne ($spec.row -cne 'receipt-player-closed') -or -not (Test-M7Json $s.pose $b.pose)){throw "M7_HOME_REOPEN_START：$($spec.row) bDoor=$($s.bDoor)"}
+    # T4B：B 無人無票列開服時不讀 B 門（NOT_LOADED）、參與者還沒登入（NONE）。
+    $unloadedB=$spec.row -ceq 'restart-close-unloaded-b'
+    $diskDoor=if($existing){'OPEN/NONE'}elseif($unloadedB){'NOT_LOADED'}else{$initialDoor[$spec.door]}
+    $startPose=if($unloadedB){'NONE'}else{$b.pose}
+    if($s.bDoor -cne $diskDoor -or $s.busy -ne ($spec.row -cne 'receipt-player-closed') -or -not (Test-M7Json $s.pose $startPose)){throw "M7_HOME_REOPEN_START：$($spec.row) bDoor=$($s.bDoor)"}
     $earlyOk=switch($spec.row){
         'restart-enable-before-entry' {$e0.stopped -eq $false -and $e0.registryEnabled -eq $false -and $e0.enableBeforeScan -eq $false -and $e0.registryEnabledAfterEnable -eq $false -and $e0.rowAfterEnable -ceq $b.row}
         'restart-ready-low-no-root' {$e0.stopped -eq $false -and $e0.aLoaded -eq $false -and $e0.registryEnabled -eq $true}
+        'restart-close-unloaded-b' {$e0.stopped -eq $false -and $e0.registryEnabled -eq $true}
         'restart-ready-stop-crossed' {$e0.stopped -eq $true -and $e0.registryEnabled -eq $true}
         default {$true}
     }
@@ -284,14 +298,18 @@ function Assert-M7ExtraReopen($receipt,$spec,$crash,[string]$Nonce,[string]$Star
     $expectedDoor=if($spec.row -ceq 'receipt-player-closed'){'CLOSED/NONE'}else{'OPEN/NONE'}
     $repaired=$spec.family -ceq 'restart'
     if($e.current.present -or $e.flushed.present -or $e.pending -or $e.rollForwardPending -or $e.quarantined -or $e.journalSessions -ne 0 -or $e.bDoor -cne $expectedDoor -or $e.busy -or $e.rootTicketLease -or
-        $e.registryEnabled -ne $repaired -or -not (Test-M7Json $e.pose $b.pose)){throw "M7_HOME_REOPEN_END：$($spec.row)"}
+        $e.entryTicketLease -ne $false -or $e.registryEnabled -ne $repaired -or -not (Test-M7Json $e.pose $b.pose)){throw "M7_HOME_REOPEN_END：$($spec.row)"}
+    # T4B（spec v1.6 C）：B 無人無票列在 CLOSE 凍結之後的每一個交接事件都持有 B 收尾票、B 沒有玩家，凍結之前（before-close、after-close）沒有票；其他列 B 由測試票保持，從不取 B 收尾票。
+    $ticketBad=@(if($unloadedB){@($receipt.events) | Where-Object {$_.entryTicket -ne ($_.event -cnotin @('before-close','after-close')) -or $_.bPlayers -ne 0}}else{@($receipt.events) | Where-Object {$_.entryTicket -ne $false}})
+    if($ticketBad.Count){throw "M7_HOME_REOPEN_B_TICKET：$($spec.row) $(@($ticketBad | ForEach-Object {"$($_.event):$($_.entryTicket)/$($_.bPlayers)"}) -join ',')"}
     $close=$e.receipt.close
-    $reason=if($spec.row -ceq 'restart-ready-low-no-root'){'RESTART_CLOSED'}else{'ROOT_DISABLED'}
+    $reason=if($spec.row -cin @('restart-ready-low-no-root','restart-close-unloaded-b')){'RESTART_CLOSED'}else{'ROOT_DISABLED'}
     if(-not $e.receipt.present -or $close.kind -cne 'CLOSE' -or $close.reason -cne $reason -or $close.doorGoal -cne 'OPEN'){throw "M7_HOME_REOPEN_RECEIPT：$($spec.row)"}
     $originOk=switch($spec.row){
         'restart-enable-before-entry' {$close.evidence -ceq "RootStop[reason=ROOT_DISABLED, observedAtGameTime=$($e0.gameTime)]" -and [long]$close.closedAt -ge [long]$e0.gameTime}
         'restart-ready-stop-crossed' {$close.evidence -ceq "RootStop[reason=ROOT_DISABLED, observedAtGameTime=$($b.stoppedAt)]" -and [long]$close.closedAt -ge [long]$e0.gameTime}
         'restart-ready-low-no-root' {$close.evidence -ceq "RestartClosed[startupInstanceUuid=$($receipt.startupInstance), observedAtGameTime=$($close.closedAt)]" -and [long]$close.closedAt -ge [long]$e0.gameTime}
+        'restart-close-unloaded-b' {$close.evidence -ceq "RestartClosed[startupInstanceUuid=$($receipt.startupInstance), observedAtGameTime=$($close.closedAt)]" -and [long]$close.closedAt -ge [long]$e0.gameTime}
         'receipt-existing' {Test-M7Json $close $crash.atHalt.flushed.close}
         'receipt-mismatch-stop' {Test-M7Json $close $crash.atHalt.flushed.close}
         'receipt-write-fail-stop' {Test-M7Json $close $crash.atHalt.flushed.close}

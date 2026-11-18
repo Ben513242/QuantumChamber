@@ -26,10 +26,20 @@ public final class SlotAllocator {
         retained.get().forEach(lease -> boxes.add(lease.bounds()));
         return coverage(boxes);
     }
-    private final Map<java.util.UUID, Set<Long>> rootRefs = new LinkedHashMap<>();
+    /**
+     * 原艙票（A，原版主世界）與 B 收尾票（投影宇宙）的覆蓋鍵（M7 spec v1.6 C）：exact world＋chunk。同 world 同 chunk 才去重；A 與 B 同 XZ 異世界各記一格。
+     * 不同 SID 各記責任（{@link #rootRefs} 以 SID 為 key），聯集只用於計量。
+     */
+    public record RootChunk(net.minecraft.util.Identifier world, long chunk) {
+        public RootChunk { java.util.Objects.requireNonNull(world, "world"); }
+    }
+    private final Map<java.util.UUID, Set<RootChunk>> rootRefs = new LinkedHashMap<>();
 
-    /** 走廊只在固定走廊世界，原艙只在原版主世界；兩個世界的同座標各計一格。 */
-    public boolean reserveRoot(java.util.UUID sid, Set<Long> chunks) {
+    /**
+     * 走廊只在固定走廊世界；原艙票在原版主世界、B 收尾票在投影宇宙，都不是走廊世界，所以走廊覆蓋與原艙／B 覆蓋相加。每 SID 同時最多一份 A 票或 B 收尾票
+     * （{@code rootRefs} 以 SID 為 key），server 合計 ≤64 份、每份 ≤4 refs（256 refs），與走廊共用 4096 coverage。
+     */
+    public boolean reserveRoot(java.util.UUID sid, Set<RootChunk> chunks) {
         if (chunks.isEmpty() || chunks.size() > 4 || rootRefs.size() >= 64 || rootRefs.containsKey(sid)) return false;
         var corridor = corridorCoverage(leases.values().stream().map(SlotLease::bounds).toList());
         if (corridor.isEmpty()) return false;
@@ -49,8 +59,8 @@ public final class SlotAllocator {
 
     public void releaseRoot(java.util.UUID sid) { rootRefs.remove(sid); }
 
-    private Set<Long> rootCoverage() {
-        var root = new HashSet<Long>();
+    private Set<RootChunk> rootCoverage() {
+        var root = new HashSet<RootChunk>();
         rootRefs.values().forEach(root::addAll);
         return root;
     }

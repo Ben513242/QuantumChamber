@@ -117,7 +117,7 @@ jobs:
             run/m6-universe-*/world/dimensions/quantumchamber/universe/**
           if-no-files-found: error
 
-  # M7 T4 B2b-3：Windows 原生 M7 回程終局跨 JVM 鏈（46 列）分四片平行執行：三個門態各 13 列，restart 與 receipt 兩族（3＋4 列）同一片依序執行。
+  # M7 T4 B2b-3：Windows 原生 M7 回程終局跨 JVM 鏈（47 列，T4B 起）分四片平行執行：三個門態各 13 列，restart 與 receipt 兩族（4＋4 列）同一片依序執行。
   # 分片的單份驗證只算分片 PASS（M7_HOME_VERIFIED_SHARD），T4 完整 PASS 只由下方彙總 job 的 -VerifyAggregate 給出。
   m7-home-native:
     strategy:
@@ -260,7 +260,7 @@ jobs:
               }
             }
             & ./scripts/verification/m7-home-probe.ps1 -VerifyAggregate ($summaries -join ',') -ExpectedHead $env:GITHUB_SHA -SelfTest | Tee-Object -FilePath $log -Append | Tee-Object -Variable aggregateOutput
-            $complete = @($aggregateOutput | Where-Object { "$_" -cmatch ('^M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=46 phases=92 .* HEAD=' + [regex]::Escape($env:GITHUB_SHA) + '（') })
+            $complete = @($aggregateOutput | Where-Object { "$_" -cmatch ('^M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=47 phases=94 .* HEAD=' + [regex]::Escape($env:GITHUB_SHA) + '（') })
             if ($complete.Count -ne 1) { throw 'M7_HOME_CI_AGGREGATE_NOT_COMPLETE' }
           } catch {
             @("M7_HOME_CI_AGGREGATE_FAIL $($_.Exception.Message)", '--- error record ---', ($_ | Out-String).TrimEnd(), '--- exception ---', $_.Exception.ToString(), '--- script stack ---', "$($_.ScriptStackTrace)") | Add-Content -LiteralPath $log -Encoding utf8

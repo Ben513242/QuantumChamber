@@ -61,6 +61,9 @@ import org.slf4j.LoggerFactory;
  * <li><b>交接</b>（§5.3 :172）：exact B 依 DoorGoal 實際改門（普通關門也會改，不以膜已是 NONE 當完成）→ B 相關 chunks 原生 checkpoint → 發佈或 exact 驗既有單 SID 收據
  *     → 同一 tick 再確定門仍是目標 → 以一次性 {@link HomeClosureProof} checked 移除熱列 → 釋放原艙票。任何一步未知或錯配都保留 CLOSE 與 busy，下一個 tick 再試；
  *     不操作 A，也不掃歷史。</li>
+ * <li><b>B 收尾票</b>（M7 spec v1.6 C）：本類是 {@link HomeEntryTickets} 的唯一使用者。CLOSE 已 checked 而 B 未載入，或開服集合中曾 READY 的 AUTHORITY_UNREADABLE
+ *     要核 B 時，先釋放同 SID 的 A 票再取 ≤4 refs、200 tick 的 B 收尾票；取不到或票期內未就緒時 WARN、沿 per-SID 退避重取，退避到上限仍失敗再記一則 ERROR。
+ *     checked 移除、退避都釋放票。B 本來就載入時不取票。</li>
  * </ul>
  * 只在 server thread 執行；三個入口（{@link #step}、{@link #onParticipantClose}、{@link #onEntryStopped}）的核對與寫入都在該 SID 的 session operation guard 內
  * （M7 spec §9.1 :249），同 SID 已有進行中的操作時不寫入（參與者關門與 B 停止訊號另記一則 WARN）。每一則 log 都帶 {@link CollapseService#LOG_MARKER}（不屬於任何 session 的帶 {@link CollapseService#TICK_LOG_MARKER}）。
@@ -81,6 +84,8 @@ public final class HomeClosure {
         final Map<UUID, String> warned = new HashMap<>();
         /** 因同 SID 已有進行中的操作而拒絕過的入口（{@link #refusedUnderGuard}）；與 {@link #warned} 分開，不和其他原因共用去重鍵。 */
         final Map<UUID, Set<String>> guardRefused = new HashMap<>();
+        /** B 收尾票退避到上限仍失敗、已記 ERROR 的 SID（M7 spec v1.6 C：每個 server instance 每 SID 一則）。 */
+        final Set<UUID> ticketErrored = new HashSet<>();
         Context(Set<UUID> startup) { this.startup = Set.copyOf(startup); }
     }
 
@@ -220,8 +225,21 @@ public final class HomeClosure {
         if (HomeRootFence.queued(server, sid)) return;
         var context = CONTEXTS.get(server);
         var startup = context != null && context.startup.contains(sid) ? Optional.of(context.instance) : Optional.<UUID>empty();
-        boolean recovered = row.state() == SessionState.SEALED && startup.isPresent()
-                && HomeEndpointAuthority.inspectEntry(server, row.entryEndpoint()) == HomeEndpointAuthority.EntryStatus.VALID;
+        boolean recovered = false;
+        if (row.state() == SessionState.SEALED && startup.isPresent()) {
+            var status = HomeEndpointAuthority.inspectEntry(server, row.entryEndpoint());
+            // M7 spec v1.6 C 第 2 種情況：開服集合中曾 READY 的 AUTHORITY_UNREADABLE，RESTART_CLOSED 之前要載入 B 才能核 entry 是否恢復（B 未載入時 inspectEntry 是 UNKNOWN）。
+            if (status == HomeEndpointAuthority.EntryStatus.UNKNOWN && restartVerifies(server, row) && entryUnloaded(server, row)) {
+                var backoff = backoff(context, sid);
+                if (!backoff.ready(server.getTicks()) || !entryTicketReady(server, row, backoff, HomeEntryTickets.Purpose.RESTART_VERIFY)) return;
+                status = HomeEndpointAuthority.inspectEntry(server, row.entryEndpoint());
+                if (status != HomeEndpointAuthority.EntryStatus.VALID) {
+                    entryTicketFailed(server, row, backoff, "開服收尾核對 B：B 已載入，但端點不是 exact 合法投影（" + status + "）");
+                    return;
+                }
+            }
+            recovered = status == HomeEndpointAuthority.EntryStatus.VALID;
+        }
         var close = decide(row, new Facts(server.getOverworld().getTime(), startup, recovered));
         if (close.isEmpty()) return;
         var latched = latch(server, journal, row, close.get());
@@ -294,7 +312,11 @@ public final class HomeClosure {
     }
 
     private static ServerWorld exactEntry(MinecraftServer server, HomeSessionRecord row) {
-        var entry = row.entryEndpoint();
+        return exactEntry(server, row.entryEndpoint());
+    }
+
+    /** exact live B world：Entry 的 world key 存在，而且是該 universe 目前的 active world；否則 null。 */
+    static ServerWorld exactEntry(MinecraftServer server, HomeSessionRecord.EntryEndpoint entry) {
         var world = server.getWorld(RegistryKey.of(RegistryKeys.WORLD, entry.worldKey()));
         return world != null && UniverseLifecycleService.resolveActive(server, entry.universeId()).orElse(null) == world ? world : null;
     }
@@ -319,14 +341,22 @@ public final class HomeClosure {
         return next;
     }
 
-    /** §5.3 :172 的交接：exact B 改門 → 原生 checkpoint → 收據 → 再驗 → checked 移除 → 釋放票。未就緒時保留 CLOSE 與 busy，下一個 tick 再試。 */
+    /**
+     * §5.3 :172 的交接：exact B 改門 → 原生 checkpoint → 收據 → 再驗 → checked 移除 → 釋放票。未就緒時保留 CLOSE 與 busy，下一個 tick 再試。
+     * M7 spec v1.6 C 第 1 種情況：CLOSE 已 checked、exact live B world 存在但 B 的 home chunks 或門鄰域尚未全部載入時，先以 B 收尾票（{@link HomeEntryTickets}，
+     * CLOSE_CONVERGE）有界載入 B；票期內 FULL 的那個 tick 照同一順序收尾，票期內仍未就緒才退避。B 本來就載入時不取票，行為與 T4 相同。
+     */
     private static void converge(MinecraftServer server, SessionRecoveryState journal, HomeSessionRecord row) {
         var sid = row.sessionUuid();
         var context = CONTEXTS.get(server);
-        var backoff = context == null ? new CollapseBackoff() : context.backoff.computeIfAbsent(sid, ignored -> new CollapseBackoff());
+        var backoff = backoff(context, sid);
         if (!backoff.ready(server.getTicks())) return;
         var close = (Close) row.home().closeIntent();
         var status = HomeEndpointAuthority.inspectEntry(server, row.entryEndpoint());
+        if (status == HomeEndpointAuthority.EntryStatus.UNKNOWN && entryUnloaded(server, row)) {
+            if (!entryTicketReady(server, row, backoff, HomeEntryTickets.Purpose.CLOSE_CONVERGE)) return;
+            status = HomeEndpointAuthority.inspectEntry(server, row.entryEndpoint());
+        }
         if (status != HomeEndpointAuthority.EntryStatus.VALID) {
             if (status != HomeEndpointAuthority.EntryStatus.UNKNOWN) warn(server, row, "B", "B 端點不是 exact 合法投影（" + status + "），保留結案與占用", null);
             return;
@@ -346,7 +376,7 @@ public final class HomeClosure {
             var applied = doors.applyTarget(world, frame, target);
             if (!applied.succeeded()) {
                 warn(server, row, "門", "B 門尚未改為結案目標（" + applied.outcome() + "），退避後重試", null);
-                backoff.failed(server.getTicks());
+                backOff(server, sid, backoff);
                 return;
             }
             ChunkSaveCheckpoint.save(server, Map.of(world, chunks));
@@ -357,18 +387,80 @@ public final class HomeClosure {
             if (!removed.removed()) {
                 warn(server, row, "移除", "回程熱列尚未 checked 移除（" + removed.status() + "），保留占用："
                         + removed.failure().map(FailureText::describe).orElse("無原因"), removed.failure().orElse(null));
-                backoff.failed(server.getTicks());
+                backOff(server, sid, backoff);
                 return;
             }
         } catch (IOException | RuntimeException failure) {
             warn(server, row, "交接", "回程收尾失敗，保留結案、收據原件與占用，退避後重試：" + FailureText.describe(failure), failure);
-            backoff.failed(server.getTicks());
+            backOff(server, sid, backoff);
             return;
         }
         HomeRootTickets.release(server, sid);
+        HomeEntryTickets.release(server, sid);
         if (context != null) { context.backoff.remove(sid); context.warned.remove(sid); context.guardRefused.remove(sid); }
         LOGGER.info(LOG_MARKER, "回程已收尾：B 門 {}、原生 checkpoint、收據與熱列移除都已 checked（{}）：session={} chamber={}", target, close.reason(),
                 sid, row.chamberUuid());
+    }
+
+    // ---- B 收尾票（M7 spec v1.6 C） ----
+
+    private static final String TICKET_UNAVAILABLE = "B 收尾票取不到（A 票＋B 收尾票合計 64 份／256 refs 或與走廊共用的 4096 coverage 已滿，或停服中）";
+    private static final String TICKET_EXPIRED = "B 收尾票在 " + HomeEntryTickets.LEASE_TICKS + " tick 內沒有就緒（B 的 home chunks 沒有全部 FULL，或收尾的其他前提仍未成立）";
+
+    private static CollapseBackoff backoff(Context context, UUID sid) {
+        return context == null ? new CollapseBackoff() : context.backoff.computeIfAbsent(sid, ignored -> new CollapseBackoff());
+    }
+
+    /** 記一次失敗並退避；退避期間不持 B 收尾票（釋放失敗時票 owner 保留未清的 refs，下一個 {@code START_SERVER_TICK} 依「列不再適用」或租期再清）。 */
+    private static void backOff(MinecraftServer server, UUID sid, CollapseBackoff backoff) {
+        backoff.failed(server.getTicks());
+        try { HomeEntryTickets.release(server, sid); }
+        catch (RuntimeException failure) { LOGGER.warn(LOG_MARKER, "退避時釋放 B 收尾票失敗，票 owner 下一個 tick 續清：session={}", sid, failure); }
+    }
+
+    /** exact live B world 存在，但 B 的 home chunks 或門鄰域尚未全部載入（非建立的查詢）。B 世界不存在時不取票（不猜另一個 B）。 */
+    private static boolean entryUnloaded(MinecraftServer server, HomeSessionRecord row) {
+        var world = exactEntry(server, row);
+        if (world == null) return false;
+        var frame = new ChamberFrame(row.entryEndpoint().controllerPos(), row.entryEndpoint().facing());
+        return !PassageTransferPolicy.homeChunks(frame).stream().allMatch(chunk -> world.getChunkManager().getWorldChunk(chunk.x, chunk.z) != null)
+                || !CollapseService.neighborhoodLoaded(world, frame);
+    }
+
+    /**
+     * B 收尾票是否已 FULL。還沒有票時先釋放同 SID 的 A 票（每 SID 同時最多一份 A 票或 B 收尾票）再取票；取不到、或上一份票租期到而被釋放時，記 WARN（同 SID 同原因一則）、
+     * 沿本類的 per-SID 退避（200→12000）後重取，退避到上限仍失敗再記一則 ERROR（每 instance 每 SID）。期間保留 CLOSE、busy 與 A 保護，不猜另一個 B，不改 A。
+     */
+    private static boolean entryTicketReady(MinecraftServer server, HomeSessionRecord row, CollapseBackoff backoff, HomeEntryTickets.Purpose purpose) {
+        var sid = row.sessionUuid();
+        if (HomeEntryTickets.consumeExpired(server, sid)) { entryTicketFailed(server, row, backoff, TICKET_EXPIRED); return false; }
+        var lease = HomeEntryTickets.lease(server, sid);
+        if (lease.isEmpty()) {
+            HomeRootTickets.release(server, sid);
+            lease = HomeEntryTickets.acquire(server, sid, row.entryEndpoint(), purpose);
+            if (lease.isEmpty()) { entryTicketFailed(server, row, backoff, TICKET_UNAVAILABLE); return false; }
+            LOGGER.info(LOG_MARKER, "B 未載入：取得 B 收尾票（{}，{} refs，租期 {} tick）有界載入 B：session={} chamber={}", purpose, lease.get().refs(),
+                    HomeEntryTickets.LEASE_TICKS, sid, row.chamberUuid());
+        }
+        return lease.get().full();
+    }
+
+    private static void entryTicketFailed(MinecraftServer server, HomeSessionRecord row, CollapseBackoff backoff, String reason) {
+        var sid = row.sessionUuid();
+        warn(server, row, "B 收尾票", reason + "：保留結案、占用與原艙保護，退避後重取", null);
+        backOff(server, sid, backoff);
+        var context = CONTEXTS.get(server);
+        if (backoff.delayTicks() >= CollapseBackoff.MAX_TICKS && (context == null || context.ticketErrored.add(sid)))
+            LOGGER.error(LOG_MARKER, "回程收尾的 B 收尾票退避到上限（{} tick）仍失敗，請管理員處理（確認 B 的世界與 chunk 能載入、伺服器的 chunk 票額度沒有被占滿）："
+                    + "{}；結案與占用保留，A 維持保護：session={} chamber={}", CollapseBackoff.MAX_TICKS, reason, sid, row.chamberUuid());
+    }
+
+    /** M7 spec v1.6 C 第 2 種情況：本 instance 開服集合中、曾 READY（通道開過）、CloseIntent=NONE 的 AUTHORITY_UNREADABLE SEALED。 */
+    static boolean restartVerifies(MinecraftServer server, HomeSessionRecord row) {
+        var context = CONTEXTS.get(server);
+        var h = row.home();
+        return context != null && context.startup.contains(row.sessionUuid()) && row.state() == SessionState.SEALED
+                && h.sealedReason().orElse(null) == Seal.AUTHORITY_UNREADABLE && h.closeIntent() instanceof None && h.passageOpenedAtGameTime() >= 0;
     }
 
     /**

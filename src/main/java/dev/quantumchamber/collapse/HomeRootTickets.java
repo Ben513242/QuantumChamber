@@ -5,7 +5,6 @@ import dev.quantumchamber.corridor.CorridorPageManager;
 import dev.quantumchamber.persistence.*;
 import dev.quantumchamber.superposition.*;
 import java.util.*;
-import java.util.stream.Collectors;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.server.MinecraftServer;
@@ -74,7 +73,7 @@ public final class HomeRootTickets {
         if(world==null) return Optional.empty();
         var chunks=PassageTransferPolicy.homeChunks(new ChamberFrame(root.controllerPos(),root.facing()));
         var pages=CorridorPageManager.forServer(server);
-        if (!pages.reserveRootCoverage(sid,chunks.stream().map(ChunkPos::toLong).collect(Collectors.toSet()))) return Optional.empty();
+        if (!pages.reserveRootCoverage(sid,world.getRegistryKey(),chunks)) return Optional.empty();
         var lease=new Lease(owner,world,sid,root,purpose,pages,now+200,backend);
         owner.leases.put(sid,lease);
         try {

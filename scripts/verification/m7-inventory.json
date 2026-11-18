@@ -97,7 +97,12 @@
       "quantumchamber:m1_empty|m7sealreleasegametests.rebuild_after_release_gets_new_identity_and_is_not_busy",
       "quantumchamber:m1_empty|m7sealreleasegametests.rebuilt_chamber_door_ignores_released_seal_after_restart_reapply",
       "quantumchamber:m1_empty|m7sealreleasegametests.door_authority_requires_origin_and_not_destroyed",
-      "quantumchamber:m1_empty|m7homeentryticketgametests.close_loads_unloaded_b_with_bounded_ticket"
+      "quantumchamber:m1_empty|m7homeentryticketgametests.close_loads_unloaded_b_with_bounded_ticket",
+      "quantumchamber:m1_empty|m7homeentryticketgametests.close_ticket_never_full_releases_and_backs_off",
+      "quantumchamber:m1_empty|m7homeentryticketgametests.close_ticket_budget_exhausted_warns_and_retries",
+      "quantumchamber:m1_empty|m7homeentryticketgametests.close_ticket_released_on_reload_and_stop",
+      "quantumchamber:m1_empty|m7homeentryticketgametests.restart_verify_ticket_loads_b_for_unreadable_seal",
+      "quantumchamber:m1_empty|m7homeentryticketgametests.close_ticket_releases_the_root_ticket_first"
     ]
   },
   "windows": {
@@ -152,6 +157,7 @@
       "restart-enable-before-entry",
       "restart-ready-stop-crossed",
       "restart-ready-low-no-root",
+      "restart-close-unloaded-b",
       "receipt-existing",
       "receipt-player-closed",
       "receipt-mismatch-stop",

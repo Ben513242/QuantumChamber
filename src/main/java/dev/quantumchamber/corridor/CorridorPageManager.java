@@ -335,9 +335,15 @@ public final class CorridorPageManager {
     }
     public boolean hasReservation(UUID sid) { requireThread(); return spaces.containsKey(sid); }
 
-    public boolean reserveRootCoverage(UUID sid, Set<Long> chunks) {
+    /**
+     * 原艙票（A，原版主世界）或 B 收尾票（投影宇宙）的覆蓋（M7 spec v1.6 C）：鍵是 exact world＋chunk，同 world 同 chunk 才去重；每 SID 同時最多一份，
+     * 與走廊共用 4096 coverage（{@link SlotAllocator#reserveRoot}）。
+     */
+    public boolean reserveRootCoverage(UUID sid, RegistryKey<net.minecraft.world.World> world, Collection<ChunkPos> chunks) {
         requireThread();
-        return allocator.reserveRoot(sid,chunks);
+        var keys=new LinkedHashSet<SlotAllocator.RootChunk>();
+        for (var chunk : chunks) keys.add(new SlotAllocator.RootChunk(world.getValue(),chunk.toLong()));
+        return allocator.reserveRoot(sid,keys);
     }
 
     public void releaseRootCoverage(UUID sid) {

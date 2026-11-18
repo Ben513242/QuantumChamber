@@ -145,6 +145,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         var manager=new SuperpositionSessionManager();
         ChamberSessions.install(manager);
         dev.quantumchamber.collapse.HomeRootTickets.initialize();
+        // M7 spec v1.6 C：回程收尾的 B 收尾票（與 A 票共用份數、refs 與 coverage 上限）。
+        dev.quantumchamber.collapse.HomeEntryTickets.initialize();
         ServerLifecycleEvents.START_DATA_PACK_RELOAD.register((owner,resources) -> manager.cancelAllProvisional(owner));
         ServerLifecycleEvents.SERVER_STARTED.register(manager::attach);
         ServerTickEvents.END_SERVER_TICK.register(manager::tick);
