@@ -60,6 +60,8 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                 var sid = UUID.randomUUID();
                 var dormant = p.dormant(sid, 39);
                 var witness = new LinkedHashMap<String, Boolean>();
+                // 每個 tick 結束時的觀察從凍結之前開始（只存在一個 tick 的票，test callback 看不到）。
+                var watch = RemovalWatch.start(server, sid, hooks);
                 long now = server.getOverworld().getTime();
                 c.assertTrue(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED, now)).committed(),
                         "原艙停止原因已 checked latch");
@@ -74,7 +76,6 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                     witness.put("closeWasUncheckedDuringTheFault", unchecked.stream().skip(1).allMatch(line -> line.startsWith("current=CLOSE flushed=NONE rollForward=true")));
                     witness.put("noTicketBeforeTheCloseIsChecked", unchecked.stream().allMatch(line -> line.endsWith("lease=NONE")));
                     var seen = new ArrayList<String>();
-                    var watch = RemovalWatch.start(server, sid, hooks);
                     M7HomeClosureGameTests.until(c, label + "/close", CLOSE_TICKS, () -> {
                         var lease = EntryTickets.describe(server, sid);
                         if (!lease.equals("NONE") && !seen.contains(lease)) seen.add(lease);
@@ -89,6 +90,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                                     && k.doorGoal() == DoorGoal.OPEN);
                             witness.put("rootUnlocked", !gate().globalChamberBusy(server, p.chamber));
                             witness.put("ticketReleasedInTheRemovalTick", watch.removedSeen() && !watch.leaseAfterRemoval());
+                            witness.put("noTicketWithoutACheckedCloseAtAnyTickEnd", !watch.leaseWithoutCheckedClose());
                             witness.put("noTicketAfterTheClose", EntryTickets.describe(server, sid).equals("NONE"));
                             var failure = witness.containsValue(false) ? new GameTestException("B_CLOSE_TICKET：B 收尾票的收尾不符：" + witness + " 票=" + seen
                                     + " unchecked=" + unchecked) : null;
@@ -634,8 +636,13 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
     }
 
     /**
-     * 「checked 移除的那個 tick 結束時已經沒有票」的觀察（plan Task 4B 變異「移除後不釋票」）：在 {@code END_SERVER_TICK} 的預設 phase（回程終局 owner 的推進）之後檢查。
-     * 票 owner 的 {@code START_SERVER_TICK} 會釋放不再適用的票，所以下一個 tick 的 test callback 看不到這個差別。只讀；收尾時停止觀察。
+     * 每個 tick 結束時的觀察，在 {@code END_SERVER_TICK} 的預設 phase（回程終局 owner 的推進）之後檢查。票 owner 的 {@code START_SERVER_TICK} 會釋放不再適用的票，所以
+     * 只存在一個 tick 的票，下一個 tick 的 test callback 看不到；這裡在同一個 tick 結束時看：
+     * <ul>
+     * <li>checked 移除的那個 tick 結束時已經沒有票（plan Task 4B 變異「移除後不釋票」）；</li>
+     * <li>flushed 的列還沒有 CLOSE（CLOSE 未 checked，例如凍結的寫出待確認）時從不持有 B 收尾票（變異「CLOSE 未 checked 就取票」）。</li>
+     * </ul>
+     * 只讀；收尾時停止觀察。
      */
     static final class RemovalWatch {
         private static final net.minecraft.util.Identifier PHASE = net.minecraft.util.Identifier.of("quantumchamber:m7_t4b_removal_watch");
@@ -643,7 +650,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         private static boolean registered;
         private final MinecraftServer server;
         private final UUID sid;
-        private volatile boolean removedSeen, leaseAfterRemoval;
+        private volatile boolean removedSeen, leaseAfterRemoval, leaseWithoutCheckedClose;
 
         private RemovalWatch(MinecraftServer server, UUID sid) { this.server = server; this.sid = sid; }
 
@@ -662,7 +669,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         private void observe(MinecraftServer owner) {
             if (owner != server || removedSeen) return;
             var journal = SessionRecoveryState.get(server);
-            if (journal.allSessions().containsKey(sid) || journal.allFlushedSessions().containsKey(sid)) return;
+            var flushed = journal.allFlushedSessions().get(sid);
+            if (flushed != null && !"CLOSE".equals(closeKind(flushed)) && EntryTickets.lease(server, sid) != null) leaseWithoutCheckedClose = true;
+            if (journal.allSessions().containsKey(sid) || flushed != null) return;
             removedSeen = true;
             leaseAfterRemoval = EntryTickets.lease(server, sid) != null;
         }
@@ -670,5 +679,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         boolean removedSeen() { return removedSeen; }
 
         boolean leaseAfterRemoval() { return leaseAfterRemoval; }
+
+        boolean leaseWithoutCheckedClose() { return leaseWithoutCheckedClose; }
     }
 }
