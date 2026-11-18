@@ -71,9 +71,12 @@ public final class M7SealReleaseGameTests implements FabricGameTest {
                 int comparator = M7RearmGameTests.comparator(world, frame);
                 boolean writable = ChamberProtectionService.get().mayMutate(world, frame.controllerPos().down(3));
                 if (record == null || record.powerState() != ChamberPowerState.OFF || comparator != 0 || !writable) {
-                    hooks.release();
-                    throw new GameTestException("PERMANENT_SEAL_NOT_RELEASED：永久封存的原艙停用並斷電之後仍受保護：power=" + power + " comparator=" + comparator
-                            + " 可寫=" + writable + " 封存列=" + journal.flushedRecords().get(sid).collapse().sealedReason());
+                    // 訊息先組好再收尾：收尾會以終局 API 移除封存列。
+                    var row = journal.flushedRecords().get(sid);
+                    var failure = new GameTestException("PERMANENT_SEAL_NOT_RELEASED：永久封存的原艙停用並斷電之後仍受保護：power=" + power + " comparator=" + comparator
+                            + " 可寫=" + writable + " 封存列=" + (row == null ? "ABSENT" : row.state() + "/" + row.collapse().sealedReason()));
+                    hooks.releaseAfter(failure);
+                    throw failure;
                 }
                 witness.put("dismantledByTheNativeSetter", world.setBlockState(frame.controllerPos(), Blocks.AIR.getDefaultState())
                         && !world.getBlockState(frame.controllerPos()).isOf(ModBlocks.CHAMBER_CONTROLLER));
