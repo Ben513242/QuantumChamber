@@ -201,6 +201,51 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         return runtime.state==SessionState.SUPERPOSITION || runtime.state==SessionState.MEASURED
                 || durable.state()==SessionState.MEASURED ? Presence.ACTIVE : Presence.ARMING;
     }
+    /**
+     * M7 spec v1.6 D（{@link ChamberSessionGateway#permanentlySealedOnly}）：讀本 server 的 journal、runtime／暫占與走廊 reservation，交給純函式
+     * {@link #permanentlySealedOnly(UUID, Map, Map, Map, Set, java.util.function.Predicate, boolean, java.util.function.Predicate)}。不在原 server thread、journal
+     * 不健康或讀取丟出時回 false（不依讀不到的權威放行）。只讀，不寫 journal 或任何 ledger。
+     */
+    @Override public boolean permanentlySealedOnly(MinecraftServer owner,UUID chamber) {
+        if(owner==null || owner!=server || !owner.isOnThread() || chamber==null) return false;
+        try {
+            journal.requireHealthy();
+            var pages=CorridorPageManager.forServer(owner);
+            return permanentlySealedOnly(chamber,journal.allSessions(),journal.allFlushedSessions(),journal.pendingSessions(),journal.quarantinedSessions(),
+                    journal::rollForwardPending,sessions.containsKey(chamber),sid -> pages.hasReservation(sid) || pages.operationInProgress(sid));
+        } catch(RuntimeException unreadable) { return false; }
+    }
+    /**
+     * M7 spec v1.6 D 的「只剩永久封存」判定（純函式）。只有下列全部成立時為真：
+     * <ul>
+     * <li>沒有 runtime 或暫占（{@code runtimeOrProvisional} 為假），也沒有送出中尚未確認的寫入（{@code pending} 為空）；</li>
+     * <li>這座艙在 current 或 flushed 至少有一列，每一列在 current 與 flushed 都存在而且相同，沒有 roll-forward 尚未確認、沒有隔離、沒有走廊 reservation 或進行中的操作；
+     *     連艙身分都無法確認的隔離列（不在 current 與 flushed）也不放行；</li>
+     * <li>每一列都是永久原因的 SEALED：舊列 EXISTING_INELIGIBLE、AUTHORITY_CORRUPT、PROJECTION_CONFLICT、TRANSFER_RECOVERY_REQUIRED（{@link dev.quantumchamber.collapse.SealedReason#retryable()}
+     *     為假）；HOME 列 ENTRY_AUTHORITY_INVALID、AUTHORITY_CORRUPT、TRANSFER_RECOVERY_REQUIRED。可重試與 restart-only 的原因、DORMANT、WAITING 一律不適用。</li>
+     * </ul>
+     */
+    static boolean permanentlySealedOnly(UUID chamber,Map<UUID,JournalSession> current,Map<UUID,JournalSession> flushed,Map<UUID,JournalSession> pending,
+            Set<UUID> quarantined,java.util.function.Predicate<UUID> rollForwardPending,boolean runtimeOrProvisional,java.util.function.Predicate<UUID> reserved) {
+        if(runtimeOrProvisional || !pending.isEmpty()) return false;
+        for(var sid : quarantined) if(!current.containsKey(sid) && !flushed.containsKey(sid)) return false;
+        var rows=new LinkedHashSet<UUID>();
+        for(var snapshot : List.of(current,flushed)) snapshot.forEach((sid,row) -> { if(row.chamberUuid().equals(chamber)) rows.add(sid); });
+        if(rows.isEmpty()) return false;
+        for(var sid : rows) {
+            var row=current.get(sid);
+            if(row==null || !row.equals(flushed.get(sid)) || rollForwardPending.test(sid) || quarantined.contains(sid) || reserved.test(sid)
+                    || !permanentSeal(row)) return false;
+        }
+        return true;
+    }
+    private static final Set<HomeSessionRecord.Seal> PERMANENT_HOME_SEALS=Set.of(HomeSessionRecord.Seal.ENTRY_AUTHORITY_INVALID,
+            HomeSessionRecord.Seal.AUTHORITY_CORRUPT,HomeSessionRecord.Seal.TRANSFER_RECOVERY_REQUIRED);
+    private static boolean permanentSeal(JournalSession row) {
+        if(row.state()!=SessionState.SEALED) return false;
+        if(row instanceof SessionRecoveryRecord old) return old.collapse().sealedReason().filter(reason -> !reason.retryable()).isPresent();
+        return row instanceof HomeSessionRecord home && home.home().sealedReason().filter(PERMANENT_HOME_SEALS::contains).isPresent();
+    }
     /** 互動仍綁定入場時的runtime與來源Controller；重啟return-only record沒有選擇權。 */
     public boolean candidateSourceAuthorized(MinecraftServer owner,SessionRecoveryRecord record) {
         requireServer(owner);
@@ -237,8 +282,10 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         finally { cancelProvisional(owner,chamber,id); }
     }
     private StartResult startClaimed(ServerWorld source,ChamberControllerBlockEntity controller,List<UUID> requested,UUID chamber,UUID id) {
+        // M7 spec v1.6 A：latch 為真（取消或回家之後尚未有玩家親手關門）時，與供電協調同樣拒絕。
         if(requested.isEmpty() || requested.size()>25
-                || new HashSet<>(requested).size()!=requested.size() || controller.activationBlocked() || controller.candidateRetryRequiresLow()) return StartResult.REJECTED;
+                || new HashSet<>(requested).size()!=requested.size() || controller.activationBlocked() || controller.candidateRetryRequiresLow()
+                || controller.rearmRequiresPlayerClose()) return StartResult.REJECTED;
         var preview=new ChamberActivationService().evaluateReadiness(source,controller);
         if(!preview.accepted() || !new HashSet<>(preview.participantUuids()).equals(new HashSet<>(requested))
                 || !source.isReceivingRedstonePower(controller.getPos())) return StartResult.REJECTED;

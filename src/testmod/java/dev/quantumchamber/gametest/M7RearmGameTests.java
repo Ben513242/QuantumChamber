@@ -8,8 +8,12 @@ import static dev.quantumchamber.gametest.M5GameTestSupport.moveOutside;
 import static dev.quantumchamber.gametest.M5GameTestSupport.whenTicks;
 
 import dev.quantumchamber.chamber.ChamberActivationService;
+import dev.quantumchamber.chamber.ChamberControllerBlock;
+import dev.quantumchamber.chamber.ChamberDoorService;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberGeometry;
+import dev.quantumchamber.chamber.ChamberLifecycleService;
+import dev.quantumchamber.chamber.ChamberRegistryState;
 import dev.quantumchamber.chamber.MembraneState;
 import dev.quantumchamber.collapse.CollapseService;
 import dev.quantumchamber.persistence.SessionRecoveryState;
@@ -99,6 +103,228 @@ public final class M7RearmGameTests implements FabricGameTest {
                 });
             });
         });
+    }
+
+    /**
+     * spec v1.6 A、V12（兩平台）：PREPARE 期間參與者關門之後，Controller 上鎖、比較器 3（全員有藥效、門關著、已供電也一樣），玩家開門仍是 3；玩家親手關門才解鎖，
+     * 比較器離開 3（READY 7：Windows 開始新 session，Ubuntu 的原生 checkpoint 預檢拒絕入場）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_rearm_idle", tickLimit = 20000)
+    public void participant_close_latch_shows_idle_until_player_reclose(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = Origin.open(c, hooks);
+        var f = origin.f;
+        var world = c.getWorld();
+        var p = f.players.getFirst().player();
+        var door = ChamberGeometry.localToWorld(f.frame, 3, 3, 0);
+        origin.collapse(false, (closeAt, chamber, sid) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            witness.put("closeAccepted", interact(world, door, p).isAccepted() && doorAll(world, f.frame, false, MembraneState.NONE));
+            witness.put("latchedByTheParticipantClose", f.controller().rearmRequiresPlayerClose());
+            witness.put("idleRightAfter", comparator(world, f.frame) == 3 && !departed(f.server, chamber));
+            at(c, closeAt + QUIET_TICKS, hooks, () -> {
+                witness.put("stillIdle", comparator(world, f.frame) == 3 && f.controller().rearmRequiresPlayerClose() && !departed(f.server, chamber));
+                witness.put("playerOpens", interact(world, door, p).isAccepted() && doorAll(world, f.frame, true, MembraneState.NONE));
+                witness.put("idleWhileOpen", comparator(world, f.frame) == 3 && f.controller().rearmRequiresPlayerClose());
+                at(c, closeAt + QUIET_TICKS + 2, hooks, () -> {
+                    witness.put("playerCloses", interact(world, door, p).isAccepted() && doorAll(world, f.frame, false, MembraneState.NONE));
+                    witness.put("unlockedByThePlayerClose", !f.controller().rearmRequiresPlayerClose());
+                    witness.put("leavesIdle", comparator(world, f.frame) == 7);
+                    if (departed(f.server, chamber)) {
+                        f.trustedTeardown(closeAt + QUIET_TICKS + 3, () -> {
+                            origin.release();
+                            c.assertTrue(!witness.containsValue(false), "參與者關門之後的比較器：" + witness);
+                            c.complete();
+                        });
+                        return;
+                    }
+                    witness.put("noCheckpointPlatformStaysWithoutSession", !com.sun.jna.Platform.isWindows());
+                    f.power();
+                    origin.release();
+                    c.assertTrue(!witness.containsValue(false), "參與者關門之後的比較器：" + witness);
+                    c.complete();
+                });
+            });
+        });
+    }
+
+    /**
+     * spec v1.6 A、V12：上鎖之後斷電再供電、停用再啟用、系統改門（一般開門、關門、sealed 量子膜與它的無主正規化）都不解鎖：每一步之後仍上鎖、比較器依狀態是 3 或 0，
+     * 沒有出發；之後再過一次 Controller 的排程刷新也一樣。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_rearm_survives", tickLimit = 20000)
+    public void rearm_latch_survives_power_cycle_enable_toggle_and_system_writes(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var f = new M2CorridorGameTests.NativeEntry(c, 1);
+        hooks.add(f::close);
+        var world = c.getWorld(); var server = f.server;
+        var witness = new LinkedHashMap<String, Boolean>();
+        var chamber = latchedAndPowered(c, f, hooks);
+        var lifecycle = new ChamberLifecycleService(ChamberRegistryState.get(server).registry());
+        var doors = new ChamberDoorService();
+        at(c, 3, hooks, () -> {
+            if (!holds(c, f, hooks, chamber, 3, "poweredLatched", witness)) return;
+            f.power();
+            at(c, 6, hooks, () -> {
+                if (!holds(c, f, hooks, chamber, 0, "lowLatched", witness)) return;
+                f.power();
+                at(c, 9, hooks, () -> {
+                    if (!holds(c, f, hooks, chamber, 3, "repoweredLatched", witness)) return;
+                    c.assertTrue(lifecycle.setEnabled(chamber, false), "停用");
+                    ChamberControllerBlock.refreshState(world, f.frame.controllerPos());
+                    if (!holds(c, f, hooks, chamber, 0, "disabledLatched", witness)) return;
+                    c.assertTrue(lifecycle.setEnabled(chamber, true), "啟用");
+                    ChamberControllerBlock.refreshState(world, f.frame.controllerPos());
+                    if (!holds(c, f, hooks, chamber, 3, "reenabledLatched", witness)) return;
+                    witness.put("systemOpens", doors.applyTarget(world, f.frame, ChamberDoorService.DoorState.OPEN).outcome() == ChamberDoorService.ApplyResult.Outcome.APPLIED);
+                    if (!holds(c, f, hooks, chamber, 3, "afterSystemOpen", witness)) return;
+                    witness.put("systemCloses", doors.applyTarget(world, f.frame, ChamberDoorService.DoorState.CLOSED).outcome() == ChamberDoorService.ApplyResult.Outcome.APPLIED);
+                    if (!holds(c, f, hooks, chamber, 3, "afterSystemClose", witness)) return;
+                    witness.put("systemSeals", doors.applyTarget(world, f.frame, ChamberDoorService.DoorState.sealed(f.frame.outwardFacing())).outcome()
+                            == ChamberDoorService.ApplyResult.Outcome.APPLIED);
+                    if (!holds(c, f, hooks, chamber, 3, "afterSystemMembrane", witness)) return;
+                    at(c, 13, hooks, () -> {
+                        witness.put("ownerlessMembraneNormalizedOpen", doorAll(world, f.frame, true, MembraneState.NONE));
+                        if (!holds(c, f, hooks, chamber, 3, "afterOwnerlessNormalization", witness)) return;
+                        witness.put("systemClosesAgain", doors.applyTarget(world, f.frame, ChamberDoorService.DoorState.CLOSED).outcome()
+                                == ChamberDoorService.ApplyResult.Outcome.APPLIED);
+                        if (!holds(c, f, hooks, chamber, 3, "afterSecondSystemClose", witness)) return;
+                        at(c, 40, hooks, () -> {
+                            if (!holds(c, f, hooks, chamber, 3, "afterScheduledRefresh", witness)) return;
+                            finish(c, f, hooks, witness, "latch 經斷電、停用與系統改門不解鎖");
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    /**
+     * spec v1.6 A、V12：上鎖之後玩家親手開門（由關切成開）不解鎖；之後由系統 {@code applyTarget(CLOSED)} 關門，或直接寫方塊關門（等同指令或其他 mod 的寫入，
+     * 不經門服務），都不出發、比較器 3。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_rearm_open_then_system", tickLimit = 20000)
+    public void latch_survives_player_open_then_system_close(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var f = new M2CorridorGameTests.NativeEntry(c, 1);
+        hooks.add(f::close);
+        var world = c.getWorld();
+        var p = f.players.getFirst().player();
+        var door = ChamberGeometry.localToWorld(f.frame, 3, 3, 0);
+        var witness = new LinkedHashMap<String, Boolean>();
+        var chamber = latchedAndPowered(c, f, hooks);
+        at(c, 3, hooks, () -> {
+            if (!holds(c, f, hooks, chamber, 3, "poweredLatched", witness)) return;
+            witness.put("playerOpens", interact(world, door, p).isAccepted() && doorAll(world, f.frame, true, MembraneState.NONE));
+            if (!holds(c, f, hooks, chamber, 3, "afterPlayerOpen", witness)) return;
+            witness.put("systemCloses", new ChamberDoorService().applyTarget(world, f.frame, ChamberDoorService.DoorState.CLOSED).outcome()
+                    == ChamberDoorService.ApplyResult.Outcome.APPLIED);
+            if (!holds(c, f, hooks, chamber, 3, "afterSystemClose", witness)) return;
+            at(c, 6, hooks, () -> {
+                if (!holds(c, f, hooks, chamber, 3, "afterRefresh", witness)) return;
+                witness.put("playerOpensAgain", interact(world, door, p).isAccepted() && doorAll(world, f.frame, true, MembraneState.NONE));
+                if (!holds(c, f, hooks, chamber, 3, "afterSecondPlayerOpen", witness)) return;
+                M5GameTestSupport.writeDoor(world, f.frame, false, MembraneState.NONE);
+                ChamberControllerBlock.refreshState(world, f.frame.controllerPos());
+                witness.put("directWriteClosed", doorAll(world, f.frame, false, MembraneState.NONE));
+                if (!holds(c, f, hooks, chamber, 3, "afterDirectWrite", witness)) return;
+                at(c, 32, hooks, () -> {
+                    if (!holds(c, f, hooks, chamber, 3, "afterScheduledRefresh", witness)) return;
+                    finish(c, f, hooks, witness, "玩家開門之後由系統關門");
+                });
+            });
+        });
+    }
+
+    /** spec v1.6 A、V12：上鎖時直接呼叫正式 {@code start} 被拒，零副作用（沒有 journal 列、暫占、占用，玩家留在原處、藥效與背包不變）。 */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_rearm_formal_start", tickLimit = 20000)
+    public void formal_start_refuses_latched_origin(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var f = new M2CorridorGameTests.NativeEntry(c, 1);
+        hooks.add(f::close);
+        var world = c.getWorld(); var server = f.server;
+        var witness = new LinkedHashMap<String, Boolean>();
+        var chamber = latchedAndPowered(c, f, hooks);
+        at(c, 3, hooks, () -> {
+            if (!holds(c, f, hooks, chamber, 3, "poweredLatched", witness)) return;
+            var participants = f.players.stream().map(connection -> connection.player().getUuid()).toList();
+            var result = dev.quantumchamber.chamber.ChamberSessions.gateway().start(world, f.controller(), participants);
+            witness.put("rejected", result == dev.quantumchamber.chamber.ChamberSessionGateway.StartResult.REJECTED);
+            if (!holds(c, f, hooks, chamber, 3, "afterFormalStart", witness)) return;
+            var gate = (dev.quantumchamber.superposition.SuperpositionSessionManager) dev.quantumchamber.chamber.ChamberSessions.gateway();
+            witness.put("noProvisionalOrBusy", !gate.provisionalClaimed(server, chamber) && !gate.globalChamberBusy(server, chamber));
+            for (var connection : f.players) {
+                var player = connection.player();
+                witness.put(player.getUuid() + ".stayedInside", player.getServerWorld() == world
+                        && dev.quantumchamber.chamber.ChamberOccupantService.contains(ChamberGeometry.interiorBox(f.frame), player.getBoundingBox()));
+                witness.put(player.getUuid() + ".effectKept", player.hasStatusEffect(dev.quantumchamber.registry.ModEffects.QUANTUM_STATE));
+            }
+            try { f.assertInventory(); witness.put("inventoryKept", true); }
+            catch (GameTestException changed) { witness.put("inventoryKept", false); }
+            finish(c, f, hooks, witness, "上鎖時的正式 start");
+        });
+    }
+
+    /** spec v1.6 A、V12：上鎖之後 {@code /reload}（沿 M6 既有 GameTest 的觸發方式：直接觸發 Fabric 的 START／END_DATA_PACK_RELOAD）不解鎖、不出發。 */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_rearm_reload", tickLimit = 20000)
+    public void rearm_latch_survives_datapack_reload(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var f = new M2CorridorGameTests.NativeEntry(c, 1);
+        hooks.add(f::close);
+        var world = c.getWorld(); var server = f.server;
+        var witness = new LinkedHashMap<String, Boolean>();
+        var chamber = latchedAndPowered(c, f, hooks);
+        at(c, 3, hooks, () -> {
+            if (!holds(c, f, hooks, chamber, 3, "poweredLatched", witness)) return;
+            if (!(server.getResourceManager() instanceof net.minecraft.resource.LifecycledResourceManager resources))
+                throw new GameTestException("RELOAD_FIXTURE：server 的 resource manager 不是 LifecycledResourceManager");
+            net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.START_DATA_PACK_RELOAD.invoker().startDataPackReload(server, resources);
+            net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.END_DATA_PACK_RELOAD.invoker().endDataPackReload(server, resources, true);
+            ChamberControllerBlock.refreshState(world, f.frame.controllerPos());
+            if (!holds(c, f, hooks, chamber, 3, "afterReload", witness)) return;
+            at(c, 30, hooks, () -> {
+                if (!holds(c, f, hooks, chamber, 3, "afterScheduledRefresh", witness)) return;
+                finish(c, f, hooks, witness, "/reload 之後");
+            });
+        });
+    }
+
+    /** NativeEntry 的正式 A（一位有 Buff 的玩家在艙內、門關著）：登記、以 collapse owner 的入口上鎖，再供電。 */
+    private static UUID latchedAndPowered(TestContext c, M2CorridorGameTests.NativeEntry f, M2CorridorGameTests.TestHooks hooks) {
+        try {
+            c.assertTrue(new ChamberActivationService().attemptArm(c.getWorld(), f.controller()).accepted(), "正式 A 登記");
+            f.controller().requireRearmPlayerClose();
+            f.power();
+            return f.controller().chamberUuid();
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /**
+     * 仍上鎖、比較器是 {@code signal}、沒有出發時記下 {@code step}、回 true。已出發（latch 被錯誤清除）時先以正式 LOW 返還收尾，再以具名錯因失敗，回 false
+     * （呼叫端不再排後續步驟）。
+     */
+    private static boolean holds(TestContext c, M2CorridorGameTests.NativeEntry f, M2CorridorGameTests.TestHooks hooks, UUID chamber, int signal, String step,
+            Map<String, Boolean> witness) {
+        var world = c.getWorld();
+        if (departed(f.server, chamber)) {
+            var message = "REARM_LATCH_LOST：" + step + " 之後已出發（" + sessionsOf(f.server, chamber) + "）latch=" + f.controller().rearmRequiresPlayerClose()
+                    + " witness=" + witness;
+            f.trustedTeardown(Math.toIntExact(c.getTick()) + 1, () -> {
+                hooks.release();
+                throw new GameTestException(message);
+            });
+            return false;
+        }
+        witness.put(step, f.controller().rearmRequiresPlayerClose() && comparator(world, f.frame) == signal);
+        return true;
+    }
+
+    /** 斷電（仍供電時）、釋放 hooks（含玩家連線），斷言全部成立後完成。 */
+    private static void finish(TestContext c, M2CorridorGameTests.NativeEntry f, M2CorridorGameTests.TestHooks hooks, Map<String, Boolean> witness, String label) {
+        if (c.getWorld().isReceivingRedstonePower(f.frame.controllerPos())) f.power();
+        hooks.release();
+        c.assertTrue(!witness.containsValue(false), label + "：" + witness);
+        c.complete();
     }
 
     /** 這座艙在 journal（current、flushed）的所有 session。 */

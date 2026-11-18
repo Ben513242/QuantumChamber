@@ -107,6 +107,8 @@ public final class ChamberPowerCoordinator {
                     @Override public void setHeldByStart(boolean held) { controller.setHeldByStart(held); }
                     @Override public boolean candidateRetryRequiresLow() { return controller.candidateRetryRequiresLow(); }
                     @Override public void clearCandidateRetryRequiresLow() { controller.clearCandidateRetryRequiresLow(); }
+                    @Override public boolean rearmRequiresPlayerClose() { return controller.rearmRequiresPlayerClose(); }
+                    @Override public boolean permanentlySealedOnly() { return gateway.permanentlySealedOnly(world.getServer(), controller.chamberUuid()); }
                     @Override public ChamberSessionGateway.Presence presence() {
                         observed[0] = null;
                         return observed[0] = ChamberSessions.localPresence(world,controller.getPos());
@@ -193,6 +195,13 @@ public final class ChamberPowerCoordinator {
      * static 集合）：每次協調先讀出並清除，只有這一次再由 start 留下 ARMED（或依記號保持）時才重新記下，所以 presence 一旦不是 NONE、或結果不是這種 ARMED 就不再保持；block entity
      * 重新建立（重啟、chunk 重新載入、同一個 JVM 內重開 server）時記號是 false，存下的 ARMED 一律重新評估。production 的 session gateway 的 {@code start} 只回 STAGING／REJECTED，
      * 所以 production 的記號恆為 false。
+     * <p>M7 spec v1.6：
+     * <ul>
+     * <li>A（latch）：{@link SessionActions#rearmRequiresPlayerClose} 為真時，在未知 preset 要求斷電的檢查之後、資格預覽之前回 IDLE（比較器 3），不呼叫
+     *     {@code readiness} 與 {@code start}。DISABLED（INVALID）、ACTIVE（ARMED）、ARMING（READY）的判斷在它之前，順序不變；斷電不清 latch。</li>
+     * <li>D（永久封存的最小解除路徑）：presence 為 {@code COLLAPSE} 或 {@code BUSY}、原艙已停用、實際電位 LOW，而且 {@link SessionActions#permanentlySealedOnly}
+     *     時，power state 設為 OFF、回 INVALID（比較器 0），之後照既有流程核對並解除保護；重新供電或啟用時回到上方的既有保護。PASSAGE 不適用。</li>
+     * </ul>
      */
     static ChamberState reconcile(ChamberRegistry registry, UUID uuid, boolean powered, ChamberState current,
                                   Supplier<ArmAttemptResult> readiness, SessionActions sessions) {
@@ -206,10 +215,13 @@ public final class ChamberPowerCoordinator {
             if(!powered)sessions.clearCandidateRetryRequiresLow();
             var presence = Objects.requireNonNull(sessions.presence(), "presence");
             if (presence == ChamberSessionGateway.Presence.BUSY) {
+                if (releasesPermanentSeal(powered, record, sessions)) return releasePermanentSeal(registry, uuid);
                 registry.setPowerState(uuid,powered && record.enabled() ? ChamberPowerState.POWERED : ChamberPowerState.RETURNING);
                 return ChamberState.ARMED;
             }
             if (presence == ChamberSessionGateway.Presence.COLLAPSE || presence == ChamberSessionGateway.Presence.PASSAGE) {
+                if (presence == ChamberSessionGateway.Presence.COLLAPSE && releasesPermanentSeal(powered, record, sessions))
+                    return releasePermanentSeal(registry, uuid);
                 // M5 塌縮狀態（spec §10.7）：不走 pending／needsReturn、不呼叫 returnToOrigin（斷電等即時訊號由塌縮流程處理）。
                 boolean poweredAndEnabled = powered && record.enabled();
                 registry.setPowerState(uuid, poweredAndEnabled ? ChamberPowerState.POWERED : ChamberPowerState.RETURNING);
@@ -241,6 +253,8 @@ public final class ChamberPowerCoordinator {
             if (presence == ChamberSessionGateway.Presence.ACTIVE) return ChamberState.ARMED;
             if (presence == ChamberSessionGateway.Presence.ARMING) return ChamberState.READY;
             if(sessions.candidateRetryRequiresLow())return ChamberState.IDLE;
+            // M7 spec v1.6 A：取消或回家之後要玩家親手重新關門才再出發。
+            if(sessions.rearmRequiresPlayerClose())return ChamberState.IDLE;
             var preview = readiness.get();
             if (!preview.accepted()) return preview.readiness();
             if (sessions.activationBlocked()) return ChamberState.IDLE;
@@ -255,6 +269,17 @@ public final class ChamberPowerCoordinator {
             LOGGER.warn("艙體 {} 的 session 協調失敗，保留返還保護", uuid, failure);
             return ChamberState.ARMED;
         }
+    }
+
+    /** M7 spec v1.6 D：原艙已停用、實際電位 LOW，而且這座艙只剩已 checked 的永久封存（先看停用與電位，條件不成立時不查 journal）。 */
+    private static boolean releasesPermanentSeal(boolean powered, ChamberRecord record, SessionActions sessions) {
+        return !powered && !record.enabled() && sessions.permanentlySealedOnly();
+    }
+
+    /** M7 spec v1.6 D：解除保護（power state 設為 OFF，比較器 0）；封存列原樣保留，核對與解除保護照 {@code refreshNow} 的既有流程。 */
+    private static ChamberState releasePermanentSeal(ChamberRegistry registry, UUID uuid) {
+        registry.setPowerState(uuid, ChamberPowerState.OFF);
+        return ChamberState.INVALID;
     }
 
     /** R2 M5：記下這座艙的 ARMED 來自 start（{@link SessionActions#setHeldByStart}），回 ARMED。 */
@@ -313,6 +338,13 @@ public final class ChamberPowerCoordinator {
         void setHeldByStart(boolean held);
         boolean candidateRetryRequiresLow();
         void clearCandidateRetryRequiresLow();
+        /**
+         * M7 spec v1.6 A 的 latch（production 經 {@link ChamberControllerBlockEntity#rearmRequiresPlayerClose}，寫入 NBT）。協調只讀不清：清除只在玩家親手關門的路徑。
+         * T5～T7 也只經這組 API 檢查 latch。
+         */
+        boolean rearmRequiresPlayerClose();
+        /** M7 spec v1.6 D：這座艙只剩已 checked 的永久封存（production 經 {@link ChamberSessionGateway#permanentlySealedOnly}）。 */
+        boolean permanentlySealedOnly();
         ChamberSessionGateway.Presence presence();
         ChamberSessionGateway.StartResult start(List<UUID> participants);
         boolean returnToOrigin();

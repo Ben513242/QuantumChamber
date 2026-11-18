@@ -49,7 +49,11 @@
       "dev.quantumchamber.persistence.M7NativeSaveFailureTest.changedRowErrorsSeparateUnreadableFromMismatchAndSayWritesArePaused",
       "dev.quantumchamber.persistence.M7NativeSaveFailureTest.nativeErrorIsReportedAgainAfterASuccessfulWrite",
       "dev.quantumchamber.persistence.M7NativeSaveFailureTest.prepareFailureDuringNativeSaveSaysPrepareAndKeepsDirty",
-      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.receiptErrorIsReportedAgainAfterTheReceiptIsFixed"
+      "dev.quantumchamber.persistence.M7NativeSaveFailureTest.receiptErrorIsReportedAgainAfterTheReceiptIsFixed",
+      "dev.quantumchamber.chamber.M7RearmLatchTest.latchedOriginReturnsIdleWithoutStart",
+      "dev.quantumchamber.chamber.M7RearmLatchTest.permanentSealOnlyReachesOffWhenDisabledAndLow",
+      "dev.quantumchamber.chamber.M7RearmLatchTest.nbtRoundTripAndLegacyDefault",
+      "dev.quantumchamber.superposition.M7SealReleasePredicateTest.onlyCheckedPermanentRowsQualify"
     ],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.m7_scope_keeps_testmod_and_pacing",
@@ -79,7 +83,17 @@
       "quantumchamber:m1_empty|m7homeclosuregametests.published_receipt_mismatch_keeps_lock",
       "quantumchamber:m1_empty|m7homeclosuregametests.native_save_write_failure_keeps_pending",
       "quantumchamber:m1_empty|m7homeclosuregametests.native_save_skips_unhealthy_journal",
-      "quantumchamber:m1_empty|m7sealreleasegametests.permanent_sealed_origin_dismantles_after_disable_and_power_off"
+      "quantumchamber:m1_empty|m7sealreleasegametests.permanent_sealed_origin_dismantles_after_disable_and_power_off",
+      "quantumchamber:m1_empty|m7rearmgametests.participant_close_latch_shows_idle_until_player_reclose",
+      "quantumchamber:m1_empty|m7rearmgametests.rearm_latch_survives_power_cycle_enable_toggle_and_system_writes",
+      "quantumchamber:m1_empty|m7rearmgametests.latch_survives_player_open_then_system_close",
+      "quantumchamber:m1_empty|m7rearmgametests.formal_start_refuses_latched_origin",
+      "quantumchamber:m1_empty|m7rearmgametests.rearm_latch_survives_datapack_reload",
+      "quantumchamber:m1_empty|m7sealreleasegametests.permanent_sealed_stays_protected_while_enabled_or_powered",
+      "quantumchamber:m1_empty|m7sealreleasegametests.retryable_or_unchecked_seal_never_released",
+      "quantumchamber:m1_empty|m7sealreleasegametests.home_permanent_seal_allows_root_removal_after_disable",
+      "quantumchamber:m1_empty|m7sealreleasegametests.rebuild_after_release_gets_new_identity_and_is_not_busy",
+      "quantumchamber:m1_empty|m7sealreleasegametests.rebuilt_chamber_door_ignores_released_seal_after_restart_reapply"
     ]
   },
   "windows": {
@@ -88,7 +102,8 @@
       "quantumchamber:m1_empty|m7homespikegametests.checkpoint_capability_is_confirmed_on_windows",
       "quantumchamber:m1_empty|m7homespikegametests.candidate_and_remap_capacity_retry_keeps_published_team",
       "quantumchamber:m1_empty|m7rearmgametests.prepare_participant_close_requires_player_reclose_windows",
-      "quantumchamber:m1_empty|m7rearmgametests.passage_participant_close_requires_player_reclose_windows"
+      "quantumchamber:m1_empty|m7rearmgametests.passage_participant_close_requires_player_reclose_windows",
+      "quantumchamber:m1_empty|m7sealreleasegametests.rebuilt_chamber_prepare_participant_close_still_cancels_windows"
     ],
     "native": [
       "close-ordinary-before-close",

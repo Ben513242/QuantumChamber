@@ -23,6 +23,12 @@ public interface ChamberSessionGateway {
     StartResult start(ServerWorld originWorld, ChamberControllerBlockEntity controller, List<UUID> participantUuids);
     boolean returnToOrigin(ServerWorld originWorld, ChamberControllerBlockEntity controller);
 
+    /**
+     * M7 spec v1.6 D：這座艙在 journal 只剩已 checked 的永久封存（每一列都是永久原因的 SEALED，而且沒有未確認寫入、roll-forward、隔離、runtime、暫占或走廊 reservation）。
+     * 供電協調只在原艙停用而且實際斷電時據此解除保護；讀不到或不確定時一律回 false。
+     */
+    default boolean permanentlySealedOnly(MinecraftServer server, UUID chamberUuid) { return false; }
+
     /** 正常返回代表exact原艙已設未知preset專用旗標；非正式adapter不得假ack。 */
     default void onUnknownSourcePreset(MinecraftServer server, dev.quantumchamber.persistence.SessionRecoveryRecord checked) {
         throw new UnsupportedOperationException("session gateway 未接未知來源preset拒絕通知");

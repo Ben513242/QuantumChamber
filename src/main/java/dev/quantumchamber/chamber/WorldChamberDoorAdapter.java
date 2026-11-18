@@ -21,6 +21,8 @@ final class WorldChamberDoorAdapter {
     /**
      * 玩家開關原艙門（bulkhead 與 Controller 的 {@code onUse} 都經這裡）。先交給 M5 塌縮流程的攔截（{@link ChamberCollapsePort#doors()}，M5 spec §7、§7.3；
      * 排在 {@link ChamberDoorService} 之前）：攔截處理了就回 {@link Result#INTERCEPTED}、拒絕就回 {@link Result#REFUSED}，兩者都不切換門；不攔截時照一般門的邏輯切換。
+     * <p>M7 spec v1.6 A：只有這條路徑（攔截照一般門、整面門切換成功、由開切成關、非旁觀玩家）清除 Controller 的 latch，在延後刷新之前清除，所以這一次關門後的協調
+     * 就能出發。攔截處理或拒絕的操作、由關切成開、系統改門（{@link #apply}）都不清除。
      */
     static Result toggle(ServerWorld world, WorldChamberBlockView view, ChamberFrame frame, PlayerEntity player) {
         switch (ChamberCollapsePort.doors().use(world, frame, player)) {
@@ -28,10 +30,10 @@ final class WorldChamberDoorAdapter {
             case REFUSED -> { return Result.REFUSED; }
             case PASS -> { }
         }
-        return ChamberPowerCoordinator.deferActivation(() -> toggleDeferred(world, view, frame));
+        return ChamberPowerCoordinator.deferActivation(() -> toggleDeferred(world, view, frame, player));
     }
 
-    private static Result toggleDeferred(ServerWorld world, WorldChamberBlockView view, ChamberFrame frame) {
+    private static Result toggleDeferred(ServerWorld world, WorldChamberBlockView view, ChamberFrame frame, PlayerEntity player) {
         try {
             boolean toggled = new ChamberDoorService().toggle(
                     view,
@@ -39,7 +41,8 @@ final class WorldChamberDoorAdapter {
                             QuantumBulkheadBlock.withOpen(world.getBlockState(target), open)),
                     ChamberProtectionService.get()::authorizedMutation,
                     frame,
-                    controllerPos -> ChamberControllerBlock.refreshState(world, controllerPos));
+                    controllerPos -> ChamberControllerBlock.refreshState(world, controllerPos),
+                    nowOpen -> { if (!nowOpen && !player.isSpectator()) clearRearm(world, frame); });
             if (toggled) setActivationBlocked(world, frame, false);
             return toggled ? Result.TOGGLED : Result.REJECTED;
         } catch (IllegalStateException failure) {
@@ -129,6 +132,12 @@ final class WorldChamberDoorAdapter {
     private static void setActivationBlocked(ServerWorld world, ChamberFrame frame, boolean blocked) {
         var controller = loadedController(world, frame);
         if (controller != null) controller.setActivationBlocked(blocked);
+    }
+
+    /** M7 spec v1.6 A：玩家親手把整面門由開切成關，清除這座艙 Controller 的 latch（Controller 所在 chunk 不是 FULL 時不載入、不清除）。 */
+    private static void clearRearm(ServerWorld world, ChamberFrame frame) {
+        var controller = loadedController(world, frame);
+        if (controller != null) controller.clearRearmRequiresPlayerClose();
     }
 
     private static @Nullable ChamberControllerBlockEntity loadedController(ServerWorld world, ChamberFrame frame) {

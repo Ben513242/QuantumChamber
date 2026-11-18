@@ -20,7 +20,17 @@ public final class ChamberDoorService {
 
     public boolean toggle(ChamberBlockView view, ChamberBlockMutator mutator,
                           ChamberMutationExecutor executor, ChamberFrame frame, ControllerRefresh refresh) {
+        return toggle(view, mutator, executor, frame, refresh, ignored -> { });
+    }
+
+    /**
+     * 同上；整面門切換成功時，先以切換後的狀態（{@code open}：切換後是否開著）呼叫 {@code toggled}，再刷新 Controller（M7 spec v1.6 A：玩家親手由開切成關時，
+     * 在延後刷新之前清除 latch）。切換沒有發生（門板不完整、狀態不一致、寫入被拒）時不呼叫。
+     */
+    public boolean toggle(ChamberBlockView view, ChamberBlockMutator mutator,
+                          ChamberMutationExecutor executor, ChamberFrame frame, ControllerRefresh refresh, Toggled toggled) {
         Objects.requireNonNull(refresh, "refresh");
+        Objects.requireNonNull(toggled, "toggled");
         List<BlockPos> positions = aperturePositions(frame);
         Boolean open = null;
         for (BlockPos pos : positions) {
@@ -33,10 +43,13 @@ public final class ChamberDoorService {
         if (open == null) return false;
         boolean original = open;
         boolean next = !original;
-        boolean toggled = executor.execute(() -> mutateWithRollback(pos -> openAt(view, pos), mutator::set, positions,
+        boolean changed = executor.execute(() -> mutateWithRollback(pos -> openAt(view, pos), mutator::set, positions,
                 ignored -> original, next));
-        if (toggled) refresh.refresh(frame.controllerPos());
-        return toggled;
+        if (changed) {
+            toggled.toggled(next);
+            refresh.refresh(frame.controllerPos());
+        }
+        return changed;
     }
 
     /**
@@ -162,6 +175,12 @@ public final class ChamberDoorService {
     @FunctionalInterface
     public interface ControllerRefresh {
         void refresh(BlockPos controllerPos);
+    }
+
+    /** {@link #toggle} 成功之後、刷新 Controller 之前收到切換後的整面門狀態。 */
+    @FunctionalInterface
+    public interface Toggled {
+        void toggled(boolean open);
     }
 
     /**

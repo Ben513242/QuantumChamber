@@ -4,9 +4,11 @@ import static dev.quantumchamber.collapse.CollapseService.LOG_MARKER;
 import static dev.quantumchamber.collapse.CollapseService.TICK_LOG_MARKER;
 
 import dev.quantumchamber.chamber.ChamberCollapsePort;
+import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
 import dev.quantumchamber.chamber.ChamberDoorService;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberGeometry;
+import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.chamber.ChamberPowerCoordinator;
 import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.collapse.CollapseService.Prepare;
@@ -516,7 +518,24 @@ final class OriginDoors {
             service.terminalFailed(view, track, phase + "參與者關門的終局", result);
             return false;
         }
+        // M7 spec v1.6 A 上鎖事件 1、2：checked 終局之後、呼叫端排入系統改門之前設定原艙的 latch（Controller 所在 chunk 不是 FULL 時，由 CLOSE_AFTER_TERMINAL 套用前補設）。
+        var source = view.origin();
+        latchRearm(service.server.getWorld(RegistryKey.of(RegistryKeys.WORLD, source.worldKey())), new ChamberFrame(source.controllerPos(), source.facing()),
+                view.chamberUuid());
         return true;
+    }
+
+    /**
+     * M7 spec v1.6 A：設定原艙 Controller 的 latch（{@link ChamberControllerBlockEntity#requireRearmPlayerClose}；已設定時不重寫）。只查詢、不載入 chunk；Controller 不在、
+     * 已移除，或不是這座艙（UUID 不符、不是 ORIGIN）時不設定。
+     */
+    private static void latchRearm(ServerWorld world, ChamberFrame frame, UUID chamber) {
+        if (world == null) return;
+        var pos = frame.controllerPos();
+        var chunk = world.getChunkManager().getWorldChunk(pos.getX() >> 4, pos.getZ() >> 4);
+        if (chunk != null && chunk.getBlockEntity(pos) instanceof ChamberControllerBlockEntity controller && !controller.isRemoved() && controller.getWorld() == world
+                && chamber.equals(controller.chamberUuid()) && controller.instanceKind() == ChamberInstanceKind.ORIGIN)
+            controller.requireRearmPlayerClose();
     }
 
     // ---- 待套用的門（F3d 起；F4a 加上 SEALED 的關門，F4b-3 加上 PREPARE 期間的目標與重新套用） ----
@@ -725,6 +744,8 @@ final class OriginDoors {
             case PREPARE_MEMBRANE -> throw new IllegalStateException("PREPARE 的原艙門由 prepareDoor 每個 tick 套用，不排入待套用的門");
             default -> throw new IllegalStateException("未知的原艙門目標：" + door.goal);
         }
+        // M7 spec v1.6 A：參與者關門的終局之後，系統改門之前補設 latch（終局當下 Controller 所在 chunk 不是 FULL 的情況；已設定時不重寫）。applyTarget 在回傳前就刷新 Controller。
+        if (door.goal == DoorGoal.CLOSE_AFTER_TERMINAL) latchRearm(world, door.frame, door.chamber);
         var result = new ChamberDoorService().applyTarget(world, door.frame, target);
         if (!applyOutcome(door, result.outcome(), service.now)) return;
         doors.remove(door.chamber);

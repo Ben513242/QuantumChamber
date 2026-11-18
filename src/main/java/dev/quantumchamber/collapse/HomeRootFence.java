@@ -301,10 +301,14 @@ public final class HomeRootFence {
             }
         }
 
+        /**
+         * M7 spec v1.6 D：同艙另一端的回程只剩已 checked 的永久封存時（{@link dev.quantumchamber.chamber.ChamberSessionGateway#permanentlySealedOnly}），拆除防線放行；
+         * 一般拆除前的 OFF 與核對仍由既有入口檢查（停用且斷電才會是 OFF）。非永久的 HOME 列照 [R3] 維持保護到收尾。
+         */
         @Override public boolean permitsRemoval(ChamberRegistry registry, UUID chamber) {
             var server = owner(registry);
             if (server == null) return true;
-            try { return !homeBusy(server, chamber); }
+            try { return !homeBusy(server, chamber) || ChamberSessions.gateway().permanentlySealedOnly(server, chamber); }
             catch (RuntimeException unreadable) { return false; }
         }
     }

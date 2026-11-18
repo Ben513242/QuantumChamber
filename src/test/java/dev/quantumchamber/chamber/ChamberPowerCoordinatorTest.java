@@ -384,6 +384,9 @@ class ChamberPowerCoordinatorTest {
         boolean retryRequiresLow;
         @Override public boolean candidateRetryRequiresLow() { return retryRequiresLow; }
         @Override public void clearCandidateRetryRequiresLow() { retryRequiresLow=false; }
+        // M7 spec v1.6 的兩個查詢：這個 fake 的既有案例都沒有 latch、也不是只剩永久封存（行為由 M7RearmLatchTest 覆蓋）。
+        @Override public boolean rearmRequiresPlayerClose() { return false; }
+        @Override public boolean permanentlySealedOnly() { return false; }
         List<UUID> startedParticipants;
         ChamberSessionGateway.StartResult startResult = ChamberSessionGateway.StartResult.ARMED_ONLY;
         @Override public ChamberSessionGateway.Presence presence() {

@@ -1041,8 +1041,8 @@ public final class CollapseService {
                     reason.restartOnly() ? "只在重啟之後重試，每個 server instance 一次" : "原參與者由艙外進入、而且在退避期之外時重試",
                     sid, view.chamberUuid(), destination, FailureText.describe(cause), cause);
         } else {
-            LOGGER.error(LOG_MARKER, "塌縮進入 SEALED({})，永久原因，需要管理員處理（不自動重試；原艙維持封鎖，任何玩家都可以照一般方式開門）：session={} chamber={} 目的地={}：{}",
-                    reason, sid, view.chamberUuid(), destination, FailureText.describe(cause), cause);
+            LOGGER.error(LOG_MARKER, "塌縮進入 SEALED({})，永久原因，需要管理員處理（不自動重試；原艙維持封鎖，任何玩家都可以照一般方式開門；" + PERMANENT_RELEASE_HINT
+                    + "）：session={} chamber={} 目的地={}：{}", reason, sid, view.chamberUuid(), destination, FailureText.describe(cause), cause);
         }
     }
 
@@ -1097,9 +1097,15 @@ public final class CollapseService {
         var sid = view.sessionUuid();
         if (reason.retryable() || track.sealedReported || !startupSessions.contains(sid)) return;
         track.sealedReported = true;
-        LOGGER.error(LOG_MARKER, "開服時的提醒：session 仍是 SEALED({})，永久原因，需要管理員處理（不自動重試；原艙維持封鎖，任何玩家都可以照一般方式開門；每個 server instance "
-                + "提醒一次）：session={} chamber={} 目的地={}", reason, sid, view.chamberUuid(), describe(view.collapse().destination()));
+        LOGGER.error(LOG_MARKER, "開服時的提醒：session 仍是 SEALED({})，永久原因，需要管理員處理（不自動重試；原艙維持封鎖，任何玩家都可以照一般方式開門；" + PERMANENT_RELEASE_HINT
+                + "；每個 server instance 提醒一次）：session={} chamber={} 目的地={}", reason, sid, view.chamberUuid(), describe(view.collapse().destination()));
     }
+
+    /**
+     * M7 spec v1.6 D：永久原因 SEALED 的 ERROR（進入時與開服時的提醒）附上的最小解除路徑。只解除原艙的佔地與保護，session 仍無出口、封存紀錄原樣保留。
+     */
+    static final String PERMANENT_RELEASE_HINT = "解除佔地：管理員停用原艙並斷電，原艙不再受保護之後可以照既有方式拆除 Controller，也可以在原地重建（新艙取得新的身分）；"
+            + "封存紀錄保留在 journal，不歸檔、不刪除";
 
     /** checked SEALED→COLLAPSING（restore 類，§6），再取得來源 ticket；之後依推導階段重跑 RESOLVE（未確認的權威由 resolver 先收斂）。 */
     private void retrySealed(SessionRecoveryRecord view, Track track, SealedReason reason) {

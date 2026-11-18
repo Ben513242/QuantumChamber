@@ -30,6 +30,21 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
     void clearCandidateRetryRequiresLow() {
         if(candidateRetryRequiresLow){candidateRetryRequiresLow=false;markDirty();}
     }
+    /**
+     * M7 spec v1.6 A 的 latch（NBT {@code RearmRequiresPlayerClose}，缺 key 讀成 false）：為真時這座艙不開始新 session，要有玩家親手關門一次才再出發。
+     * 斷電、停用、重啟、{@code /reload}、區塊卸載與系統改門都不清除。
+     */
+    private boolean rearmRequiresPlayerClose;
+
+    public boolean rearmRequiresPlayerClose() { return rearmRequiresPlayerClose; }
+    /** 只供 collapse owner 在上鎖事件（spec v1.6 A）呼叫：終局確認之後、系統改門之前。 */
+    public void requireRearmPlayerClose() {
+        if(!rearmRequiresPlayerClose){rearmRequiresPlayerClose=true;markDirty();}
+    }
+    /** 只供 chamber package 的玩家關門路徑（{@code WorldChamberDoorAdapter}）在整面門由開切成關、延後刷新之前清除。 */
+    void clearRearmRequiresPlayerClose() {
+        if(rearmRequiresPlayerClose){rearmRequiresPlayerClose=false;markDirty();}
+    }
     // 每次 runtime load 都重新標記；不能隨 NBT 跨載入保存。
     private boolean loadSyncPending;
     /**
@@ -131,6 +146,7 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
         powerInitialized = nbt.getBoolean("PowerInitialized");
         activationBlocked = nbt.getBoolean("ActivationBlocked");
         candidateRetryRequiresLow = nbt.getBoolean("CandidateRetryRequiresLow");
+        rearmRequiresPlayerClose = nbt.getBoolean("RearmRequiresPlayerClose");
     }
 
     @Override
@@ -143,6 +159,7 @@ public final class ChamberControllerBlockEntity extends BlockEntity implements C
         nbt.putBoolean("PowerInitialized", powerInitialized);
         nbt.putBoolean("ActivationBlocked", activationBlocked);
         nbt.putBoolean("CandidateRetryRequiresLow",candidateRetryRequiresLow);
+        nbt.putBoolean("RearmRequiresPlayerClose",rearmRequiresPlayerClose);
     }
 
     private static <E extends Enum<E>> E enumValue(String value, E fallback, String key) {
