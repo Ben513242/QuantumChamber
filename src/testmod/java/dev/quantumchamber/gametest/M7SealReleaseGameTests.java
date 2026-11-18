@@ -231,8 +231,12 @@ public final class M7SealReleaseGameTests implements FabricGameTest {
             // 對照：非永久的 HOME 列（DORMANT）時，拆除防線拒絕正式拆除入口。
             boolean removedWhileDormant = lifecycle.dismantleOrigin(p.root, () -> ChamberProtectionService.get().authorizedMutation(world, pos,
                     () -> world.removeBlock(pos, false)));
-            witness.put("dormantHomeRowKeepsTheRoot", !removedWhileDormant && world.getBlockState(pos).isOf(ModBlocks.CHAMBER_CONTROLLER)
-                    && registry.records().containsKey(p.chamber));
+            boolean controllerKept = world.getBlockState(pos).isOf(ModBlocks.CHAMBER_CONTROLLER), registeredKept = registry.records().containsKey(p.chamber);
+            // T4B Step 0（T4A 審查 M-4）：對照不成立時立即以具名錯因丟出，不讓後續步驟（HOME 列的 checked 轉移）以無關的錯因失敗。
+            if (removedWhileDormant || !controllerKept || !registeredKept)
+                throw new GameTestException("HOME_DORMANT_ROOT_REMOVED：非永久的 HOME 列（DORMANT）時拆除防線必須拒絕正式拆除：removed=" + removedWhileDormant
+                        + " Controller 保留=" + controllerKept + " 已登記=" + registeredKept);
+            witness.put("dormantHomeRowKeepsTheRoot", true);
             // HOME 列 checked 進入永久封存：MEASURED→COLLAPSING（restore）→SEALED(ENTRY_AUTHORITY_INVALID)（roll-forward）。
             var h = dormant.home();
             long now = server.getOverworld().getTime();
@@ -333,9 +337,14 @@ public final class M7SealReleaseGameTests implements FabricGameTest {
                                         dev.quantumchamber.chamber.MembraneState.NONE));
                                 witness.put("sealedRowUnchanged", sealed.equals(journal.flushedRecords().get(sid)) && sealed.equals(journal.records().get(sid)));
                                 witness.put("rebuiltNotBusy", rebuilt != null && !gate().globalChamberBusy(server, rebuilt));
+                                // T4B Step 0（T4A 審查 M-8）：模擬重啟之後的開服提醒（永久原因 SEALED）恰一則，字句附上解除路徑與「封存紀錄保留」（CollapseService.PERMANENT_RELEASE_HINT）。
+                                var reminders = origin.capture.matching(org.apache.logging.log4j.Level.ERROR, M5GameTestSupport.STARTUP_SEALED_REMINDER, sid.toString());
+                                boolean hinted = reminders.size() == 1 && reminders.getFirst().message().contains("解除佔地：")
+                                        && reminders.getFirst().message().contains("封存紀錄保留在 journal");
                                 var failure = witness.containsValue(false) ? new GameTestException("REBUILT_DOOR_CHANGED_BY_RELEASED_SEAL：舊封存列以原艙座標改動了原地重建的艙門："
                                         + witness + " 排入=" + M5UniverseSupport.reapplyQueuedTicks(origin.capture, sid) + " 套用=" + M5UniverseSupport.reappliedTicks(origin.capture, sid))
-                                        : null;
+                                        : !hinted ? new GameTestException("PERMANENT_RELEASE_HINT_MISSING：開服提醒沒有恰一則、或字句沒有解除路徑與「封存紀錄保留」："
+                                        + reminders.stream().map(LogCapture.Entry::message).toList()) : null;
                                 hooks.release();
                                 if (failure != null) throw failure;
                                 context.complete();
@@ -345,6 +354,65 @@ public final class M7SealReleaseGameTests implements FabricGameTest {
                 }, () -> "模擬重啟之後 S 沒有排入重新套用：witness=" + witness, hooks);
             });
         });
+    }
+
+    /**
+     * T4B Step 0（T4A 審查 M-3）：原艙座標門權威（{@code OriginDoors.ownsDoor}）的 ORIGIN 與非 destroyed 兩個子條件。舊封存列 S（EXISTING_INELIGIBLE）的艙在 registry
+     * 的同一 frame 上仍是同一個 Chamber UUID，只把那一筆改成（以反射直接改 registry 的記憶體列，不經通知，模擬讀到這樣的 registry）：
+     * <ol>
+     * <li>{@code destroyed=true}：模擬重啟之後的第一次觀察不排入重新套用、記「原艙座標上已不是這座艙」；</li>
+     * <li>{@code instanceKind=PROJECTION}：同上；</li>
+     * <li>對照（還原原列）：同一個觀察排入一次重新套用。</li>
+     * </ol>
+     * 每一步之後還原原列；收尾也還原。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_seal_release_door_authority", tickLimit = 600)
+    public void door_authority_requires_origin_and_not_destroyed(TestContext context) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var origin = DormantOrigin.open(context, hooks);
+        var world = context.getWorld(); var server = world.getServer();
+        var frame = origin.frame;
+        origin.whenRegistered((registered, chamber) -> {
+            var witness = new LinkedHashMap<String, Boolean>();
+            @SuppressWarnings("unchecked")
+            var rows = (Map<UUID, dev.quantumchamber.chamber.ChamberRecord>) M4CandidateTestAccess.get(ChamberRegistryState.get(server).registry(), "records");
+            var original = rows.get(chamber);
+            hooks.add(() -> rows.put(chamber, original));
+            var sealed = M5GameTestSupport.sealedFixture(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()), Map.of(UUID.randomUUID(), true),
+                    SealedReason.EXISTING_INELIGIBLE, origin.owned);
+            var sid = sealed.sessionUuid();
+            java.util.function.Supplier<Integer> queued = () -> M5UniverseSupport.reapplyQueuedTicks(origin.capture, sid).size();
+            java.util.function.Supplier<Integer> notOwned = () -> origin.capture.matching(org.apache.logging.log4j.Level.INFO, "原艙座標上已不是這座艙", sid.toString()).size();
+            at(context, registered + 2, hooks, () -> {
+                rows.put(chamber, withRecord(original, original.instanceKind(), true));
+                M5GameTestSupport.simulateDoorStartup(server, sid);
+                at(context, registered + 4, hooks, () -> {
+                    witness.put("destroyedRowIsNotTheDoorAuthority", queued.get() == 0 && notOwned.get() == 1);
+                    rows.put(chamber, withRecord(original, dev.quantumchamber.chamber.ChamberInstanceKind.PROJECTION, false));
+                    M5GameTestSupport.simulateDoorStartup(server, sid);
+                    at(context, registered + 6, hooks, () -> {
+                        witness.put("projectionRowIsNotTheDoorAuthority", queued.get() == 0 && notOwned.get() == 2);
+                        rows.put(chamber, original);
+                        M5GameTestSupport.simulateDoorStartup(server, sid);
+                        at(context, registered + 8, hooks, () -> {
+                            witness.put("sameOriginRowStillQueuesTheReapply", queued.get() == 1 && notOwned.get() == 2);
+                            var failure = witness.containsValue(false) ? new GameTestException("DOOR_AUTHORITY_SUBCONDITION：registry 的 ORIGIN／未拆除子條件沒有守住原艙座標門權威："
+                                    + witness + " 排入=" + M5UniverseSupport.reapplyQueuedTicks(origin.capture, sid) + " 不屬這座艙=" + notOwned.get()) : null;
+                            hooks.release();
+                            if (failure != null) throw failure;
+                            context.complete();
+                        });
+                    });
+                });
+            });
+        });
+    }
+
+    /** 同一筆 registry 列，只換 instanceKind 與 destroyed。 */
+    private static dev.quantumchamber.chamber.ChamberRecord withRecord(dev.quantumchamber.chamber.ChamberRecord r, dev.quantumchamber.chamber.ChamberInstanceKind kind,
+            boolean destroyed) {
+        return new dev.quantumchamber.chamber.ChamberRecord(r.chamberUuid(), r.originWorldKey(), r.originDimensionRole(), r.anchorPos(), r.facing(), kind, r.enabled(),
+                destroyed, r.powerState());
     }
 
     /**
@@ -416,15 +484,25 @@ public final class M7SealReleaseGameTests implements FabricGameTest {
 
     /**
      * 啟用中或供電時的保護：power state 不是 OFF、比較器 11、艙體不可寫，原生 setter 拆不掉 Controller、registry 仍有這座艙。
+     * T4B Step 0（T4A 審查 M-4）：先記下狀態再試拆；對照不成立時立即以具名錯因丟出（{@code PERMANENT_SEAL_RELEASED_WHILE_PROTECTED}：試拆之前就已不受保護；
+     * {@code PERMANENT_SEAL_DISMANTLED_WHILE_PROTECTED}：試拆真的拆掉了），不讓後續步驟以無關的錯因失敗。呼叫端在 {@code at} 內，丟出時 hooks 先釋放。
      */
     private static void protectedNow(net.minecraft.server.world.ServerWorld world, dev.quantumchamber.chamber.ChamberFrame frame, UUID chamber, String step,
             Map<String, Boolean> witness) {
         var registry = ChamberRegistryState.get(world.getServer()).registry();
         var pos = frame.controllerPos();
-        boolean kept = !world.setBlockState(pos, Blocks.AIR.getDefaultState()) && world.getBlockState(pos).isOf(ModBlocks.CHAMBER_CONTROLLER)
-                && registry.records().containsKey(chamber);
-        witness.put(step, power(registry, chamber) != ChamberPowerState.OFF && M7RearmGameTests.comparator(world, frame) == 11
-                && !ChamberProtectionService.get().mayMutate(world, pos.down(3)) && kept);
+        var power = power(registry, chamber);
+        int comparator = M7RearmGameTests.comparator(world, frame);
+        boolean writable = ChamberProtectionService.get().mayMutate(world, pos.down(3));
+        boolean registered = registry.records().containsKey(chamber);
+        if (power == null || power == ChamberPowerState.OFF || comparator != 11 || writable || !registered)
+            throw new GameTestException("PERMANENT_SEAL_RELEASED_WHILE_PROTECTED：" + step + " 應受保護，試拆之前就不成立：power=" + power + " comparator=" + comparator
+                    + " 可寫=" + writable + " 已登記=" + registered + " witness=" + witness);
+        boolean removed = world.setBlockState(pos, Blocks.AIR.getDefaultState()) || !world.getBlockState(pos).isOf(ModBlocks.CHAMBER_CONTROLLER);
+        if (removed || !registry.records().containsKey(chamber))
+            throw new GameTestException("PERMANENT_SEAL_DISMANTLED_WHILE_PROTECTED：" + step + " 原生 setter 拆掉了受保護的 Controller：已登記="
+                    + registry.records().containsKey(chamber) + " witness=" + witness);
+        witness.put(step, true);
     }
 
     private static ChamberPowerState power(dev.quantumchamber.chamber.ChamberRegistry registry, UUID chamber) {

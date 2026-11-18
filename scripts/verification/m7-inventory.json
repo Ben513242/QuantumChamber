@@ -89,11 +89,13 @@
       "quantumchamber:m1_empty|m7rearmgametests.latch_survives_player_open_then_system_close",
       "quantumchamber:m1_empty|m7rearmgametests.formal_start_refuses_latched_origin",
       "quantumchamber:m1_empty|m7rearmgametests.rearm_latch_survives_datapack_reload",
+      "quantumchamber:m1_empty|m7rearmgametests.close_after_terminal_relatches_before_system_close",
       "quantumchamber:m1_empty|m7sealreleasegametests.permanent_sealed_stays_protected_while_enabled_or_powered",
       "quantumchamber:m1_empty|m7sealreleasegametests.retryable_or_unchecked_seal_never_released",
       "quantumchamber:m1_empty|m7sealreleasegametests.home_permanent_seal_allows_root_removal_after_disable",
       "quantumchamber:m1_empty|m7sealreleasegametests.rebuild_after_release_gets_new_identity_and_is_not_busy",
-      "quantumchamber:m1_empty|m7sealreleasegametests.rebuilt_chamber_door_ignores_released_seal_after_restart_reapply"
+      "quantumchamber:m1_empty|m7sealreleasegametests.rebuilt_chamber_door_ignores_released_seal_after_restart_reapply",
+      "quantumchamber:m1_empty|m7sealreleasegametests.door_authority_requires_origin_and_not_destroyed"
     ]
   },
   "windows": {

@@ -361,7 +361,7 @@ final class OriginDoors {
      *     這個 session 之後以同一個處置沒有例外地完成時，只清除這個處置的去重鍵（F5-0，F4b-3 quality M-1：別人以別的處置成功，例如艙內的非參與者開門，不讓參與者的處置
      *     失敗再記一次），所以同一個處置同一原因「失敗 → 成功 → 再失敗」會再記一次。「判斷」沒有對應的處置，它的鍵不會被處置的成功清除，連續同一原因只記一次（去重只和上一次記下的鍵比較，{@link CollapseService#firstWarning}；不同原因照常各記一次），
      *     直到這個 session 的簿記移除。PREPARE 的門仍由每個 tick 的 {@link #prepareDoor} 維持（艙內有非參與者時照樣改為一般開門）。</li>
-     * <li>找出所屬 session 之前的例外（journal 健康時 {@link #sessionAt} 只讀記憶體內的 record，不會發生）：沒有 session 可以歸屬，也無法判斷門是否屬於塌縮流程，
+     * <li>找出所屬 session 之前的例外（{@link #sessionAt} 只讀記憶體內的 journal record 與 {@code ChamberRegistryState}（M7 spec v1.6 D 的座標門權威），兩者都可讀時不會發生）：沒有 session 可以歸屬，也無法判斷門是否屬於塌縮流程，
      *     拒絕並記 WARN（不去重；沒有 {@code session=}，所以帶子 marker {@link CollapseService#TICK_LOG_MARKER}，F5-0，F4b-3 spec m-1）。</li>
      * </ul>
      * SEALED 的門照一般門的邏輯時（§11.2：任何玩家都可以照一般方式開門），同時取消這座艙還沒套用的關門（{@link #cancelSealedClose}，F4b-3 fix round 1，quality Q-M2；
@@ -490,8 +490,20 @@ final class OriginDoors {
     }
 
     /**
-     * M7 spec v1.6 D：待套用門中會替這座艙關門或套上量子膜的目標（不得替原地重建的新艙代關門或重套）。一般開門、量子膜改回一般開門的目標不在其中：
-     * 它們不會把人關住，終局之後的一般開門也照既有行為套用（例如沒有登記的艙在開服時結束通道之後的正規化）。
+     * M7 spec v1.6 D：待套用門中會替這座艙關門或套上量子膜的目標（不得替原地重建的新艙代關門或重套）；套用前以 {@link #ownsDoor} 核對原艙座標。開門類目標
+     * （{@code OPEN_AFTER_TERMINAL}、{@code OPEN_ON_LEAVE}、{@code OPEN_WHILE_PASSAGE_CLOSED}、{@code NORMALIZE}）不核對，比 spec D 字面窄，是 controller 讀法
+     * （spec v1.6 G 第 7 點、T4A 審查 3(a)）。不核對的理由是下列不變量：
+     * <ul>
+     * <li>可達性：舊列要能解除並原地重建，該艙的每一列都必須是已 checked 的永久原因 SEALED。這種列只排出 {@code CLOSE_ON_SEALED}（進入時與
+     *     {@link #reapplyGoal} 的 SEALED），它在核對之內；永久原因不重試，不會經 {@link #normalizeAfterRetry} 產生 {@code NORMALIZE}；進入 SEALED 時
+     *     {@code resetGate()} 讓 {@link #watchDoor} 不替 SEALED 列排 {@code OPEN_ON_LEAVE}；待套用門以 Chamber UUID 為 key，同艙較早的開門類目標會被後排入的
+     *     {@code CLOSE_ON_SEALED} 取代，就算留著，套用前 {@code presence(舊 UUID)} 也因舊 UUID 的封存列不是 NONE 而丟棄；{@code NORMALIZE} 與
+     *     {@code OPEN_WHILE_PASSAGE_CLOSED} 另要求 session 狀態相符。</li>
+     * <li>就算套到新艙也沒有遊玩傷害：PREPARE 中只會有一個 tick 的一般開門（{@link #prepareDoor} 下一個 tick 重套膜），而且 {@code applyTarget} 不經攔截，
+     *     不會取消新艙的 PREPARE；通道中 passable 膜換成一般開門，跨越依位置判定，不會關住人；SEALED 或閒置時只是門開著，不會出發。</li>
+     * <li>全部擋掉要改 default 既有案例 {@code startup_passage_ready_ends_and_normalizes_the_door_next_tick} 的斷言（它的艙沒有登記，開服結束通道之後以
+     *     {@code OPEN_AFTER_TERMINAL} 正規化門）。</li>
+     * </ul>
      */
     static boolean claimsDoor(DoorGoal goal) {
         return goal == DoorGoal.CLOSE_ON_SEALED || goal == DoorGoal.CLOSE_AFTER_TERMINAL || goal == DoorGoal.PASSABLE;
@@ -794,7 +806,11 @@ final class OriginDoors {
             case PREPARE_MEMBRANE -> throw new IllegalStateException("PREPARE 的原艙門由 prepareDoor 每個 tick 套用，不排入待套用的門");
             default -> throw new IllegalStateException("未知的原艙門目標：" + door.goal);
         }
-        // M7 spec v1.6 A：參與者關門的終局之後，系統改門之前補設 latch（終局當下 Controller 所在 chunk 不是 FULL 的情況；已設定時不重寫）。applyTarget 在回傳前就刷新 Controller。
+        // M7 spec v1.6 A：參與者關門的終局之後，系統改門之前補設 latch（終局當下 Controller 所在 chunk 不是 FULL 的情況；已設定時不重寫）。applyTarget 在回傳前就刷新 Controller，
+        // 所以必須排在它之前。為什麼這一處就夠（T4A 審查 4、M-2）：終局當下門是開著的（sealed 或 passable 量子膜），資格預覽不成立，CLOSE_AFTER_TERMINAL 套用之前的刷新都不會出發；
+        // 參與者關門的終局之後，唯一會把門關上的系統改門就是 CLOSE_AFTER_TERMINAL（門口有 entity 時目標是一般開門，同樣先上鎖）；終局當下 Controller 所在 chunk 由來源 ticket
+        // 保持 FULL，主路徑（terminateByDoor）就已上鎖，這裡是縱深防禦。GameTest close_after_terminal_relatches_before_system_close 直接排入沒有先上鎖的 CLOSE_AFTER_TERMINAL，
+        // 守住「拿掉補設」與「移到 applyTarget 之後」兩個變異。
         if (door.goal == DoorGoal.CLOSE_AFTER_TERMINAL) latchRearm(world, door.frame, door.chamber);
         var result = new ChamberDoorService().applyTarget(world, door.frame, target);
         if (!applyOutcome(door, result.outcome(), service.now)) return;

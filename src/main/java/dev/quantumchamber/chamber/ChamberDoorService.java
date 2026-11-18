@@ -26,9 +26,11 @@ public final class ChamberDoorService {
     /**
      * 同上；整面門切換成功時，先以切換後的狀態（{@code open}：切換後是否開著）呼叫 {@code toggled}，再刷新 Controller（M7 spec v1.6 A：玩家親手由開切成關時，
      * 在延後刷新之前清除 latch）。切換沒有發生（門板不完整、狀態不一致、寫入被拒）時不呼叫。
+     * <p>package-private（T4A 審查 M-5）：spec v1.6 A 定清除只在 chamber package 的玩家關門路徑（{@code WorldChamberDoorAdapter}），其他 package 不得掛進
+     * 「切換後、刷新前」這個時點。
      */
-    public boolean toggle(ChamberBlockView view, ChamberBlockMutator mutator,
-                          ChamberMutationExecutor executor, ChamberFrame frame, ControllerRefresh refresh, Toggled toggled) {
+    boolean toggle(ChamberBlockView view, ChamberBlockMutator mutator,
+                   ChamberMutationExecutor executor, ChamberFrame frame, ControllerRefresh refresh, Toggled toggled) {
         Objects.requireNonNull(refresh, "refresh");
         Objects.requireNonNull(toggled, "toggled");
         List<BlockPos> positions = aperturePositions(frame);
@@ -177,9 +179,9 @@ public final class ChamberDoorService {
         void refresh(BlockPos controllerPos);
     }
 
-    /** {@link #toggle} 成功之後、刷新 Controller 之前收到切換後的整面門狀態。 */
+    /** {@link #toggle} 成功之後、刷新 Controller 之前收到切換後的整面門狀態（package-private，同上）。 */
     @FunctionalInterface
-    public interface Toggled {
+    interface Toggled {
         void toggled(boolean open);
     }
 

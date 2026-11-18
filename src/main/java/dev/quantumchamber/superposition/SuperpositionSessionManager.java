@@ -205,6 +205,10 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
      * M7 spec v1.6 D（{@link ChamberSessionGateway#permanentlySealedOnly}）：讀本 server 的 journal、runtime／暫占與走廊 reservation，交給純函式
      * {@link #permanentlySealedOnly(UUID, Map, Map, Map, Set, java.util.function.Predicate, boolean, java.util.function.Predicate)}。不在原 server thread、journal
      * 不健康或讀取丟出時回 false（不依讀不到的權威放行）。只讀，不寫 journal 或任何 ledger。
+     * <p>保守行為（T4A 審查 M-7，T4B Step 0 只評估、不改）：{@code runtimeOrProvisional} 取 {@code sessions.containsKey(chamber)}，已失效（{@code valid=false}）但因
+     * {@link #cancelProvisional} 遇到 journal 仍有這座艙的列而保留的暫占記號也算在內，這時不放行，要等重啟（記號是 process 狀態）才解除。暫占只在這座艙沒有任何 journal 列時取得
+     * （{@link #globalChamberBusy}），所以能留下失效記號的只有同一個 SID 的 HOME 列；它要變成永久封存才會走到這裡，而 HOME 永久封存的產生點屬 T6，T4A／T4B 只由測試 fixture
+     * 造出。屬 fail-closed（只延後解除），T6 加入產生點時再評估。
      */
     @Override public boolean permanentlySealedOnly(MinecraftServer owner,UUID chamber) {
         if(owner==null || owner!=server || !owner.isOnThread() || chamber==null) return false;

@@ -113,8 +113,12 @@ public final class M7RearmGameTests implements FabricGameTest {
     public void participant_close_latch_shows_idle_until_player_reclose(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var origin = Origin.open(c, hooks);
-        // T4A fix1：Ubuntu 上玩家親手關門之後的正式 start 走到原生 checkpoint 預檢被拒、記一則 WARN；去重記號是整個 server 共用的狀態，收尾時還原成本案開始前的值。
-        var checkpointMemo = CheckpointMemo.capture(hooks);
+        // T4A fix1：Ubuntu 上玩家親手關門之後的正式 start 走到原生 checkpoint 預檢被拒、記一則 WARN；去重記號是整個 server 共用的狀態。T4B Step 0（fix1 審查 M1、M3）：
+        // 記下原值後清成 null（與 batch 順序無關，一律期待恰一則），收尾還原原值；記下原值本身失敗時也先釋放 fixture。
+        CheckpointMemo memo = null;
+        try { memo = CheckpointMemo.capture(hooks); }
+        catch (RuntimeException | Error failure) { origin.releaseAfter(failure); }
+        var checkpointMemo = memo;
         var f = origin.f;
         var world = c.getWorld();
         var p = f.players.getFirst().player();
@@ -133,6 +137,8 @@ public final class M7RearmGameTests implements FabricGameTest {
                     witness.put("unlockedByThePlayerClose", !f.controller().rearmRequiresPlayerClose());
                     witness.put("leavesIdle", comparator(world, f.frame) == 7);
                     if (departed(f.server, chamber)) {
+                        // T4B Step 0（fix1 審查 M2）：只有原生 checkpoint 平台會出發；Ubuntu 誤放行時本案也獨立失敗，不只靠 spike。
+                        witness.put("departsOnlyOnCheckpointPlatform", com.sun.jna.Platform.isWindows());
                         f.trustedTeardown(closeAt + QUIET_TICKS + 3, () -> {
                             origin.release();
                             c.assertTrue(!witness.containsValue(false), "參與者關門之後的比較器：" + witness);
@@ -141,8 +147,8 @@ public final class M7RearmGameTests implements FabricGameTest {
                         return;
                     }
                     witness.put("noCheckpointPlatformStaysWithoutSession", !com.sun.jna.Platform.isWindows());
-                    // 解鎖之後的正式 start 確實走到原生 checkpoint 預檢（不是更早的拒絕）：本案開始時沒有去重記號時恰一則 WARN，已有記號時被去重、零則。
-                    witness.put("reclosedStartReachedTheCheckpointPrecheck", checkpointWarnings(origin.capture) == (checkpointMemo.prior() == null ? 1 : 0));
+                    // 解鎖之後的正式 start 確實走到原生 checkpoint 預檢（不是更早的拒絕）：本案開始時已把去重記號清成 null，所以一律恰一則 WARN。
+                    witness.put("reclosedStartReachedTheCheckpointPrecheck", checkpointWarnings(origin.capture) == 1);
                     f.power();
                     origin.release();
                     c.assertTrue(!witness.containsValue(false), "參與者關門之後的比較器：" + witness);
@@ -294,8 +300,59 @@ public final class M7RearmGameTests implements FabricGameTest {
     }
 
     /**
+     * T4B Step 0（T4A 審查 4、M-2）：參與者關門終局之後的補設 latch（{@code OriginDoors.applyDoor} 在 {@code CLOSE_AFTER_TERMINAL} 套用之前的 {@code latchRearm}）。
+     * 正式 A 已供電、門開著（資格不成立、比較器 3）、一位有藥效的玩家在艙內；直接排入一個沒有先上鎖的 {@code CLOSE_AFTER_TERMINAL}（終局 view 不在 journal，presence NONE，
+     * 模擬終局當下 Controller 不是 FULL、主路徑沒有上鎖）。系統關門之前必須先上鎖：關門時的刷新回 IDLE（比較器 3）、不出發，之後 Controller 的排程刷新也一樣。
+     * 守住兩個變異：拿掉補設（latch 為假；Windows 出發，Ubuntu 走到 checkpoint 預檢、比較器 7）、移到 {@code applyTarget} 之後（關門時的刷新看到沒有上鎖：Windows 出發，Ubuntu 比較器 7）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_rearm_relatch", tickLimit = 20000)
+    public void close_after_terminal_relatches_before_system_close(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var f = new M2CorridorGameTests.NativeEntry(c, 1);
+        hooks.add(f::close);
+        var world = c.getWorld(); var server = f.server;
+        var witness = new LinkedHashMap<String, Boolean>();
+        UUID chamber;
+        try {
+            c.assertTrue(new ChamberActivationService().attemptArm(world, f.controller()).accepted(), "正式 A 登記");
+            chamber = f.controller().chamberUuid();
+            c.assertTrue(new ChamberDoorService().applyTarget(world, f.frame, ChamberDoorService.DoorState.OPEN).succeeded(), "門開著（資格不成立）");
+            f.power();
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+        at(c, 3, hooks, () -> {
+            witness.put("idleWhileOpenAndUnlatched", !f.controller().rearmRequiresPlayerClose() && comparator(world, f.frame) == 3 && !departed(server, chamber));
+            var p = f.players.getFirst().player();
+            var view = M4CandidateTestAccess.measuredReceipt(server, M4CandidateTestAccess.origin(chamber, f.frame.controllerPos()), Map.of(p.getUuid(), true), List.of(), true);
+            queueCloseAfterTerminal(server, view);
+            if (!holds(c, f, hooks, chamber, 3, "relatchedBeforeTheSystemClose", witness)) return;
+            witness.put("systemClosedTheDoor", doorAll(world, f.frame, false, MembraneState.NONE));
+            at(c, 30, hooks, () -> {
+                if (!holds(c, f, hooks, chamber, 3, "afterScheduledRefresh", witness)) return;
+                finish(c, f, hooks, witness, "CLOSE_AFTER_TERMINAL 套用之前補設 latch");
+            });
+        });
+    }
+
+    /** 以反射呼叫塌縮流程的 {@code OriginDoors.queueDoor(view, 0, CLOSE_AFTER_TERMINAL)}（本 mod 自己的 package 可見方法；delay 0 當場套用）。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void queueCloseAfterTerminal(net.minecraft.server.MinecraftServer server, dev.quantumchamber.persistence.SessionRecoveryRecord view) {
+        try {
+            var service = ((Map<net.minecraft.server.MinecraftServer, ?>) M4CandidateTestAccess.get(CollapseService.class, "INSTANCES")).get(server);
+            if (service == null) throw new GameTestException("RELATCH_FIXTURE：沒有此 server 的 CollapseService");
+            var doors = M4CandidateTestAccess.get(service, "originDoors");
+            var goalType = (Class) Class.forName("dev.quantumchamber.collapse.OriginDoors$DoorGoal");
+            var method = doors.getClass().getDeclaredMethod("queueDoor", dev.quantumchamber.persistence.SessionRecoveryRecord.class, int.class, goalType);
+            method.setAccessible(true);
+            method.invoke(doors, view, 0, Enum.valueOf(goalType, "CLOSE_AFTER_TERMINAL"));
+        } catch (java.lang.reflect.InvocationTargetException failure) {
+            throw new GameTestException("RELATCH_FIXTURE：queueDoor 丟出：" + failure.getCause());
+        } catch (ReflectiveOperationException failure) { throw new GameTestException("RELATCH_FIXTURE：" + failure); }
+    }
+
+    /**
      * T4A fix1：session manager 的原生 checkpoint 預檢 WARN 去重記號（{@code SuperpositionSessionManager.checkpointWarning}，整個 server 共用；只在預檢通過或停服時重設）。
-     * 建立時記下目前的值，hooks 收尾時以反射還原，只撤回本案造成的改變；production 的預檢本身每次入場都重新判斷，記號只影響 WARN 是否重複記錄。
+     * 建立時記下目前的值、登記還原，再把記號清成 null（T4B Step 0，fix1 審查 M1：本案的「恰一則 WARN」因此與 batch 順序無關）；hooks 收尾時以反射還原原值，
+     * 只撤回本案造成的改變。production 的預檢本身每次入場都重新判斷，記號只影響 WARN 是否重複記錄，以及預檢恢復通過時是否記「已恢復通過」INFO（fix1 審查 M3）。
      * 不還原的話，之後的 {@code checkpoint_capability_remains_rejected_on_ubuntu} 看不到自己那一次入場的 WARN（CI 44259424086）。
      */
     private record CheckpointMemo(Object prior) {
@@ -303,6 +360,7 @@ public final class M7RearmGameTests implements FabricGameTest {
             var gateway = dev.quantumchamber.chamber.ChamberSessions.gateway();
             var memo = new CheckpointMemo(M4CandidateTestAccess.get(gateway, "checkpointWarning"));
             hooks.add(() -> M4CandidateTestAccess.set(gateway, "checkpointWarning", memo.prior()));
+            M4CandidateTestAccess.set(gateway, "checkpointWarning", null);
             return memo;
         }
     }

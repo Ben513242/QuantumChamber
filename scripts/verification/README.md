@@ -814,10 +814,10 @@ manifest 在 close 矩陣 39 列之後再接 7 列（B2a 的 5 列、T4 P1 的 `
 - **永久封存的解除**：
   - 適用：這座艙在 journal 的每一列都是已 checked 的永久原因 SEALED（舊列 `EXISTING_INELIGIBLE`、`AUTHORITY_CORRUPT`、`PROJECTION_CONFLICT`、`TRANSFER_RECOVERY_REQUIRED`；HOME 列 `ENTRY_AUTHORITY_INVALID`、`AUTHORITY_CORRUPT`、`TRANSFER_RECOVERY_REQUIRED`；舊列與 HOME 列混合但全是永久封存也適用），current＝flushed，沒有 roll-forward、隔離、未確認寫入、runtime／暫占或走廊 reservation。可重試原因（含 restart-only）、DORMANT、WAITING 都不適用。
   - 做法：停用原艙（雙手空手蹲下右鍵 Controller，切換 `Enabled`）並斷電。實際電位 LOW 時，供電協調把 power state 設為 `OFF`（比較器 0）並解除保護，之後以創造模式拆除 Controller（玩家拆除只限創造模式）。重新啟用或供電就回到保護。
-  - 拆除後可以在原地重建，新艙取得新的 Chamber UUID，不是 busy。舊封存列只在 registry 於同一 world key、同一 frame 仍登記同一個 Chamber UUID（ORIGIN、未拆除）時才管這扇門；GameTest 證實新艙的門（待套用門、重啟後第一次觀察、chunk 重新載入）不被舊封存列改動，新艙 PREPARE 中參與者關門照常取消。待套用門的這項核對只擋關門與套上量子膜的目標，開門類目標維持原行為（spec G 第 7 點）。
+  - 拆除後可以在原地重建，新艙取得新的 Chamber UUID，不是 busy。舊封存列只在 registry 於同一 world key、同一 frame 仍登記同一個 Chamber UUID（ORIGIN、未拆除）時才管這扇門；GameTest 證實新艙的門（待套用門、重啟後第一次觀察、chunk 重新載入）不被舊封存列改動，新艙 PREPARE 中參與者關門照常取消。待套用門的這項核對只擋關門與套上量子膜的目標，開門類目標維持原行為（spec G 第 7 點）。ORIGIN 與未拆除兩個子條件由 GameTest `door_authority_requires_origin_and_not_destroyed` 守住（T4B Step 0）。
   - 封存列原樣保留在 journal，不歸檔、不刪除、不改原因；M4 candidate ledger、projection／allocation／discovery ledger 與既有回程收據都不動。session 本身仍沒有出口。
   - 同艙另一端的回程（HOME 列）只剩已 checked 的永久封存時，原艙的拆除防線同樣放行；GameTest 以 journal 正式入口造出 HOME 封存列驗證。HOME 永久封存的產生點與它的 ERROR 字句屬 T6。
-  - ERROR：舊列進入永久原因 SEALED 時那一則，以及每個 server instance 開服時的提醒，都附上解除路徑（`CollapseService.PERMANENT_RELEASE_HINT`，開頭「解除佔地：」，並寫明封存紀錄保留在 journal）。既有片段不變。目前沒有測試斷言這段字句，以 log 原件確認。
+  - ERROR：舊列進入永久原因 SEALED 時那一則，以及每個 server instance 開服時的提醒，都附上解除路徑（`CollapseService.PERMANENT_RELEASE_HINT`，開頭「解除佔地：」，並寫明封存紀錄保留在 journal）。既有片段不變。T4B Step 0 起，GameTest `rebuilt_chamber_door_ignores_released_seal_after_restart_reapply` 斷言開服時的提醒恰一則、字句含「解除佔地：」與「封存紀錄保留在 journal」（`PERMANENT_RELEASE_HINT_MISSING`）；進入時那一則仍以 log 原件確認。
   - 驗證界線：GameTest 以 `ChamberLifecycleService.setEnabled` 停用原艙，以原生 setter 移除 Controller，沒有走玩家的蹲下右鍵與創造模式拆除。兩者在程式上等價（玩家停用最後同樣經 lifecycle 的停用；創造模式拆除要求 OFF 與 `mayMutate`，再經 `dismantleOrigin` 的拆除防線），這是讀碼判定，不是實跑。
 - **親手關門才再出發**：
   - 每座原艙的 Controller block entity 有持久布林 `RearmRequiresPlayerClose`（NBT，缺 key 讀成 false）。
