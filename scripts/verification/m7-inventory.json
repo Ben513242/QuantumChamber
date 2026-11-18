@@ -78,14 +78,17 @@
       "quantumchamber:m1_empty|m7homeclosuregametests.existing_receipt_mismatch_keeps_lock",
       "quantumchamber:m1_empty|m7homeclosuregametests.published_receipt_mismatch_keeps_lock",
       "quantumchamber:m1_empty|m7homeclosuregametests.native_save_write_failure_keeps_pending",
-      "quantumchamber:m1_empty|m7homeclosuregametests.native_save_skips_unhealthy_journal"
+      "quantumchamber:m1_empty|m7homeclosuregametests.native_save_skips_unhealthy_journal",
+      "quantumchamber:m1_empty|m7sealreleasegametests.permanent_sealed_origin_dismantles_after_disable_and_power_off"
     ]
   },
   "windows": {
     "junit": [],
     "gametest": [
       "quantumchamber:m1_empty|m7homespikegametests.checkpoint_capability_is_confirmed_on_windows",
-      "quantumchamber:m1_empty|m7homespikegametests.candidate_and_remap_capacity_retry_keeps_published_team"
+      "quantumchamber:m1_empty|m7homespikegametests.candidate_and_remap_capacity_retry_keeps_published_team",
+      "quantumchamber:m1_empty|m7rearmgametests.prepare_participant_close_requires_player_reclose_windows",
+      "quantumchamber:m1_empty|m7rearmgametests.passage_participant_close_requires_player_reclose_windows"
     ],
     "native": [
       "close-ordinary-before-close",

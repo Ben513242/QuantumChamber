@@ -43,7 +43,9 @@
       "dev.quantumchamber.gametest.M5UniversePassageGameTests",
       "dev.quantumchamber.gametest.M7HomeSpikeGameTests",
       "dev.quantumchamber.gametest.M7HomeAuthorityGameTests",
-      "dev.quantumchamber.gametest.M7HomeClosureGameTests"
+      "dev.quantumchamber.gametest.M7HomeClosureGameTests",
+      "dev.quantumchamber.gametest.M7RearmGameTests",
+      "dev.quantumchamber.gametest.M7SealReleaseGameTests"
     ]
   },
   "depends": {
