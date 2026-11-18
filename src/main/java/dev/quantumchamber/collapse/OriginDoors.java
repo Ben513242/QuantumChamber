@@ -9,7 +9,9 @@ import dev.quantumchamber.chamber.ChamberDoorService;
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberGeometry;
 import dev.quantumchamber.chamber.ChamberInstanceKind;
+import dev.quantumchamber.chamber.ChamberOriginAuthority;
 import dev.quantumchamber.chamber.ChamberPowerCoordinator;
+import dev.quantumchamber.chamber.ChamberRegistryState;
 import dev.quantumchamber.chamber.ChamberSessionGateway;
 import dev.quantumchamber.collapse.CollapseService.Prepare;
 import dev.quantumchamber.collapse.CollapseService.Track;
@@ -18,6 +20,7 @@ import dev.quantumchamber.persistence.SessionRecoveryRecord;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.persistence.SessionRecoveryState.TerminalOrigin;
 import dev.quantumchamber.superposition.SessionState;
+import dev.quantumchamber.universe.DimensionRole;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +30,7 @@ import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.math.Direction;
@@ -262,6 +266,12 @@ final class OriginDoors {
      * 的目標取代它（session 的門優先；它在套用時也會因為這個 session 而被排除）。
      */
     private void reapplyDoor(SessionRecoveryRecord view, String cause, boolean passageClosedInMemory) {
+        // M7 spec v1.6 D：registry 在原艙座標上已不是這座艙（永久封存解除、拆除並原地重建之後）時，這一列對這扇門無主：不重新套用，也不延後既有的待套用門。
+        if (!ownsDoor(view.origin(), view.chamberUuid())) {
+            LOGGER.info(LOG_MARKER, "來源艙{}：原艙座標上已不是這座艙（registry 沒有同一個 Chamber UUID），不重新套用原艙門：session={} chamber={}", cause,
+                    view.sessionUuid(), view.chamberUuid());
+            return;
+        }
         var existing = doors.get(view.chamberUuid());
         if (existing != null && existing.goal != DoorGoal.NORMALIZE_OWNERLESS) {
             existing.deferTo(service.now + 1);
@@ -443,15 +453,48 @@ final class OriginDoors {
                 pending.reapplied ? "chunk 重新載入之後的重新套用" : "進入 SEALED 時排入", view.sessionUuid(), view.chamberUuid(), player.getUuid());
     }
 
-    /** 以這座艙為原艙的 session 的 collapse view（依 world key、Controller 位置與朝向）；沒有時為 null。 */
+    /**
+     * 以這座艙為原艙的 session 的 collapse view（依 world key、Controller 位置與朝向）；沒有時為 null。M7 spec v1.6 D：只認 registry 在這個 frame 上仍登記同一個
+     * Chamber UUID 的列（{@link #ownsDoor}）；永久封存解除、拆除並原地重建之後，舊封存列對新艙的門無主，不攔截。
+     */
     private SessionRecoveryRecord sessionAt(ServerWorld world, ChamberFrame frame) {
         var key = world.getRegistryKey().getValue();
         for (var record : service.journal.flushedRecords().values()) {
             var origin = record.origin();
-            if (origin.worldKey().equals(key) && origin.controllerPos().equals(frame.controllerPos()) && origin.facing() == frame.outwardFacing())
+            if (origin.worldKey().equals(key) && origin.controllerPos().equals(frame.controllerPos()) && origin.facing() == frame.outwardFacing()
+                    && ownsDoor(origin, record.chamberUuid()))
                 return service.journal.collapseView(record.sessionUuid()).orElse(record);
         }
         return null;
+    }
+
+    /**
+     * M7 spec v1.6 D 的原艙座標門權威：以原艙座標找到的舊列，只在 registry 在同一 world key、同一 frame（Controller 位置與朝向）仍有一筆 chamber UUID 相同、
+     * instanceKind 為 ORIGIN、沒有拆除的紀錄時取得這扇門的門權威。registry 不健康（例如有 loadError）時維持既有行為（回 true；這時來源艙的即時訊號是 DISABLED，
+     * 門依既有規則交還一般開門）。
+     */
+    private boolean ownsDoor(ChamberOriginAuthority origin, UUID chamber) {
+        return ownsDoor(origin.worldKey(), origin.role(), new ChamberFrame(origin.controllerPos(), origin.facing()), chamber);
+    }
+
+    private boolean ownsDoor(RegistryKey<World> world, ChamberFrame frame, UUID chamber) {
+        var role = DimensionRole.fromVanillaKey(world);
+        return role.isEmpty() || ownsDoor(world.getValue(), role.get(), frame, chamber);
+    }
+
+    private boolean ownsDoor(Identifier worldKey, DimensionRole role, ChamberFrame frame, UUID chamber) {
+        var state = ChamberRegistryState.get(service.server);
+        if (state.loadError().isPresent()) return true;
+        return state.registry().findOrigin(worldKey, role, frame).filter(found -> found.chamberUuid().equals(chamber)
+                && found.instanceKind() == ChamberInstanceKind.ORIGIN && !found.destroyed()).isPresent();
+    }
+
+    /**
+     * M7 spec v1.6 D：待套用門中會替這座艙關門或套上量子膜的目標（不得替原地重建的新艙代關門或重套）。一般開門、量子膜改回一般開門的目標不在其中：
+     * 它們不會把人關住，終局之後的一般開門也照既有行為套用（例如沒有登記的艙在開服時結束通道之後的正規化）。
+     */
+    static boolean claimsDoor(DoorGoal goal) {
+        return goal == DoorGoal.CLOSE_ON_SEALED || goal == DoorGoal.CLOSE_AFTER_TERMINAL || goal == DoorGoal.PASSABLE;
     }
 
     /**
@@ -723,6 +766,13 @@ final class OriginDoors {
         }
         var world = service.server.getWorld(door.world);
         if (world == null) return;
+        // M7 spec v1.6 D：排入之後原艙座標上已不是這座艙（拆除並原地重建）時，不替新艙關門或套上量子膜。
+        if (claimsDoor(door.goal) && !ownsDoor(door.world, door.frame, door.chamber)) {
+            doors.remove(door.chamber);
+            LOGGER.info(LOG_MARKER, "原艙座標上已不是這座艙（registry 沒有同一個 Chamber UUID），不再套用待套用的原艙門（{}）：chamber={} session={}", door.goal,
+                    door.chamber, door.session);
+            return;
+        }
         ChamberDoorService.DoorState target;
         switch (door.goal) {
             case OPEN_AFTER_TERMINAL, OPEN_ON_LEAVE, OPEN_WHILE_PASSAGE_CLOSED -> target = ChamberDoorService.DoorState.OPEN;
