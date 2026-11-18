@@ -34,6 +34,7 @@
       "dev.quantumchamber.corridor.M7HomeCoverageTest.sameXZDifferentWorldConsumesCoverage",
       "dev.quantumchamber.corridor.M7HomeCoverageTest.boundsRootSharesAndReferencesWithoutReleasingOthers",
       "dev.quantumchamber.corridor.M7HomeCoverageTest.bothOrdersRespectCombinedCoverageLimit",
+      "dev.quantumchamber.corridor.M7HomeCoverageTest.entryAndRootSameXzDifferentWorldCountSeparately",
       "dev.quantumchamber.persistence.M7CloseMatrixTest.decideFollowsCloseMatrixPriority",
       "dev.quantumchamber.persistence.M7CloseMatrixTest.restartClosedNeedsStartupOwner",
       "dev.quantumchamber.persistence.M7CloseMatrixTest.closeLatchRequiresOwnerMint",
@@ -95,7 +96,8 @@
       "quantumchamber:m1_empty|m7sealreleasegametests.home_permanent_seal_allows_root_removal_after_disable",
       "quantumchamber:m1_empty|m7sealreleasegametests.rebuild_after_release_gets_new_identity_and_is_not_busy",
       "quantumchamber:m1_empty|m7sealreleasegametests.rebuilt_chamber_door_ignores_released_seal_after_restart_reapply",
-      "quantumchamber:m1_empty|m7sealreleasegametests.door_authority_requires_origin_and_not_destroyed"
+      "quantumchamber:m1_empty|m7sealreleasegametests.door_authority_requires_origin_and_not_destroyed",
+      "quantumchamber:m1_empty|m7homeentryticketgametests.close_loads_unloaded_b_with_bounded_ticket"
     ]
   },
   "windows": {
