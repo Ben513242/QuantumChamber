@@ -2,7 +2,261 @@
 
 本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 進行中（見下節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
-## 最新：T3 結案；T4 Phase A 實作、審查清零（2026-11-17）
+## 最新：T4 Phase B 與 P1／P2 完成，待完整回歸與同 SHA CI（2026-11-17～18）
+
+下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`（gitignored，是本節數字與 SHA 的唯一來源，見 `S/STATUS.md` 與各 `t4*-report.md`、`t4*-review.md`）。
+
+- **狀態**：
+  - Phase B 的各子段（B0、B1、B2a、B2b-1～B2b-5）與 Phase B 期間插入的兩輪 production 修正（P1、P2）都已實作並 push。各段一席審查提出的 Important（B2a 審查的 P1、B2b-2 審查的 I-1）都已由後續修正輪關閉，目前沒有未關閉的 Critical／Important；B2b-5 的一席審查 C0/I0/M2。HEAD `e28784c`。
+  - T4 還沒結案：最終 SHA 的完整回歸還沒跑，最終 SHA 的 CI 還沒全綠。`926425c` 的 CI 44117707536 十個 job 全部 success；`e28784c` 的 CI 44198806056 十個 job 全部 success。這兩次都是過程中的 CI，T4 結案以最終 SHA 的 CI 為準。
+- **切分**（controller 的決定，不是使用者裁示）：Phase B 拆成 B0、B1、B2a、B2b-1～B2b-5；P1、P2 是審查發現 production 問題後，controller 插入的修正輪。B2b-5 是 2026-11-18 規模測試裁示之後開的小修。
+
+### 使用者原文（2026-11-17～18）
+
+**10:17 遊玩組合分析要求**（主對話的真實使用者訊息；S 原文檔 `user-gameplay-combination-analysis-request-20261117.md`）：
+
+> 收到問題回答分析，到時候需要完整審查遊玩時候的不同條件組合會有甚麼結果的分析，看有沒有隱式狀態機等等，可加入M7 M8 玩法設計
+
+- 背景：使用者先問了兩個 M6 打包版（main `2255027`）的多人情境，controller 派只讀子代理查證後回覆兩題都可以，另附四個風險點（無限期等待、投影覆寫地形與清空容器、投影與落點不調整 Y、兩種永久 SEALED 沒有管理員解除工具；檔案:行號見原文檔）。這段回覆是 controller 的查證，不是使用者裁示。
+- controller 的處置（不是使用者裁示）：
+  - 排成獨立的只讀分析任務；範圍是多人遊玩下的條件組合與結果、隱式狀態機，以及會永久卡住、無限等待或吃掉玩家東西的組合，以上面四點為起點；
+  - 產出條件組合、結果與風險的報告，每項附檔案:行號，分開標出程式證實與推論，之後交使用者裁示哪些放 M7、哪些放 M8、哪些只記成已知行為；
+  - 建議時機是 T4 結案後、T5 開工前，因為 T5～T7 會實作入場、通道與提示。**使用者還沒回覆時機。**
+
+**11:0x CI 44003465357 兩項失敗的處置**（AskUserQuestion，題目與選項由 controller 撰寫；S 原文檔 `user-t4b-ci-rulings-20261117.md`）：
+
+- 第 1 題「Ubuntu 上「參與者關門」測試偶發卡住：B 門口 chunk 的方塊已載入，entity storage 卻 200 個 tick 都沒載入，收尾一直等它（正常只用 1～3 tick）。這組測試已第二次非預期失敗，要怎麼處理？」
+  - 使用者選「測試先等 B 區塊就緒（建議）」。選項說明原文：「關門前先有界等待 B 門口 chunk 的方塊與 entity 都載入，等不到就明確標成「環境未就緒」；關門後仍照原本 200 tick 驗收。只改測試，正式程式不動，驗收標準不放寬。」
+  - 未選：「收尾等待放寬到 1200 tick」、「先不修，再收集一次資料」。
+- 第 2 題「Windows 的 M7 驗證全部通過，但整段（編譯、JUnit、GameTest、封裝）超過 180 秒總時限；CI 三次分別跑了 115、142、235 秒，T5～T8 還會加測試。要怎麼調？」
+  - 使用者選「總時限改 600 秒（建議）」。選項說明原文：「只放寬 M7 這一段的總時限，90 秒無輸出就判卡住的規則不變。依 CI 實測最慢 235 秒，留給 T5～T8 新增測試的空間。」
+  - 未選：「拆成兩段各 180 秒」、「維持 180 秒，縮短測試」。
+- controller 的落地（不是使用者裁示）：
+  - 第 1 題：只改測試，在觸發收尾之前有界等待 B 的 `homeChunks` 方塊與 entity 都已載入、`doorwayEntitiesLoaded` 為真，等不到就丟 `ENV_NOT_READY` 並附 thresholds；收尾等待仍是 200 tick，斷言不變。涵蓋 `participantCloses` 兩案、N1 案，以及其他同樣經 B 門 converge 的收尾案。修正後同 fixture 再有任何非預期失敗，就停下來問使用者。
+  - 第 2 題：只改 `gates.ps1:470` M7Runtime 的總時限 180→600；idle 90 不變，其他 mode 的時限不動。
+  - 兩項都只改測試或腳本，走 B+C（一席審查、定向驗證、CI）。
+
+**15:4x 原生存檔遇到 journal 寫入失敗的處置，與 17:1x M4 追加題**（AskUserQuestion，題目與選項由 controller 撰寫；S 原文檔 `user-t4-native-save-ruling-20261117.md`）：
+
+- 題目「M5 就有的 Windows AccessDenied（防毒或索引短暫鎖檔）如果剛好發生在 autosave 或停服，會讓伺服器崩潰，遺失 level.dat 與部分存檔資料（chunk 不會遺失）。P1 剛做好的機制可以延伸到所有 journal 寫入失敗。要怎麼處理？」
+  - 使用者選「M7 一併修（建議）」。選項說明原文：「在 T4 加一個小的正式修正：原生存檔遇到任何 journal 寫入失敗都不丟進原版存檔流程，保持未寫出的狀態、記 ERROR，交給既有的重試者收斂。伺服器不崩潰，其他資料照常存。走完整門檻，約多一輪實作與審查。」
+  - 未選：「記成已知限制，之後再處理」、「排進 M8」。
+- 追加題（17:1x）「M4 有一個驗收測試把「停服時崩潰」當成預期（上一筆 journal 寫入結果未確認、本次必須重啟才能收斂的情況）。照你「任何 journal 寫入失敗都不崩潰」的裁示，這類改成：伺服器繼續運作、量子艙 journal 停止寫入並記 ERROR，等管理員重啟後收斂；停服正常完成、level.dat 會存到。這樣 M4 那個測試要跟著改。怎麼定？」
+  - 使用者選「改 M4 測試，一律不崩潰（建議）」。選項說明原文：「更新 M4 的驗收測試與 run-all 檢查為新行為：原生存檔不丟出、仍不寫入、ERROR 恰一則、停服正常完成；重啟後的收斂驗證照舊。測試標準不放寬，只是預期行為從「崩潰」改成「不崩潰且不寫」。」
+  - 未選：「這類維持崩潰」。
+- 原文檔的背景段（P1 RED 的實證、2026-10-21 AccessDenied 裁示的脈絡）是 controller 寫的說明，不是使用者原文。
+- controller 的落地（不是使用者裁示）：
+  - 在 T4 開 production 修正輪 P2，走完整門檻（具名 RED、GREEN、mutation、focused；完整回歸與同 SHA CI 在 T4 結案時一起跑）。
+  - 原生存檔遇到任何 journal 寫入失敗都不丟進原版鏈；保持 M5 既有的 pending／dirty 語意、不覆寫未確認的寫入、記 ERROR，由既有重試者收斂；checked 路徑不變；不新增 production 短暫重試，不更動 Defender 或索引設定（沿 2026-10-21 裁示）。
+  - `requireMutationThread` 等執行緒與 owner 守門維持丟出：它們是程式錯誤，不在這題範圍內。
+  - M4 oracle 的修改也納入 RED、GREEN、mutation；既有 JUnit 改用 `checkedSave` 時附對照表（見下方 P2）。
+  - P1-M1（ERROR 診斷：路徑、處理方式、以 SID＋類別去重）併入 P2。
+- spec v1.5 的文末節「2026-11-17 T4 原生存檔失敗不拖垮伺服器（依使用者裁示）」是 controller 依此裁示寫成的技術契約，使用者原文以本節為準。
+
+**2026-11-18 06:3x >4096 規模測試的時限**（AskUserQuestion，題目與選項由 controller 撰寫；S 原文檔 `user-t4-scale-test-ruling-20261118.md`）：
+
+- 背景（controller 整理的事實，不是使用者原文）：CI 44117707536（head `926425c`）十個 job 全部 success，但 M7 Windows 的「執行 M7 獨立 GameTest」step 耗時 494 秒（前一次 CI 44107563893 是 491 秒）。artifact `S/ci-44117707536/windows-artifact/` 的拆解：`M7HomeHistoryScaleTest` 204.456 秒（本機約 28 秒）、其他 M7 JUnit 合計約 15 秒、GameTest 177.4 秒。
+- 題目「「超過 4096 趟回程」的規模測試在 Windows CI 要 204 秒（本機 28 秒），讓 M7 驗證整段跑到約 490 秒，離你定的 600 秒只剩約 100 秒；T5～T8 加測試後一定會超過。要怎麼處理？」
+  - 使用者選「規模測試獨立一段（建議）」。選項說明原文：「把這個測試從 M7 驗證中拆出來，另外一次執行、自己的 600 秒總時限，90 秒無輸出就判卡住的規則照舊。M7 驗證回到約 290 秒；本機完整回歸與兩個平台的 CI 都照樣跑它，測試內容不變。要多一輪小修。」
+  - 未選：「維持現狀，T5 前再處理」、「只在 Ubuntu 跑規模測試」。
+- controller 的落地（不是使用者裁示）：
+  - 開一輪小修 B2b-5，只改測試、腳本與 workflow，走 B+C。
+  - M7 gate 不再執行 `M7HomeHistoryScaleTest`；規模測試另立一段，用自己的 Gradle 呼叫，總時限 600 秒、idle 90 秒。
+  - 本機完整回歸（run-all）與 Windows、Ubuntu 兩平台的 CI 都執行規模段，並納入 exact 集合；測試內容不變。
+  - B2b4-M1（鎖定 86 個 strict 趟）在同一輪一併處理。
+
+### Phase B 各段
+
+每段列範圍、主要 commit、一席審查結論（spec 與 quality 同席）。證據路徑、SHA 與完整數字在 S 的對應報告。
+
+- **B0**（N1、N2；`7acc564`，另有 controller 追加的 Ubuntu 診斷 `773f709`；S `t4b0-report.md`）：
+  - N1：呼叫端自己持有同 SID 的 guard 時，`HomeClosure.onParticipantClose`／`onEntryStopped` 的回傳值與不寫入的行為不變，另記一則 WARN（`LOG_MARKER`、`session=`，以 SID＋入口去重）。新 GT `caller_held_guard_refuses_participant_close_and_entry_stop`；n1a、n1b 兩個 mutation KILLED。
+  - N2：兩個 GT 守住 HOME 重試退避（寫出 tick 依序 T、T+200、T+600）。m1 KILLED。m2（拿掉 `SessionRecoveryManager` :201 的同 tick 判斷）SURVIVED：:201 只有在 :196 `ready(now)` 為真時才會執行，同一 tick 呼叫 `failed(now)` 之後 ready 必為假。審查員獨立確認是等價突變，唯一例外是 `getTicks()==Integer.MIN_VALUE` 的 int 溢位（連續運轉約 3.4 年），實務上到不了。記為等價突變、production 不改，是 controller 的決定（不是使用者裁示）。
+  - `773f709` 只改 `participantCloses` 逾時訊息，附上各門檻當下的值，不改上限與斷言。
+  - 審查（S `t4a-review.md`「B0 增量審查」節）：spec ✅、quality Approved，C0/I0/M1。Minor N3 併入下一段。
+- **等待餘量記錄與 N3**（`27415b4`，只改兩個 testmod 檔）：
+  - `until` 記一行 `M7_GT_WAIT used=<n> bound=<n> case=<label>`，逾時另加 `timeout=true`；N3 在 N1 新案的逾時訊息補上 thresholds。bound、斷言、tickLimit、案例集合都不變。
+  - 這次也改到 T3 fixture `M7HomeAuthorityGameTests:284`，只在 `until` 加 label，上限 200 不變。
+  - 判斷是否逾時要看 `timeout=true`：條件在最後一次檢查才成立時，也會記 used=bound。
+  - 審查（S `t4a-review.md`「等待餘量記錄審查」節）：C0/I0/M0。
+- **前置等待與 M7 總時限**（`e652c23`，依 11:0x 兩題裁示）：
+  - `M7HomeClosureGameTests.whenEntryReady` 套用 9 案（經 B 門 converge 收尾、使用 `Projection` 的案例），等不到就丟 `ENV_NOT_READY` 附 thresholds；6 案不適用（沒有 Projection 或 B converge，或收尾離 Projection 建立至少 601 tick）。
+  - 前置等待上限：一般 380、queue 360、root_disable 280，由原 tickLimit 扣掉之後的等待算出（380＋200=580 < 600；280＋3×200=880 < 900），收尾逾時仍以本身的具名訊息出現。這組上限是 implementer 的落地，經審查接受，採用是 controller 的決定（不是使用者裁示）。
+  - `gates.ps1:470` M7Runtime 總時限 180→600，idle 90 不變。
+  - 審查（S `t4a-review.md`「e652c23 審查」節）：C0/I0/M1。Minor N4 的處置見下方「已知界線」。
+- **B1**（`aa12ace`、`8c7c08f`、`4f4128e`；S `t4b1-report.md`、`t4b1-review.md`）：
+  - Windows 原生 close 矩陣 39 列 `close-{ordinary|sealed|passable}-{cut}`：runner `scripts/verification/m7-home-probe.ps1`、testmod probe `M7HomeProbe`／`M7HomeClosurePhases`、cut 點 mixin、`build.gradle` 的 `m7HomeProbe` run。
+  - 乾淨 HEAD `4f4128e`：39 列、78 phase 全 PASS（crash 都是預定的 halt 77，reopen 新 JVM 都正常 exit 0）；summary SHA-256 `b552967b…4f08`；`-VerifySummary` PASS，`-SelfTest` 319 個負控都以預期錯因被拒。
+  - 耗時 1589.8 秒（約 26.5 分），每列平均 40.8 秒。
+  - 兩個 mutation（close 前提省略 checkpoint、先刪 active 再發 receipt）各被 3 列原生列殺掉。殺掉的證據引用各列 summary 的 `failure` 欄，不引用 mutation 驅動的 `results-*.json`（它只看 exit≠0，summary 路徑又被空白截斷；B1 審查 M1）。
+  - 三個 fixture 假設：(a) 結案原因固定 ROOT_DISABLED（DoorGoal=OPEN）；(b) 基線存檔放在停用 A 之後；(c) B 的 chunks 以測試票保持載入（正式 B 來源票到 T5 才有）。審查判定都成立、不需使用者裁示，由 controller 確認。
+  - 非預期失敗 1 次，屬驗證工具：probe 寫死的 sealed／passable 初始門摘要軸向錯（`_Z`→`_X`），原 root 保留。
+  - 審查：C0/I0/M8。M4 併入 B2b；M2、M5～M8 排進 B2a Step 0；M3 的界線見下方。
+- **B2a**（Step 0 `c58c129`、主體 `fca6d31`；S `t4b2a-report.md`、`t4b2a-review.md`）：
+  - Step 0 處理 B1 審查的 M2、M5～M8（B 門 25 格所在 chunk 都在 checkpoint relevant 集合內的獨立斷言、注入點 `allow=1`、mixin 拆檔成 `M7HomeReceiptWindowMixin.java`、路徑長度預檢、用詞）。
+  - 新原生列 5 列：`restart-enable-before-entry`、`restart-ready-stop-crossed`、`restart-ready-low-no-root`、`receipt-existing`、`receipt-player-closed`。新同 JVM GT 3 個：`checkpoint_failure_keeps_close_and_lock`、`existing_receipt_mismatch_keeps_lock`、`published_receipt_mismatch_keeps_lock`。
+  - 乾淨 HEAD `fca6d31`：restart 3 列 PASS（119.2 秒）、receipt 2 列 PASS（83.5 秒）、close 39 列重跑 PASS（1483.3 秒）；三份 summary 的 VerifySummary 與 SelfTest 都 PASS；M7 gate junit 35、gametest 27。
+  - 五個假設（controller 的轉述，原文見 S `t4b2a-report.md` 階段 2）：(1) startup 先 direct enable 的時點放在開服掃描之前；(2) 以持有同 SID guard 製造 registry 已落 disabled、stop 未落的窗口；(3) 再操作 B 以正式 journal 入口的 MEASURED→COLLAPSING 續行嘗試代表；(4) 以 journal flush 故障製造 receipt 已發布、active 移除失敗；(5) 以 gamerule `spawnChunkRadius=0` 觀察不等 A FULL。審查判定都成立、不需使用者裁示；(3) 要列為 T5／T6 待辦（B2a-M3）。
+  - plan Task 4「變異掃描」核取項的六項都有對應的殺手：
+    - 僅有 runtime：Phase A fix1 M6＋本段 rm1；
+    - 略過 direct setter：fix1 M5（停用通知）＋rm2（啟用閘門）；
+    - close 前提省略 checkpoint：fix1 M7、B1 m1、本段 gm1；
+    - 先刪 active 再發 receipt：fix1 M8、B1 m2；
+    - 漏核 existing exact：fix1 M9（JUnit，行為層）＋本段 mr1（原生列只能以事件序列缺 `verify-existing` 殺，證明力較弱）；
+    - TRR 允許 ROOT close：Phase A M4（JUnit `permanentSealCannotBeArchived`）。
+  - 非預期失敗 1 次，屬驗證工具：reopen 重建 entry 時把 `UniverseId[value=…]` 當成 UUID 解析，原件保留。
+  - 審查：B2a 本身 C0/I0/M6；另有 production 觀察 P1（Important），合計 C0/I1/M6。P1 的處置見下一段。
+- **P1**（production `c9ef60f`、`6926e93`、`73132bc`；S `task-4p1-brief.md`、`t4p1-report.md`，審查在 `t4b2a-review.md`「P1 修正增量審查」節）：
+  - 起因：收據與熱列不符、journal 又是 dirty 時，原生存檔（autosave、`/save-all`、停服）的 `verifyReceipts` 例外會穿過原版存檔鏈（stack 經 `PersistentStateManager.save`→`ServerWorld.save`→`MinecraftServer.save`）。
+  - 處置：走技術修正、spec 語意不變，是 controller 的決定（不是使用者裁示）。開服 strict 拒絕維持 T2 設計，記為覆蓋界線。
+  - 修法（只改 `SessionRecoveryState.java`）：原生存檔遇到收據不符時不再丟出；只有「本次有變動又與收據不符」的列會擋下寫出、保持 dirty；未變動的不符列照原樣重寫，其他 SID 照常落盤；熱列、收據原件與占用都不動，管理員 ERROR 以 SID 去重（去重規則之後在 P2、B2b-2 調整）；checked flush 照舊回報失敗；開服 strict 載入不變。
+  - RED（未修的 production）：GT `published_receipt_mismatch_keeps_lock` 得 `NATIVE_AUTOSAVE_THREW`；原生 `/stop` 記 `Exception stopping the server`，沒有走到 SERVER_STOPPED。
+  - **實證與原推論的差異**：審查原本推論停服會遺失最後一次成功存檔之後的世界資料。實證是 **chunk 沒有遺失**（原版 `shutdown` 在 `save` 之前的卸載迴圈已經寫出），遺失的是 **level.dat 與 journal 丟出之後原版才會存的 PersistentState**，world close 與 session unlock 也被略過。審查員以唯讀 NBT 檢查離線重現，確認更正成立。
+  - 6 個 mutation 全部 KILLED，逐位元還原。新原生列 `receipt-mismatch-stop`（windows.native 改為 45 列）。
+  - 審查：spec ✅、quality Approved，C0/I0/M3。P1-M1 併入 P2；P1-M2、P1-M3 見下方「已知界線」（P1-M3 已依 15:4x 裁示由 P2 處理）。
+- **P2**（production `cea8d44`、`dbbb0d4`；S `task-4p2-brief.md`、`t4p2-report.md`、`t4p2-review.md`）：
+  - 依 15:4x 與 17:1x 兩題裁示。production 只改 `SessionRecoveryState.java`：`save` 外包一層 catch，原生路徑記 ERROR 後 return，checked 路徑丟出同一個例外物件；執行緒與 owner 守門照舊丟出。
+  - 原生路徑的失敗類別與收斂者：
+    - UNHEALTHY（journal 不健康）：不寫；修檔後重啟；
+    - PENDING（未確認的寫入，含需要重啟）：不覆寫，保留 pending 與 dirty；重啟後開服 strict 載入收斂；
+    - PREPARE（編碼或寫出前檢查）：保持 dirty；由下一次原生存檔、recovery 的 journal 退避重試或下一次 checked 提交收斂；
+    - WRITE（寫入正式檔，例如 atomic move 的 AccessDenied）：possiblyMoved 時保留 pending、下一次先核對磁碟，否則保持 dirty；由下一次原生存檔與 `SessionRecoveryManager` 的 journal 退避重試收斂；
+    - READBACK（讀回失敗或不符）：保留 pending，下一次寫出依 M5 既有規則判定需要重啟；
+    - RECEIPT（P1）：不變，只補 ERROR 的路徑、處理方式與去重鍵。
+  - ERROR 帶 `TICK_LOG_MARKER`，附 cause、journal 路徑、dirty／pending 與收斂方式；收據 ERROR 寫明收據檔路徑與處理方式，「有變動」型註明全服 journal 寫入已暫停，讀不出收據時寫「無法讀取或解析」，不寫成竄改。
+  - M4 `readback-fault` 依追加題改成新預期：原生 save 不丟出、不寫入、journal hash 不變、PENDING 類 ERROR 恰一則、停服正常完成（SERVER_STOPPED、JVM exit 0）、磁碟上仍是那份 exact attempt；recover、verify 照舊。改動擴到 `M4CandidateRecoveryProbe.java`、`m4-recovery-probe.ps1`、`run-all.ps1`（只限 recovery 的 readback-fault 分支）。實作前已唯讀確認 recover／verify 不依賴「停服崩潰、沒有落盤」。
+  - 既有 JUnit 的對照（`t4p2-report.md`「既有 JUnit 斷言對照表」）：原本以原生 `save` 斷言丟出的 32 處 `assertThrows(…save…)` 中，27 處改成 `checkedSave`，5 處屬 owner 守門、維持原生 `save` 丟出不改；另有 2 處不是 `assertThrows` 形式，也改成 `checkedSave`；原生版本共補 8 處。`CandidateLedgerServiceTest` 實跑 26 案全過，沒有改。
+  - 新增：JUnit `M7NativeSaveFailureTest`；testmod `M7NativeSaveFault.java` 與 `SessionJournalWindowFaultMixin` 的 `@ModifyArg`（把 `writePrepared` 的目標導向既存目錄，Windows 上是真正的 `AccessDeniedException`）；GT `native_save_write_failure_keeps_pending`、`native_save_skips_unhealthy_journal`；原生列 `receipt-write-fail-stop`（windows.native 改為 46 列）。
+  - RED（未修的 production）：JUnit、GT（`NATIVE_AUTOSAVE_THREW`／`NATIVE_UNHEALTHY_THREW`）、原生列與 M4 新 oracle（`M4_PENDING_NATIVE_THREW`）都 FAIL。6 個 mutation 全部 KILLED；拿掉攔截的 m1 另被 M4 新 oracle 殺掉。
+  - focused（`dbbb0d4`）：JUnit 25 類 378 案；M7 gate junit 45、gametest 29；M5 gate m5 60、m4-normal 13、legacy 1；兩條原生列都 PASS。M4 recovery 25 phase 是在 GREEN 階段跑的（commit 前，工作樹內容與 `dbbb0d4` 相同），focused 沒有重跑。
+  - 審查：spec ✅、quality Approved，C0/I0/M7。M1、M2、M3、M4、M5、M6 與 B2a-M1 排進 B2b-1；M1 與 M7 的內容見下方「已知界線」。
+- **B2b-1**（production `864b0fb`、`a8755ce`；S `task-4b2b1-brief.md`、`t4b2b1-report.md`，審查在 `t4p2-review.md`「B2b-1 增量審查」節）：
+  - production：`SessionRecoveryState.java`（去重、ERROR 文案、Javadoc）與 `ChunkSaveCheckpoint.java`（只改 Javadoc）。
+  - P2-M2：原生 ERROR 在讀回確認的成功寫出之後清除去重，之後再發生同類失敗會再記一則。這條重新啟用是 controller 的決定（P2 簡報 Q4 的每類只記一次，本來就是 controller 訂的規則，不是使用者裁示）。收據 ERROR 的去重在本段沒有改（未變動的不符列每次存檔都會寫出成功，以寫出成功清除會刷屏），改由 B2b-2 處理。
+  - P2-M3：`M7HomeClosureGameTests.Projection` 在 `close()` 時以正式路徑收掉自己留下的列（`M7_GT_RESIDUE_CLOSED`／`M7_GT_LEFTOVER_HOME`）；`M7CapacityFixture.admit` 先檢查共用 journal 沒有殘留，不成立時以 `PRIOR_TEST_RESIDUE` 失敗。
+  - P2-M4：M4 的 `pending-stopped.json` 補 `stopSaveCalls`（停服過程中，也就是 SERVER_STOPPING 之後，真正進入 journal save 本體的次數）與 `universeUnchanged`，Java 與 `m4-recovery-probe.ps1` 都要求 `stopSaveCalls≥1`、`universeUnchanged=true`。
+  - P2-M5、P2-M6：文案改寫；PREPARE 分類與「保持 dirty」補斷言與 mutation。P2-M5 第 4 點（收據路徑共用 `HomeReceiptStore` 的來源）要改 `HomeReceiptStore.java`，implementer 依規停下，排進 B2b-2。
+  - **tickLimit 2000→2300**：新 fixture 第一次負控時 B 還沒就緒，implementer 為 native write GT 加上 `whenEntryReady`，tickLimit 跟著放寬。審查判定不違反裁示也不算放寬驗收：11:0x 第 1 題的原文沒有提到 tickLimit 要不要改；前置等待扣掉後續等待、不超過原 tickLimit，是 controller 落地時對那 9 案的選擇；這個 GT 是 P2 新增的，驗收內容不變，最壞情況 2286 ≤ 2300（餘量 14 tick）。採用這個改動是 controller 的決定（不是使用者裁示）。
+  - RED 9 案中 4 案 FAIL；ma、mb、mc 三個 mutation 都 KILLED。focused（`a8755ce`）：JUnit 25 類 380 案；M7 gate junit 47、gametest 29；M5 gate PASS；M4 recovery 25 phase、兩條原生列都 PASS。
+  - 審查：spec ✅、quality Approved，C0/I0/M4。M2、M3 併入 B2b-2，M4 併入 B2b-3，M1 見下方「已知界線」。
+- **B2b-2**（production `a7772a6`、`647a127`、`9dab143`、`98e8e20`；S `task-4b2b2-brief.md`、`t4b2b2-report.md`，審查在 `t4p2-review.md`「B2b-2 增量審查」節）：
+  - production：`HomeReceiptStore` 抽出純計算的 `receiptPath`，收據讀寫與收據 ERROR 共用（P2-M5 第 4 點）；收據 ERROR 在該 SID 的 `verifyActive` 通過時清除這個 SID 的去重鍵（B2b1-M2，具名 RED `RECEIPT_ERROR_NOT_REPORTED_AGAIN`）。
+  - B2b1-M3：`SessionJournalSchemaFiveTest` 以真實觸發（lease 失效）補 PREPARE 分類的 log 斷言。
+  - **>4096**：JUnit `M7HomeHistoryScaleTest`，4100 個互異 SID 每一趟都走正式 `publishOrVerify` 發布與正式 checked 移除 `terminateHome`；之後舊 SID 重用被拒、新 SID 仍可 admission、抽樣舊收據 exact 讀回；以 `ListingProbe` instrumentation 證明沒有目錄列舉，m4（把 `read` 改成列舉目錄）只被它殺掉。本機 46.3 秒。
+  - **彙總驗證**：summary `treeClean` 不是 true 一律拒絕；單份只有完整 46 列才輸出 `M7_HOME_VERIFIED_COMPLETE PASS`，分片只輸出 `M7_HOME_VERIFIED_SHARD PASS`；新增 `-RequireComplete` 與 `-VerifyAggregate`（門態組合或 family 組合）。
+  - **restart fixture 出生點修正**（`98e8e20`）：
+    - 第一輪 restart 族的 `restart-ready-low-no-root` 在 reopen 以 `aNeverLoadedDuringClose` FAIL，原 root `run/m7-home-0531c6306e06-*` 保留、原判不改。
+    - 根因（以 javap 查證）：原版生玩家時會在出生點附近隨機一欄同步載入 chunk；出生點 (0,74,0)、`spawnRadius=10`，A 的 chunk 在 (0,0)、(0,1)，落進的機率約 27%。這是 B2a fixture 的偶發，不是本輪改動造成的。
+    - 修法是 controller 的決定（不是使用者裁示）：修 fixture、判定不放寬、不交使用者。基線存檔前把出生點移到 (-256,y,-256)，搜尋 chunk 為 {-17,-16}²，與 A 不相交；新增 `spawnSearchAvoidsA`、`aNotLoadedAfterLogin` 兩個斷言，既有判定不改。
+    - 強制 RED（`spawnRadius=0`，在 `9dab143`）FAIL，特徵與原偶發相同；強制 GREEN（在 `98e8e20`）PASS。原 FAIL、強制 RED、強制 GREEN 三組 root 都保留。
+  - 新 HEAD `98e8e20` 重跑全部 46 列 PASS（另跑 close 族 39 列）；`-VerifyAggregate` 門態組合（426 個負控）與 family 組合（406 個負控）都是 `M7_HOME_AGGREGATE_COMPLETE PASS`；8 個彙總反例以真實資料逐案以預期錯因被拒。M7 gate junit 49、gametest 29；JUnit 26 類 382 案。
+  - 審查：spec ✅、quality Needs fixes，C0/I1/M2。**I-1**：>4096 JUnit 執行期間 Gradle console 沒有輸出，Windows CI 可能觸發「90 秒無輸出就判卡住」；CI 44097956125 證實（見下方 CI）。idle 90 是使用者裁示原文明定不變的，所以修法排進 B2b-3，不調 idle。
+- **B2b-3**（`ebc723e`、`3e2c8c7`、`436cb5d`、`434c858`；S `task-4b2b3-brief.md`、`t4b2b3-report.md`、`t4b2b3-review.md`）：
+  - I-1：`build.gradle` 的 `test` 開 `testLogging { events 'started', 'passed', 'failed' }`；scale 測試拆成 11 個方法（10 段各 410 趟加最後一段），以 `BLOCK_ORDER` 守住順序。本機 M7 gate 整段最長靜默 5.37 秒；m4 仍 KILLED。idle 90、總時限 600 都沒改。
+  - CI：新增 `m7-home-native`（Windows matrix 四片：ordinary、sealed、passable 各 13 列，restart-receipt 3＋4 列）與 `m7-home-native-aggregate`（要求 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=46 phases=92`）；既有 job 逐鍵不變。
+  - run-all：在 `m6-native` 之後新增 `m7-home-native` step（46 列、`-RequireComplete -SelfTest`）；recovery 檢查直接核 `stopSaveCalls≥1` 與 `universeUnchanged=true`（B2b1-M4）。
+  - 日期 TODO：`scripts/verification/` 沒有任何 `ParseExact`，結論是未恢復此呼叫、不適用（implementer 的結論，controller 採用）。plan Task 4 的日期項已註記。
+  - B2b2-M2：`HomeReceiptStore` 的 Javadoc 寫明只按 SID 查詢、禁止列舉目錄（只改註解）。
+  - focused（`434c858`）：M7 gate junit 59、gametest 29；JUnit 26 類 392 案。
+  - 審查：spec ✅、quality Approved，C0/I0/M3。三項 Minor（600 秒餘量偏緊、run-all `summary.json` 沒記 M7 原生、彙總診斷）排進 B2b-4。
+- **B2b-4**（`51dc8ca`、`636d3a5`、`926425c`；S `task-4b2b4-brief.md`、`t4b2b4-report.md`，審查在 `t4b2b3-review.md`「B2b-4 審查」節）：
+  - B2b3-M1：CI 44107563893 的 M7 Windows step 耗時 491 秒，離 600 秒只剩約 110 秒。scale 測試改成 strict 趟抽樣：第 0 趟、各段首尾、4095／4096 等邊界與每 64 趟，共 86 趟照完整步驟（admission、CLOSE 列以正式 writer 落盤、開服 strict 載入）；其餘 4014 趟在記憶體 strict decode。4100 趟每一趟仍走正式發布與移除，每趟斷言照舊。本機 53.7→28.3 秒，降 47.3%。
+  - 「至少降一半」是 controller 自訂的目標；剩下的成本是正式發布與移除本身（每趟約 6.3 ms），接受 47% 是 controller 的決定（不是使用者裁示），審查員同意。600 秒不改。
+  - B2b3-M2：run-all 的 summary step 以 `Get-M7HomeNativeProof` 唯讀重驗 M7 原生 summary，寫進 `summary.json` 的 `m7HomeNative`，`SUMMARY` 行尾加 `m7native=COMPLETE:46`。真實的 46 列 COMPLETE 正例要等 T4 完整回歸。
+  - B2b3-M3：每片寫 `<shard>.runner.json`（workspace、`ImageOS`、`ImageVersion`），彙總 step 先比對再做原本的檢查，主體包在 `try/catch`，錯誤完整寫進上傳的 log。`ImageVersion` 不同只記錄、不判失敗，是 controller 的決定（不是使用者裁示）；`ImageOS` 不同仍判失敗。
+  - gate（`926425c`）：M7 junit 59、gametest 29；Gradle 141.2 秒，最長靜默 4.75 秒。
+  - 審查：spec ✅、quality Approved，C0/I0/M2。B2b4-M1（scale 測試補 `assertEquals(86, strictTrips.size())` 或逐段核對首尾）已在 B2b-5 處理（見下段）；B2b4-M2（README 對彙總比對順序的描述）在本筆 docs 更正。
+  - `926425c` 的 CI 44117707536 attempt 1 十個 job 全部 success，但 M7 Windows step 耗時 494 秒（scale 測試 204.456 秒、GameTest 177.4 秒），與前一次 CI 44107563893 的 491 秒相近。這是 2026-11-18 規模測試裁示的背景。
+- **B2b-5**（`5bcfce4`、`e28784c`，範圍 `926425c..e28784c`；依 2026-11-18 規模測試裁示；S `task-4b2b5-brief.md`、`t4b2b5-report.md`，審查在 `t4b2b3-review.md`「B2b-5 審查」節）：
+  - 只改測試、腳本與 workflow（7 個檔）；production、testmod、`build.gradle` 都沒有改。
+  - inventory：`m7-inventory.json` 升 schema 4。`portable.junit` 移除規模測試的 11 個方法，新增 `scale.{portable,windows,ubuntu}.junit`（portable 是那 11 個方法，兩平台都跑）。Main 48、Scale 11，交集為空，聯集等於原本的 59，也等於原始碼宣告的全部 M7 `@Test`。
+  - `m7-ci-gametest.ps1` 新增 `-Segment Main|Scale`：Gradle 的 `--tests` 改由該段 exact 集合的 class 產生；兩段 class 重疊時 `M7_JUNIT_SEGMENT_OVERLAP`，兩段聯集不等於原始碼宣告時 `M7_JUNIT_DECLARATION_SET`。規模段輸出 `M7_SCALE_VERIFIED PASS`，Main 段的 `M7_VERIFIED PASS` 不變。
+  - `gates.ps1`：新增 `-M7Tests`（class 篩選）；新 mode `M7ScaleRuntime`（只跑 `M7HomeHistoryScaleTest`，總時限 600、idle 90，沿用既有 `Invoke-Gradle` 與 M6 deadline，不啟動 Minecraft），以及本機 gate `M7ScaleTest`。`M7Runtime` 的 600／90 不變。
+  - CI：在 `m7-validation`（Windows 與 Ubuntu matrix，同一個 job）新增 3 個 step：「執行 M7 規模測試」、「確認 M7 規模測試精確集合」、「上傳 M7 規模測試證據」（artifact `m7-scale-<平台>`）。原有 step 逐鍵不變，沒有新增 job。Ubuntu 的規模段和 Main 段一樣直接呼叫 Gradle，腳本內沒有 600／90 判定，只受 job 的 90 分鐘限制。
+  - run-all：`m7-home` 之後新增 `m7-scale` step（執行，再 `-VerifyOnly -SelfTest`）；summary step 唯讀重驗同一個 root，`summary.json` 在 `m7HomeNative` 之後新增 `m7HomeScale`，`SUMMARY` 行尾加 `m7scale=PASS:11`。既有欄位不動（`m7Home` 的 `junitCases` 由 59 變 48）。
+  - B2b4-M1：`M7HomeHistoryScaleTest` 新增 `STRICT_TRIPS = 86`；最後一段逐段核對各段首趟與末趟都在 strict 集合內，再核 strict 趟恰為 86。m5a（stride 64→128）與 m5b（刪掉首尾條件）都 KILLED；對照組 m5c（m5b 再拿掉新斷言）如預測存活，證明 m5b 是新斷言殺的。m4（`read` 改成列舉目錄）仍 KILLED。
+  - 乾淨 HEAD `e28784c`：M7 gate `M7_VERIFIED PASS junit=48 gametest=29`，Gradle 116.6 秒（B2b-4 是 141.2 秒）；規模段 `M7_SCALE_VERIFIED PASS junit=11`，Gradle 45.1 秒；exact 集合對照與 11 案守門正負例都符合；CI 新 step 以一次性 harness 逐字實跑 PASS。
+  - 本機兩段相加（161.7 秒）比原本多，多的是第二次 Gradle 啟動與 `--rerun-tasks` 重新編譯。implementer 原本推估 CI 上 Main 約 290 秒、規模段約 265～295 秒；`e28784c` 的 CI 44198806056 實測 Windows Main 280 秒、規模段 204 秒，見下方 CI 表。
+  - 驗證工具的非預期失敗 2 次，另有 1 次 wrapper 卡住與 1 次 root 放錯位置（建在 repo 外的 `C:\c\...`，已核 hash 搬回），都出在 implementer 自己的驅動，原 root 保留，未達止損。T3 那組 GameTest fixture 在本輪兩次 M7 gate 都 PASS。
+  - 一席審查（S `t4b2b3-review.md`「B2b-5 審查」節）：spec ✅、quality Approved，C0/I0/M2。審查以原始碼與兩版 inventory 獨立重算，確認 Main 48＋Scale 11＝原 59，交集為空；B2b4-M1 CLOSED。兩項 Minor 交 T5 Step 0：
+    - B2b5-M1：宣告掃描只認得 `@Test void`。若新的 `M7*Test` 類別只用 `@ParameterizedTest`、`@RepeatedTest`、`@Test public void` 之類的寫法，又沒有列進 inventory，兩段都不會執行它，exact 檢查也察覺不到；完整 JUnit 仍會跑到。要補上類別層級的核對與負例。
+    - B2b5-M2：CI 新 step 沒有 `timeout-minutes`，Ubuntu 卡住時要等到 job 的 90 分鐘上限；Main 失敗時，scale 會連帶被跳過。建議執行 step 設 20 分、驗證 step 設 10 分；要讓兩段互不連坐，可以加 `if: ${{ !cancelled() }}`。
+
+### 過程中的 CI
+
+下列都是 T4 進行中的 CI，不是 T4 結案 CI；T4 結案以最終 SHA 的 CI 為準。FAIL 一律保留原判、不 rerun。原件在 `S/ci-<run>/`（每個目錄都有 `run.json`）。
+
+| run | head | 結果 | 說明 |
+| --- | --- | --- | --- |
+| 43993912938 | `c74bf79` | **FAIL** | M7 Ubuntu：`participant_close_closes_door_when_doorway_clear` 在 200 tick 內沒有收尾（`PARTICIPANT_CLOSE_NOT_CLOSED_OUT`），是 `participantCloses` fixture 第一次非預期失敗。其他四個 job success |
+| 44000617490 | `773f709` | success | 五個 job |
+| 44003465357 | `27415b4` | **FAIL** | M7 Ubuntu：`participant_close_keeps_door_open_when_doorway_occupied` 逾時（`M7_GT_WAIT used=200 bound=200 timeout=true`），B chunk 方塊已載入、entity 未載入，是同 fixture 第二次非預期失敗，依 controller 止損交使用者裁示。M7 Windows：24 案全部 PASS，但 `M6_PHASE_DEADLINE_EXCEEDED reason=total`（當時總時限 180 秒）。兩項的處置即 11:0x 兩題 |
+| 44008473002 | `e652c23` | success | 五個 job；兩平台 `M7_GT_WAIT` 都沒有 timeout、沒有 ENV_NOT_READY |
+| 44013651723 | `4f4128e` | success | 五個 job（B1 的 mixin 已在其中） |
+| 44028009042 | `fca6d31` | success | 五個 job；B2a 三個新 GT 第一次在 Ubuntu 跑 |
+| 44039568902 | `73132bc` | success | 五個 job |
+| 44066568721 | `dbbb0d4` | success | 五個 job |
+| 44078380354 | `a8755ce` | **FAIL** | windows-native：M5 GameTest 60 案中 `m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids` 1 案 FAIL（活塞與水的對照組沒有在時限內發生，`M5_WATER_GEOMETRY stage=timeout`），連帶 M6 scope 檢查 `M6_SCOPE_MISMATCH（m5）`。判讀為 M5 既有測試在 CI 上的首次偶發（推論）；再出現就另外調查並交使用者（controller 的決定）。其他四個 job success |
+| 44097956125 | `98e8e20` | **FAIL** | M7 Windows：`M6_PHASE_DEADLINE_EXCEEDED reason=idle`（elapsed 157.4 秒、idle 90.03 秒、timeout 600），即 B2b-2 審查的 I-1。其他四個 job success；windows-native 的 M5 這次 PASS |
+| 44107563893 | `434c858` | success | 十個 job（第一次有原生分片與彙總）。分片約 ordinary 21 分、sealed 16 分、passable 21 分、restart-receipt 12 分，彙總 30 秒 COMPLETE；windows-native 約 48 分是整個 CI 的牆鐘上限；M7 Windows step 491 秒 |
+| 44117707536 | `926425c` | success | 十個 job（attempt 1）。M7 Windows 的「執行 M7 獨立 GameTest」step 494 秒，其中 scale 測試 204.456 秒、GameTest 177.4 秒；這是 2026-11-18 規模測試裁示的背景 |
+| 44198806056 | `e28784c` | attempt 1，十個 job 全部 success | 規模段拆出之後：Windows Main step 280 秒（23:25:41→23:30:21）、規模段 204 秒；Ubuntu Main 199 秒、規模段 32 秒。原件 S `ci-44198806056/run.json` |
+
+### 已知界線與帶到後續
+
+- **B1 固定矩陣的覆蓋界線**（B1 審查 M3）：39 列都從 MEASURED DORMANT 出發，原因固定 ROOT_DISABLED／DoorGoal OPEN，基線放在停用 A 之後。以下沒有跨 JVM 覆蓋：
+  - CLOSE_IF_CLEAR_ELSE_OPEN 在重開後重新評估門口；
+  - 來源狀態為 COLLAPSING、非永久 SEALED 的 ROOT close（推論，不是審查原文的對應：READY＋部分 Crossed 由 B2a 的 `restart-ready-stop-crossed` 補上一列，只在收尾開始前切 JVM）；
+  - 「stop 已落、registry 未落」（停用之後、autosave 之前 crash），依 spec §9.1 的「復啟不能撤銷latch」預期終局相同。
+  - PARTICIPANT_CLOSED／EXPIRED 的門目標由 Phase A 的同 JVM GT 守住。
+- **B2a-M3**（交 T5／T6）：`restart-enable-before-entry` 的「再操作 B」在 T4 只能以 journal 的 MEASURED→COLLAPSING 提交邊代表，靠 `HomeSessionRecord.edge` 的 stop 規則拒絕。T5／T6 有正式 B 端續行之後，要以真實 B 端操作重跑這一段。
+- **B2a-M4 三個界線**：
+  1. 開服掃描時 latch 的寫出失敗、enable 仍應 pending：只有同 JVM GT（`root_event_queues_behind_unconfirmed_journal`、`fence_init_failure_keeps_enable_blocked`）的同類情況，沒有原生列。
+  2. active 移除的寫入結果不明（possiblyMoved 或 pending）：`receipt-existing` 只模擬乾淨的失敗。（推論，不是審查原文）P2 的 `receipt-write-fail-stop` 的 possiblyMoved 發生在 remove-rejected 之後的原生存檔，checked 移除那一次仍是乾淨失敗，所以不改變這一條。
+  3. 開服時收據與熱列不符：見下方 R5。
+- **P1-M2：雙重異常的出路**：
+  - 「本次有變動又與收據不符」只會在外部於未結案的熱列旁放了同 SID 的收據時出現（入場拒絕已有歷史的 SID，收據只在 CLOSE checked 之後才發佈）。期間整份 journal 的原生存檔與所有 SID 的 checked 提交都會失敗並退避，伺服器不崩潰，其他資料照常存。
+  - 出路：伺服器運作中刪除或還原那份收據（`<save>/data/quantumchamber_home_receipts/<SID>.dat`），下一次存檔或 owner 重試就恢復寫出，不必重啟（JUnit 實證了移除收據後恢復寫出）。
+  - 沒處理就停服：記憶體中尚未寫出的進度回到上一份 durable，下一次開服被 strict 載入拒絕，要先修檔。
+  - 這條路徑只有 JUnit 證據，沒有原生跨 JVM 列。管理員說明寫在 `scripts/verification/README.md`「管理員說明：回程收據與熱列不符」。
+- **R5：開服 strict 遇到不符時拒絕開服**，維持 T2 設計（載入時 `verifyReceipts` 核全部熱列，不符就成為 loadError，`SERVER_STARTED` 的 `requireHealthy` 拒絕開服）。不會遺失資料，由管理員修檔；沒有以原生列實跑，JUnit 證明 journal 載入失敗。若要開服時只隔離該 SID，需要使用者另外裁示。
+- **P2-M1：三個 checkpoint 呼叫端的語意變化**（`t4b2b1-report.md`「三個 checkpoint 呼叫端」節）：`ChunkSaveCheckpoint.save` 內的 `server.save` 走原生路徑，P1／P2 之後 journal 在這裡寫出失敗只記 ERROR、不丟出，checkpoint 只依相關 chunk 判定。
+  - `CollapseService`（PREPARE）：以前 checkpoint 丟出就 `seal(PROJECTION_FAILED)`；現在 checkpoint 成功、寫 COMPLETE，之後 PASSAGE_READY 的 checked 提交失敗而 `readyPaused` 退避。
+  - `CorridorPageManager`（MEASURED 清理）：以前走 checkpoint 退避；現在由之後的 checked `journal.flush` 失敗把關，不釋放 slot 與票。
+  - `HomeClosure.converge`（HOME 收尾）：以前不發收據；現在先發佈收據，再由 `finishHomeClose` 的 checked 移除失敗退避（CLOSE 與 exact 收據並存是允許的配對）。
+  - 三者之後都有 checked 寫出把關，審查判為良性，是裁示的直接後果，spec 語意不變。
+- **B2b1-M1**：原生存檔 ERROR 的前綴寫「原生存檔（autosave、/save-all 或停服）」，但 checkpoint 的 `server.save` 也會觸發同一則 ERROR。前綴是 M4 ps1、run-all 與 GT 的錨點，不改；管理員看到這則 ERROR 卻找不到對應的 autosave 或指令時，來源可能是 M5 投影、MEASURED 清理或 HOME 收尾的 checkpoint。
+- **P2-M7：驗證流程的副作用**：以原生存檔當落盤步驟的 probe（例如 M2、M5、M6 的 `server.save(false,true,true)`／`saveAll`），以前遇到 journal 寫出失敗會當場 FAIL，現在只留一則 ERROR、步驟通過，失敗延後成下游的磁碟不符。屬後續整理，不在 T4 做；T4 完整回歸時留意。AccessDenied 的新樣貌已補進 AGENTS 單次重跑規則的判定說明。
+- **B1 假設 (c) 的後續要求（B1 審查）**：B1 以測試票保持 B 的區塊載入。T5 有正式 B 來源票之後，要用真票重驗，並確認重開時 B 無人無票會保持 pending（spec §5.3 :173）。B2a-M3（以真實 B 端操作重跑續行段）同屬 T5／T6，是否補進 plan Task 5／6 的核取項，留到 T5 開工時決定。
+- **production 註解的歸屬**：`SessionRecoveryState.java:1027` 的註解寫「T4 P2 使用者裁示 2」，指的是執行緒與 owner 守門照舊丟出。這其實是 controller 的決定，不是使用者裁示，歸屬以本 note 與 spec 文末節為準。註解留待下一個會動到這個檔的 commit（例如 T5 Step 0）修正。
+- **B2b2-M1：SelfTest 上限 479**：門態組合目前是 426（8＋5×10＋8×46），每多一列原生多 8 個逐列負控；再加 6 列是 474，仍在上限內，再加 7 列以上（約第 53 列）才會超過。T5～T8 加原生列前要先定策略（例如彙總時成員的逐列負控只跑一次）；需要超過 M6 的 479 時，依 plan Task 4「如需提高標準先交使用者」交使用者裁示。
+- **>4096 的覆蓋分工**：JUnit 拿不到 owner 的 mint 與 proof，所以 CLOSE 列以 journal fixture 放入；發布走正式 `publishOrVerify`，刪活列走 `finishHomeClose` 核過 proof 之後呼叫的同一個本體 `terminateHome`。逐趟的 admission 檢查是 `requireAdmissible`，B2b-4 起只在 86 個 strict 趟做；正式 `admitHome` 用在最後一段（>4096 狀態下的新 admission 與舊 SID 被拒）。mint 與 proof 由正式 39 列、GT 與原生 46 列覆蓋。B2b-4 之後，「熱 journal 檔先有這一列、移除後回到空」的磁碟層級證據只在 86 個 strict 趟；其餘趟由 checked 寫出後的 `allFlushedSessions().isEmpty()` 與 journal 位元組負責。
+- **N4：T3 `only_exact_complete_projection_resolves` 不套用前置等待**（controller 的決定，不是使用者裁示）：它同樣在剛建立 B 的窗口等 entity 載入，但這個 fixture 帶使用者的止損規則，而且會刻意 hold B 的 entity storage，改動前應先問使用者。記為已知殘留，CI 用量 3/200；再有非預期失敗就停下來問使用者。
+- **前置等待的餘量**：CI 44003465357 的 Windows clear 案也用了 156/200，entity 載入慢在兩個平台都有。380 的前置等待在很慢的 runner 上仍可能 `ENV_NOT_READY`；屆時要不要放寬，另外交使用者裁示。
+- **B2b4-M1**：scale 測試的 `STRICT_SAMPLE` 沒有鎖住「各段首尾」與 86 這個數量。原本交 T5 Step 0，已在 B2b-5 處理（`STRICT_TRIPS = 86` 與逐段首尾斷言，m5a、m5b KILLED）。
+- **B2b-5 的已揭露界線**（`t4b2b5-report.md`「偏離與未驗」）：Main 段失敗時，CI 的規模段 step 會被跳過（預設 step 語意）；這版之前產生的 M7 root 因 `inputs.json` 多了 `segment`，無法再用新版 `-VerifyOnly` 驗；`ci-rule-check.ps1` 的 M7 fixture 要用新版產生的 root（run-all 與 CI 都沒有呼叫它）。
+- **Phase A 帶來、仍有效的項目**：Phase A 審查 M6（選定後重驗 A 的 `checkRoot`／`onRootEvent`，交 T5／T6）、M7（Projection 案例物化 U 不卸載，後續測試不得斷言絕對世界數）、M8（`ChamberMaintenanceInteraction` 的提示改 translatable key，交 T7），以及呼叫端持有同 SID guard 的限制（交 T5／T6）。細節見下方歷史節「帶到後續」。
+- **範圍外的 (b)**：candidate 檔不健康時入場靜默拒絕（M4 時期 `3d093b50` 的程式碼），建議日後加一則去重的 WARN。
+
+### 計數
+
+- `participantCloses` fixture：非預期失敗兩次（`c74bf79` clear 案、`27415b4` pinch 案）後依止損交使用者裁示。`e652c23` 之後，各段的 M7 gate 與上表的 CI 都沒有這個 fixture 的失敗。修正後再有任何非預期失敗就停下來問使用者（11:0x controller 落地）。
+- T3 `only_exact` fixture：Phase A 第 1 題裁示的規則照舊；Phase B 各段報告都沒有記到它的非預期失敗。
+- 驗證工具與新 fixture 的非預期失敗：各段報告的計數節都有記錄（例如 B1 的初始門摘要常數、B2a 的 UniverseId 解析、P1 的 5 項、B2b-1 的殘留收尾 fixture 與 mutation 驅動層數、B2b-2 的 restart fixture 偶發、B2b-5 的 4 次驅動問題），問題各不相同，都已修正、原件保留；各報告都判定沒有達到同一問題第三次的止損條件。
+- AccessDenied 重跑額度與完整回歸啟動器歷史：照下方歷史節「計數」。Phase B 期間沒有跑完整回歸，這兩個計數沒有變動。M7 的 AccessDenied 額度來自 T2 的單次授權，T3 已記為 1/1 用完、不刷新；AGENTS 中那條同一 code pin 可重跑一次的規則，標題就限定 M6 T14～T21，不適用這裡。所以 T4 完整回歸若出現 AccessDenied，就停下來問使用者。
+
+### 下一步
+
+1. 本筆 docs 的一席文件審查：C0/I0/M11（S `t4-closeout-docs-review.md`），Minor 已在本 commit 修正；B2b-5 審查與 `e28784c` CI 都已完成，見上 → stage spec 後計算 SHA 填入 plan 第 8 行 → commit。
+   - 在 run-all 之前，依 plan Task 4 最後一項，只讀核對既有的 W10 producer（固定 pins、hash、非 reparse、owner、鎖）與 child 65001，不重建。
+2. 在 holder 下跑完整回歸（run-all）。B2b-5 新增的 `m7-scale` step 與 `summary.json` 的 `m7HomeScale`（`SUMMARY` 行尾 `m7scale=PASS:11`）會在這次第一次實跑。採計條件見 `t4b2b3-review.md`「B2b-4 審查」第 2 節：乾淨 pin、`END ALL exit=0`、`m7HomeNative` 為 COMPLETE／46／92、SHA 與重算一致、console 有 `END m7-home-native exit=0` 與 376 個負控的 COMPLETE 行、`SUMMARY` 行尾 `m7native=COMPLETE:46`。另外確認：
+   - Phase A 留下的兩項（共用 setter `setEnabled`、`removeOrigin` 沒有回歸；`M7HomeFenceStartupProbe` 不進 release 或 main-only）；
+   - B1、B2a 新 mixin 與 probe 套用到所有 testmod run 後，default、M5、M6 GameTest、M4 recovery、M5 collapse、M6 native、main-only、artifact oracle 都不受影響；
+   - P2-M7 第 1 點的副作用。
+3. push → 同 SHA 全部 required CI 全綠（`434c858` 起共十個 job）→ T4 CLOSED。
+4. T5 開工前先做遊玩組合分析（使用者還沒回覆時機，controller 建議 T4 結案後、T5 開工前）。
+
+## 歷史：T3 結案；T4 Phase A 實作、審查清零（2026-11-17）
 
 - **T3 CLOSED**（2026-11-17 00:58）：
   - production pin `3aa493e`。本機完整回歸跑在文件 commit `6644fe9`，自然 `END ALL exit=0`，啟動器讀到的實際 ExitCode 是 0（JUnit 1164 案 0 failure，default 166、M5 60、M6 35 等全部 PASS）。

@@ -85,6 +85,8 @@ milestone implementation → automated gates → required manual smoke → task�
 
 **T14–T21 Windows atomic-move AccessDenied單次重跑規則（使用者2026-11-10）：** 某code pin的full唯一失敗為Windows原子移動AccessDenied簽章，production仍fail-closed／退避且沒有其他FAIL時，保原root/FAIL，用新nonce可重跑一次、不必再問；同一pin第二次發生立即停報，不再重跑。其他簽章或混有其他FAIL不適用。只docs變更不重置相同code的重跑次數，不得以換docs SHA迴避止損。這不授權改production／OS／oracle，也不豁免完整full與同SHA CI。
 
+**判定說明補充（controller，不是使用者裁示）：** M7 T4 P2（2026-11-17）之後，真實的 Windows atomic move AccessDenied 若發生在 journal 檔（`quantumchamber_sessions.dat`）的原生存檔（autosave、`/save-all`、停服，或 `ChunkSaveCheckpoint` 內的 `server.save`），不再讓伺服器崩潰，也不會留下 `Exception stopping the server`；它的樣貌是一則 ERROR（marker `QUANTUMCHAMBER_COLLAPSE_TICK`），開頭是 `原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗：寫入正式檔失敗`，cause 鏈含 `AccessDeniedException`，同一段失敗期間只記一則。checked 寫入遇到 AccessDenied 的既有樣貌（例如 M5 GameTest 的 `WRITE_FAILED`）不變。M7 GameTest gate 與 M7 原生列的 log 另有刻意注入的 `AccessDeniedException`，路徑含 `m7-t4p2-native-fault`（`M7NativeSaveFault` 把寫出目標導向既存目錄），不能算真實簽章。這段只說明怎麼辨識簽章，上面的規則本文不變；上面那條重跑規則的適用範圍仍是 M6 T14～T21，M7 的 AccessDenied 額度以 M7 note 的「計數」為準。
+
 1. 先讀 binding spec、implementation plan、SDD ledger，以及「目前接手入口」指定的文件。`docs/handoffs/` 是歷史紀錄；除非接手入口明確指向，否則不作為接手依據。
 2. 使用 Subagent-Driven Development：一個 implementer完成一個task或fix round，之後必有獨立task reviewer。
 3. 不得在未關閉 Critical／Important finding 前進到下一task。
@@ -119,7 +121,22 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-17 最新：T3 CLOSED；T4 Phase A 審查清零，下一步 Phase B。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「T3 結案；T4 Phase A 實作、審查清零」節。
+**2026-11-18 最新：T4 Phase B 與 P1／P2 完成，各段審查清零（B2b-5 C0/I0/M2）；下一步 T4 完整回歸與同 SHA CI。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「T4 Phase B 與 P1／P2 完成，待完整回歸與同 SHA CI」節。
+- HEAD `e28784c`（已 push）；`926425c` 的 CI 44117707536 與 `e28784c` 的 CI 44198806056，十個 job 都全部 success（都是過程中的 CI，T4 結案以最終 SHA 為準）。Phase B 拆成 B0、B1、B2a、B2b-1～B2b-5，P1、P2 是期間插入的 production 修正輪；這個切分是 controller 的決定，不是使用者裁示。
+- 使用者 2026-11-17～18 另有四份裁示或要求，原文見 note：
+  - 2026-11-17 10:17 遊玩條件組合分析要求：使用者還沒回覆時機，controller 建議在 T4 結案後、T5 開工前做；
+  - 2026-11-17 11:0x CI 兩題：「測試先等 B 區塊就緒（建議）」、「總時限改 600 秒（建議）」；
+  - 2026-11-17 15:4x 原生存檔「M7 一併修（建議）」，以及 17:1x M4 追加題「改 M4 測試，一律不崩潰（建議）」。controller 依此寫成 spec v1.5 的文末節，一席文件審查 C0/I0/M11 後採用（S `t4-closeout-docs-review.md`）；
+  - 2026-11-18 06:3x 規模測試的時限：「規模測試獨立一段（建議）」。controller 依此開 B2b-5。
+- Phase B 期間的 production 改動：`HomeClosure`（B0）、`SessionRecoveryState`（P1、P2、B2b-1、B2b-2）、`HomeReceiptStore`（B2b-2；B2b-3 只改 Javadoc）、`ChunkSaveCheckpoint`（B2b-1，只改 Javadoc）。
+- 驗證面：Windows 原生 M7 home 共 46 列；CI 新增 `m7-home-native` 四片與 `m7-home-native-aggregate`；run-all 新增 `m7-home-native` step 與 `summary.json` 的 `m7HomeNative`。B2b-5 起，M7 gate 不再執行 `M7HomeHistoryScaleTest`（junit 48），規模測試另成一段（junit 11）：本機 `gates.ps1 -Mode M7ScaleTest`、run-all 的 `m7-scale` step 與 `m7HomeScale`、CI `m7-validation` 兩平台新增的 step。管理員遇到回程收據與熱列不符時的處理方式，見 `scripts/verification/README.md`「管理員說明：回程收據與熱列不符」。
+- 計數保留：
+  - AccessDenied 1/1 已用完、不刷新，完整回歸啟動器歷史 2/3：Phase B 沒有跑完整回歸，沒有變動。T4 完整回歸若出現 AccessDenied 或下一次非預期的啟動器失敗，就停下來問使用者；
+  - `participantCloses` fixture 修正後再有任何非預期失敗，就停下來問使用者；
+  - T3 fixture 依 Phase A 第 1 題裁示的規則照舊。
+- T4 結案順序：B2b-5 的一席審查（C0/I0/M2）與本筆 docs 的一席審查（C0/I0/M11）都已清零 → commit（plan 第 8 行的 spec SHA 在 stage 後計算填入）→ 只讀核對既有 W10 producer 與 child 65001（不重建）→ holder 完整 run-all → push → 同 SHA 全部 required CI 全綠。main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-17：T3 CLOSED；T4 Phase A 審查清零，下一步 Phase B。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「T3 結案；T4 Phase A 實作、審查清零」節。
 - T3：production pin `3aa493e`。本機 full 在 `6644fe9` END ALL 0。fix3 `6944236` 只改測試，同 SHA CI 43907694743 五個 required job 全部 success。
 - T4 Phase A：code 停在 `cc92b66`（`6944236..cc92b66`）。Phase A／B 是 controller 的派工切分，不是使用者裁示，Phase B 的內容見 note。
   - 增量審查 C0/I0/M2，兩項 Minor（N1、N2）排進 Phase B 的 Step 0。

@@ -1,8 +1,8 @@
-# M7 正規回程：binding spec（v1.4，T4 ENTRY_STOPPED DISABLED 勘誤）
+# M7 正規回程：binding spec（v1.5，T4 原生存檔失敗不拖垮伺服器）
 
 日期：2026-11-13。基準工作樹：`codex/m7-return-home`，從 main `2255027` 開出。
 狀態：v1.0玩法/資料契約已第三輪C0/I0/M0採用，v1.1驗證平台勘誤亦曾採用。v1.2僅為使用者新裁示的T1 M6同等驗證收斂修訂，原同席C0/I0/M1後採用；玩法不改，本文不是實作/測試/人工/整合結果。
-v1.3狀態：2026-11-14真user巡檢明確canonical save邊界；僅本技術澄清/測試矩陣已原同席窄確認C0/I0/M1（門檻順序註記由文件同步），不重開其他已採用玩法或資料契約。來源原文見M7 note最上方「fix3只守canonical save內」。本文不代表fix3已實作/驗證。v1.4狀態：2026-11-17 依使用者裁示，在文末加入「2026-11-17 T4 ENTRY_STOPPED DISABLED 勘誤」節，只把一個不可達的訊號標明為不產生，其他玩法與資料契約不變；勘誤放在文末，前面各節行號不變。一席文件審查（SDD `t4a-docs-review.md`）初審 C0/I2/M11，修正後原席窄複核 C0/I0/M1 後採用。
+v1.3狀態：2026-11-14真user巡檢明確canonical save邊界；僅本技術澄清/測試矩陣已原同席窄確認C0/I0/M1（門檻順序註記由文件同步），不重開其他已採用玩法或資料契約。來源原文見M7 note最上方「fix3只守canonical save內」。本文不代表fix3已實作/驗證。v1.4狀態：2026-11-17 依使用者裁示，在文末加入「2026-11-17 T4 ENTRY_STOPPED DISABLED 勘誤」節，只把一個不可達的訊號標明為不產生，其他玩法與資料契約不變；勘誤放在文末，前面各節行號不變。一席文件審查（SDD `t4a-docs-review.md`）初審 C0/I2/M11，修正後原席窄複核 C0/I0/M1 後採用。v1.5狀態：2026-11-17 依使用者裁示，在文末加入「2026-11-17 T4 原生存檔失敗不拖垮伺服器（依使用者裁示）」節，只規定原生存檔遇到 journal 寫入失敗時的處理，以及 M4 `readback-fault` 的新預期；玩法、資料格式與 checked 路徑不變。節放在文末，前面各節行號不變。一席文件審查（SDD `t4-closeout-docs-review.md`）C0/I0/M11 後採用，Minor 已在同一個 commit 修正。
 範圍唯一來源：[M7 note](../../implementation-notes/2026-11-13-m7-return-home.md) 的使用者裁示。
 未明列改變的 M2／M4／M5／M6 契約維持；建議稿不是另一份 binding spec。
 
@@ -383,3 +383,31 @@ W10 preflight前照verification README重建producer並用UTF-8 console；不是
 - 記錄格式保留 `DISABLED` 這個值，codec 照常讀寫；正式 owner 不產生它，`HomeClosure.onEntryStopped` 收到 `DISABLED` 一律拒絕、不 mint Evidence。
 - B 端的停止只有 `LOW`（斷電）與 `INVALID`（結構失效）兩種。plan Task 4 的交接段，以及「唯一 owner 依 §9.2 矩陣 mint」核取項中的「LOW／DISABLED／INVALID」，都依本節讀法。
 - 不新增投影艙停用開關；其他原因、Evidence 條件與資料契約不變。
+
+## 2026-11-17 T4 原生存檔失敗不拖垮伺服器（依使用者裁示）
+
+使用者的題目、選項與選項說明原文見 [M7 note「T4 Phase B 與 P1／P2 完成，待完整回歸與同 SHA CI」節](../../implementation-notes/2026-11-13-m7-return-home.md)（15:4x 原生存檔題與 17:1x M4 追加題）。以下條文是 controller 依裁示寫成的技術契約，使用者原文以 note 為準。收據不符的部分（T4 P1）在這項裁示之前已由 controller 依 §5.3 :175、§10 :307 決定為技術修正；T4 P2 依裁示把同一個做法擴到所有 journal 寫入失敗。
+
+- **原生路徑與 checked 路徑分開處理。** journal 的寫出都經 `SessionRecoveryState.save`：
+  - checked 路徑是 `journal.flush(server)`（`checkedSave`），production 的 checked 寫入都走這裡。行為不變：寫入失敗照舊丟出同一個例外物件，由呼叫端以 flushed 判定失敗並退避。
+  - 原生路徑是原版 PersistentState 的存檔：autosave、`/save-all`、停服，以及 `ChunkSaveCheckpoint.save` 內的 `server.save`。遇到任何 journal 寫入失敗都不丟進原版存檔鏈；原版照常存完其他 PersistentState、level.dat 與各世界，伺服器不崩潰，停服正常完成（`SERVER_STOPPED` 有觸發，world close 與 session unlock 都有執行）。
+  - 執行緒與 journal owner 的守門（`requireMutationThread`、`requireOwned`、`JOURNAL_UNINSTALLED_OWNER`）屬程式錯誤，兩條路徑都照舊丟出。
+- **不覆寫未確認的寫入**（保持 M5 既有語意）。原生路徑失敗之後：
+  - 有 pending 時，下一次寫出先核對磁碟，仍是上一份權威才重寫；atomic move 結果不明（possiblyMoved）時保留 pending；讀回失敗或不符時保留 pending，下一次核對判定需要重啟，本 instance 之後停寫。這條只適用 schema≥5 的 journal；legacy schema≤4 沒有 pending，下一次存檔會重寫。
+  - journal 不健康時不寫。
+  - 其他失敗保持 dirty。
+  - 收據核對擋下時（§5.3 :175、§10 :307）：只有「本次有變動，而且與同 SID 收據不符或無法核對」的列會擋下整份 journal 的寫出、保持 dirty；未變動、已在磁碟上的不符列照原樣重寫，不擋其他 SID。熱列、收據原件與該艙占用都不動。照原樣重寫未變動的列，不算新造 §5.1 :115 所禁止的配對。
+- **收斂者。** 不新增 production 短暫重試，也不更動 OS、Defender 或索引設定（沿 2026-10-21 裁示）：
+  - 下一次原生存檔、`SessionRecoveryManager` 的 journal 退避重試（HOME 分支與 legacy RETRY_FLUSH）、下一次 checked 提交；
+  - 需要重啟才能收斂的（pending 已無法證實磁碟上的權威，或讀回失敗後的 pending）：重啟後由開服 strict 載入收斂；
+  - journal 不健康：修復或移走損壞的 journal 檔，再重啟；
+  - 收據不符：管理員刪除或還原 `<save>/data/quantumchamber_home_receipts/<SID>.dat`，下一次存檔或 owner 重試就恢復，不必重啟。
+- **ERROR。** 原生路徑的 journal 寫入失敗記 ERROR（`CollapseService.TICK_LOG_MARKER`），附失敗類別、這次的結果、dirty／pending、收斂方式、journal 路徑與 cause；同一段失敗期間每一類只記一則，讀回確認的成功寫出之後再發生會再記。收據不符記管理員 ERROR（`CollapseService.LOG_MARKER`、`session=<SID>`），附收據檔路徑與處理方式，以 SID×類別去重，該 SID 的收據核對通過時清除。這組去重規則是 controller 訂的，不是使用者裁示。
+- **`ChunkSaveCheckpoint`。** journal 不在 checkpoint 的判定之內，checkpoint 只依相關 chunk 判定。用 checkpoint 的呼叫端（M5 投影的 PREPARE、MEASURED 清理、HOME 收尾）都要靠之後的 checked 寫出把關，不得把 checkpoint 成功當成 journal 已落盤。
+- **M4 `readback-fault` 的新預期**（依 17:1x 追加題）。上一筆 journal 寫入結果未確認、本 instance 必須重啟才能收斂時：
+  - 原生 save 不丟出、不寫入，journal hash 不變；
+  - PENDING 類 ERROR 恰一則，寫明需要重啟伺服器才能收斂；
+  - 停服正常完成（`SERVER_STOPPED`、JVM exit 0），level.dat 寫出，磁碟上仍是那份 exact attempt；停服過程中（SERVER_STOPPING 之後）真正進入 journal save 本體至少一次（`stopSaveCalls≥1`），Universe catalog 與 world keys 不變（`universeUnchanged=true`）；
+  - 重啟後的 recover、verify 照舊。
+- **開服 strict 載入不變。** 載入時 `verifyReceipts` 核對全部熱列與收據，不符就是 load error，`SERVER_STARTED` 的 `requireHealthy` 拒絕開服，由管理員修檔（維持 T2 設計）。要改成開服時只隔離該 SID，需要使用者另外裁示。
+- 玩法、資料格式與其他 M5 契約不變。

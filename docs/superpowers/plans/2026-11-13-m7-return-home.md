@@ -5,7 +5,7 @@
 **目標（Goal）**　合法 COMPLETE 投影 B 的參與者走固定回家門，先回 B，再經 B 的膜以原座標回 A。旅程終局可安全解除同艙占用。
 **架構（Architecture）**　將既有 checked journal 擴充為能同存舊列與 HOME 列的單一權威。沿用走廊、回收、票額、原生移動與 chunk checkpoint，分別核對 Entry=B 與 Root=A。每 SID 的終局收據保留歷史，活躍列負責完成 B 的最後門狀態。
 **技術基線（Tech Stack）**　Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Loom 1.7.4、Java 21、Gradle 8.8、PowerShell 7。
-**對應規格（Spec）**　[v1.4 T4 ENTRY_STOPPED DISABLED 勘誤](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `1D2FDE0E21E831EE815E8C1E1A1DC19D94878DFBBFD3FF8A9F0C3BB099B7B093`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
+**對應規格（Spec）**　[v1.5 T4 原生存檔失敗不拖垮伺服器](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `E814B00C08ACB6C1FEFEB2F25E2B6CDF870B8FA38BBB52E2763FF10838BDB57F`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
 
 ## 2026-11-13 現行續行授權與止損
 
@@ -218,9 +218,9 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 ### Task 4: root fence、checked CLOSE、B 門交接與重啟
 
 
-**新增**　`P/collapse/{HomeRootFence,HomeClosure}.java`、`J/persistence/M7CloseMatrixTest.java`、`G/{M7HomeClosureGameTests,M7HomeClosurePhases}.java`、`G/mixin/M7HomeCloseWindowMixin.java`。
+**新增**　`P/collapse/{HomeRootFence,HomeClosure}.java`、`J/persistence/M7CloseMatrixTest.java`、`G/{M7HomeClosureGameTests,M7HomeClosurePhases,M7HomeProbe}.java`、`G/mixin/M7HomeCloseWindowMixin.java`、`S/m7-home-probe.ps1`。（2026-11-17 更正：`G/M7HomeProbe.java` 與 `S/m7-home-probe.ps1` 原列在「修改」；兩者在 T1 收斂 `04d42f4` 刪除，T4 Phase B1 `aa12ace`、`8c7c08f` 重新新增。）
 
-**修改**　`P/QuantumSuperpositionMod.java`、`P/chamber/{ChamberLifecycleService,ChamberRegistry,ChamberRegistryState,ChamberProtectionService,ChamberMaintenanceInteraction,ChamberCollapsePort}.java`、`P/collapse/{OriginDoors,HomeEndpointAuthority}.java`、`P/persistence/SessionRecoveryState.java`、`P/superposition/SuperpositionSessionManager.java`、`G/M7HomeProbe.java`、`src/testmod/resources/{fabric.mod.json,quantumchamber-test.mixins.json}`、`S/{m7-inventory.json,m7-home-probe.ps1}`。
+**修改**　`P/QuantumSuperpositionMod.java`、`P/chamber/{ChamberLifecycleService,ChamberRegistry,ChamberRegistryState,ChamberProtectionService,ChamberMaintenanceInteraction,ChamberCollapsePort}.java`、`P/collapse/{OriginDoors,HomeEndpointAuthority}.java`、`P/persistence/SessionRecoveryState.java`、`P/superposition/SuperpositionSessionManager.java`、`src/testmod/resources/{fabric.mod.json,quantumchamber-test.mixins.json}`、`S/m7-inventory.json`。
 
 **擴檔（2026-11-17，Phase A 實際改動，controller 補列）**　上列以外另改：
 - `P/persistence/SessionRecoveryManager.java`：HOME roll-forward 的唯一重試寫出者（Phase A 審查 I-1）。
@@ -239,7 +239,7 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
   - 在 `SERVER_STARTED` 事件裡、`HomeRootFence` 開服掃描所在的預設 phase 之前，用同一個 port 記錄一個不存在的艙能否 enable。
   - 由 `fence_rejects_enable_before_startup_scan` 斷言被拒。
 
-上列中 Phase A 未改的檔（`ChamberRegistryState`、`HomeEndpointAuthority`、`M7HomeProbe`、`M7HomeClosurePhases`、`M7HomeCloseWindowMixin`、`quantumchamber-test.mixins.json`、`m7-home-probe.ps1`）留給 Phase B 或依需要再改。Phase A／B 的切分見 M7 note。
+上列中 Phase A 未改的檔（`ChamberRegistryState`、`HomeEndpointAuthority`、`M7HomeProbe`、`M7HomeClosurePhases`、`M7HomeCloseWindowMixin`、`quantumchamber-test.mixins.json`、`m7-home-probe.ps1`）留給 Phase B 或依需要再改。Phase A／B 的切分見 M7 note。Phase B／P1／P2 的實際擴檔見本 Task 末尾「擴檔（2026-11-17～18，Phase B／P1／P2…）」段；那段放在核取項之後，讓核取項的行號不位移（程式 Javadoc 與 SDD 報告引用了這些行號）。
 
 **消費**　T2 的 `commitHomeRollForward/commitHomeRestore`、`HomeReceiptStore`、T3 exact Entry／global busy／票與既有 `ChamberDoorService`、`ChunkSaveCheckpoint`。
 
@@ -265,13 +265,36 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 - [ ] GREEN：正式 owner 的 `close-{ordinary|sealed|passable}-{cut}` 在Windows逐一以正式39列／兩phase（T1原生PoC已取消，不抵正式集合） 驗 §5.3；另跑 `receipt-existing`，另測 checkpoint unknown／跨檔不符／已存 target 異值／成功後玩家主動關門。逐 phase 核兩側門格、region、識別、active與歷史 hash、資源、零移動。經正式發布與刪活列完成 >4096 個互異 SID，仍可新 admission，舊單檔 exact 可讀，禁止全目錄掃描或虛增獨立歷史計數。
 
 - [ ] T4 Windows正式39保持；native runner優先薄接固定M6 probe-common owned機制、PID+start、receipt hashes、readonly summary+SelfTest；沒有T1 PoC/退休額外提交或CI。超M6的全class/argfile/ZIP seal等標殘留不擋，不默認必做；如需提高標準先交使用者。功能契約仍由原39及正式owner斷言證明，既有M6標準不改。
-- [ ] 日期工具TODO：來源為使用者提供Claude pwsh7.7.0重現，原ParseExact object[]誤綁單format。若恢復此呼叫，format集合明確`[string[]]@(...)`（或依M6原解析做法，不新造框架）；具名正例3/6/9位小數秒均接受、錯格式拒絕，保實際原件。cast碼存在不能當三種都已驗；本T1不重演/改造日期工具。
+- [ ] 日期工具TODO：來源為使用者提供Claude pwsh7.7.0重現，原ParseExact object[]誤綁單format。若恢復此呼叫，format集合明確`[string[]]@(...)`（或依M6原解析做法，不新造框架）；具名正例3/6/9位小數秒均接受、錯格式拒絕，保實際原件。cast碼存在不能當三種都已驗；本T1不重演/改造日期工具。（2026-11-17 註記：T4 B2b-3 已 grep，`scripts/verification/` 沒有任何 `ParseExact`／`TryParseExact`，M7 runner 只用 `[DateTimeOffset]::Parse`、`ConvertFrom-Json -DateKind String` 與 cast；判定為未恢復此呼叫、不適用，未新增 3／6／9 位小數秒正例。這是 implementer 的結論，controller 採用，不是使用者裁示；核取框等 T4 完整回歸與 CI 通過後才勾。）
 
 - [ ] `restart-enable-before-entry` 真跨 JVM 留 registry disabled 已存、stop 尚未落盤，startup 先 direct enable 再操作 B；另驗 DORMANT、同 tick 復啟、部分 Crossed、stop 已落後 A 修復均不復活，普通 LOW 無 latch。對已有 READY 無已確認 root 的 startup 僅 RESTART_CLOSED，不等待 A FULL。
 
 - [ ] 變異掃描僅有 runtime、略過 direct setter、close 前提省略 checkpoint、先刪 active 再發 receipt、漏核 existing exact、TRR 允許 ROOT close。focused 跑 M7CloseMatrixTest／M7 GameTest／上述全鏈與 SelfTest，確認每個 production mutation killed、還原。
 
 - [ ] Controller 同步、逐檔 stage T4 清單、候選 `feat: 持久完成回程終局並重建停用防線`。核 W10、完整 run-all、獨立規格／品質 C/I 清零、push 並核同 SHA CI 才 closed。
+
+**擴檔（2026-11-17～18，Phase B／P1／P2 實際改動，controller 補列）**　以 `git diff --name-status cc92b66..HEAD`（HEAD `e28784c`）與逐檔 `git log` 核對；該範圍內的 `AGENTS.md`、M7 note、本 plan 與 spec 是 docs commit `c74bf79` 的改動，不列。上方「新增」「修改」與 Phase A 擴檔以外，另有：
+- production：
+  - `P/persistence/ChunkSaveCheckpoint.java`：只改 Javadoc，寫明 journal 不在 checkpoint 判定之內（`864b0fb`，P2-M1）。
+  - `P/persistence/HomeReceiptStore.java`：抽出純計算的 `receiptPath`，收據讀寫與收據 ERROR 共用（`a7772a6`，P2-M5 第 4 點）；Javadoc 寫明只按 SID 查詢、禁止列舉目錄（`3e2c8c7`，B2b2-M2）。
+  - 上方清單已有的 `P/collapse/HomeClosure.java`（B0 `7acc564`）與 `P/persistence/SessionRecoveryState.java`（P1 `c9ef60f`、P2 `cea8d44`、B2b-1 `864b0fb`、B2b-2 `a7772a6`）也在本範圍內改過。
+- JUnit：
+  - 新增 `J/persistence/M7NativeSaveFailureTest.java`（P2 `dbbb0d4`，B2b-1、B2b-2 補案）、`J/persistence/M7HomeHistoryScaleTest.java`（>4096，B2b-2 `647a127`；B2b-3 拆段、B2b-4 strict 趟抽樣；B2b-5 `5bcfce4` 只改註解，`e28784c` 鎖定 86 個 strict 趟與各段首尾）。
+  - 修改 `J/persistence/M7HomeHistoryTest.java`（P1 `6926e93`）、`J/persistence/SessionJournalSchemaFiveTest.java`（P2 `dbbb0d4`、B2b-2 `647a127`）、`J/persistence/{SessionRecoveryManagerTest,SessionRecoveryStateTest}.java`（P2 `dbbb0d4`）。原生 save 斷言改用 `checkedSave` 的對照見 M7 note 的 P2 段。
+- testmod：
+  - 新增 `G/M7HomeChainPhases.java`（B2a `fca6d31` 起）、`G/M7NativeSaveFault.java`（P2 `dbbb0d4`）、`G/mixin/M7HomeReceiptWindowMixin.java`（B2a Step 0 `c58c129` 自 `M7HomeCloseWindowMixin.java` 拆出）。
+  - 修改 `G/M4CandidateRecoveryProbe.java`（P2 `dbbb0d4`、B2b-1 `a8755ce`；M4 `readback-fault` 的新預期，依使用者 17:1x 追加題）、`G/mixin/SessionJournalWindowFaultMixin.java`（P2 加 `@ModifyArg`）、`src/testmod/java/dev/quantumchamber/persistence/M7CapacityFixture.java`（B2b-1，`PRIOR_TEST_RESIDUE`）。
+  - `G/M7HomeAuthorityGameTests.java`（T3 fixture）第四次改動：`27415b4` 只在 `until` 加 label（等待餘量記錄），上限 200 與斷言不變；依連續授權，不是使用者裁示。
+- 驗證與 CI：
+  - `build.gradle`：`m7HomeProbe` run（B1 `aa12ace`）、`test` 的 `testLogging`（B2b-3 `ebc723e`）。
+  - `.github/workflows/build.yml`：新增 `m7-home-native`（四片 matrix）與 `m7-home-native-aggregate`（B2b-3 `436cb5d`），以及 runner 環境比對與 `try/catch`（B2b-4 `926425c`）；`m7-validation` 新增規模段的 3 個 step（B2b-5 `5bcfce4`，依使用者 2026-11-18 規模測試裁示）；既有 job 與既有 step 不變。
+  - `S/gates.ps1`：:470 M7Runtime 總時限 180→600（`e652c23`，依使用者 11:0x 第 2 題）；新增 `-M7Tests`、`M7ScaleRuntime` 與 `M7ScaleTest`（B2b-5 `5bcfce4`）。
+  - `S/m7-ci-gametest.ps1`：新增 `-Segment Main|Scale`，`--tests` 改由各段 exact 集合產生，兩段互斥、聯集等於原始碼宣告（B2b-5 `5bcfce4`）。
+  - 上方清單已有的 `S/m7-inventory.json`：B2b-5 `5bcfce4` 升 schema 4，拆成 Main 48 與 Scale 11。
+  - `S/run-all.ps1`：recovery 的 `readback-fault` 分支（P2 `dbbb0d4`）；新 step `m7-home-native` 與 B2b1-M4 的直接核對（B2b-3 `434c858`）；summary step 的 `m7HomeNative`（B2b-4 `636d3a5`）；新 step `m7-scale` 與 `m7HomeScale`（B2b-5 `5bcfce4`）。
+  - `S/m4-recovery-probe.ps1`：M4 `readback-fault` 的新預期與 `stopSaveCalls`／`universeUnchanged`（P2 `dbbb0d4`、B2b-1 `a8755ce`）。
+  - `S/README.md`：M7 home probe、B2a、>4096、run-all 與 CI 接線、規模測試獨立一段各節（B1 起各段，含 B2b-5 `5bcfce4`、`e28784c`）。
+- 上方「修改」清單中，整個 T4 都沒有改的檔：`P/chamber/ChamberRegistryState.java`、`P/collapse/HomeEndpointAuthority.java`。
 
 ### Task 5: 從 B 入走廊、唯一 HOME 選擇與保留式返 B
 

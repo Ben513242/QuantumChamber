@@ -788,6 +788,25 @@ manifest 在 close 矩陣 39 列之後再接 7 列（B2a 的 5 列、T4 P1 的 `
 - 原生存檔 ERROR 的去重（T4 B2b-1，P2-M2）：同一段失敗期間每一類只記一則；讀回確認的成功寫出結束這段期間，之後再發生同類失敗仍再記一則。收據 ERROR 的去重（SID×類別）在這個 SID 的收據核對（`verifyActive`）通過時清除（T4 B2b-2，B2b1-M2）：不符期間核對一直失敗，仍只記一則；修好之後同一個 SID 再犯會再記。不以「寫出成功」清除，因為未變動的不符列每次存檔都照原樣寫出成功。收據檔路徑由 `HomeReceiptStore.receiptPath` 單一來源計算，收據讀寫與這則 ERROR 共用（P2-M5 第 4 點）。
 - `-VerifySummary` 的完整性檢查與 `-VerifyAggregate` 已在 T4 B2b-2 完成（見上方「完整性」）；run-all、CI 接線見下方「run-all 與 CI 接線（T4 B2b-3）」。
 
+### 管理員說明：回程收據與熱列不符（T4 P1、P2）
+
+給伺服器管理員與人工驗收。依據：SDD `t4b2a-review.md`「P1 修正增量審查」、`t4p1-report.md`、`t4p2-report.md`、`t4b2b1-report.md`；技術契約見 M7 spec 文末「2026-11-17 T4 原生存檔失敗不拖垮伺服器」節。
+
+- **什麼情況會發生**：某個 SID 的回程熱列還在 journal（旅程尚未結案），`<save>/data/quantumchamber_home_receipts/<SID>.dat` 卻與它不符或讀不出來。正常遊玩不會出現，通常是收據檔被外部改動、損壞、備份錯拼，或被其他程式鎖住、權限不足。
+- **伺服器運作中的現象**：
+  - 伺服器不崩潰，autosave、`/save-all`、停服照常存完其他資料、level.dat 與各世界。
+  - 這座艙保持占用，熱列與收據原件都不動，不會自動覆寫或刪除收據。
+  - 那一列本次沒有變動時，journal 照原樣寫出，其他旅程不受影響。
+  - 那一列本次有變動時，整份 journal 不寫出、保持 dirty；處理之前全服的 journal 寫入暫停，所有旅程的 checked 提交都會失敗並退避。
+- **ERROR**：logger `quantumchamber`，marker `QUANTUMCHAMBER_COLLAPSE`，帶 `session=<SID>`，開頭是 `回程收據與熱列不符（外部竄改、損壞或備份錯拼）` 或 `回程收據無法讀取或解析（…）`，後面寫明影響範圍、收據檔的絕對路徑與處理方式，並附 cause。同一段不符期間，每個 SID 的每一類只記一則；這個 SID 的收據核對通過後清除，之後再犯會再記。
+- **處理方式**：伺服器運作中處理即可，不必重啟。
+  - 讀不出來時，先排除讀取問題（解除鎖定、修正權限）。
+  - 確認收據檔是否屬於這一列，刪除 `<save>/data/quantumchamber_home_receipts/<SID>.dat`，或還原成原本發佈的那一份。
+  - 下一次存檔或 owner 重試就會恢復寫出。
+- **沒處理就停服**：停服時的存檔不會因此丟出例外。如果不符的那一列本次有變動，journal 這段期間都沒有寫出，記憶體中尚未寫出的進度會回到上一份已確認的狀態；如果那一列本次沒有變動，journal 照常寫出，停服不會遺失進度。下一次開服時，strict 載入會核對全部熱列與收據，不符就拒絕開服（`SERVER_STARTED` 的 `requireHealthy`）；要先刪除或還原同一個收據檔，再開服。
+- **覆蓋界線**：「那一列本次有變動又不符」只有 JUnit 證據（含運作中移除收據後恢復寫出），沒有原生跨 JVM 列（原生列 `receipt-mismatch-stop` 是「那一列未變動」的情況）；開服拒絕由 JUnit 證明 journal 載入失敗，沒有以原生列實跑。
+- 其他 journal 寫入失敗（例如 Windows atomic move 的 AccessDenied）在原生存檔時記的是另一則 ERROR，開頭是 `原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗：`，marker `QUANTUMCHAMBER_COLLAPSE_TICK`，訊息裡寫明收斂方式（多數由下一次存檔或 recovery 的 journal 退避重試收斂，少數寫明需要重啟）。這則 ERROR 也可能由 checkpoint 的 `server.save` 觸發（M5 投影、MEASURED 清理、HOME 收尾），不一定對應到 autosave 或指令。
+
 ### >4096 趟回程歷史（T4 B2b-2，plan Task 4 :265、V10）
 
 `M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（JUnit，`m7-inventory.json` 的 `scale.portable.junit`，兩平台都跑；T4 B2b-5 起不在 M7 gate 內，改在獨立的規模段執行，見下方「規模測試獨立一段」）：4100 個互異 SID 各自經 admission 的同名檔查詢與同卷探測、CLOSE 列進熱 journal、正式 `publishOrVerify` 發布、正式 checked 移除（`terminateHome`，`finishHomeClose` 核過 proof 後的同一個本體）。之後舊 SID（前、中、4096 邊界前後、最後）以「旅程識別碼已有歷史」拒絕重用、新 SID 仍可 admission；抽樣的舊收據 exact 讀回、位元組自發布後不變。禁止全目錄掃描以 instrumentation 證明：收據 store 建在委派預設檔案系統的 `ListingProbe` 上，記錄目錄列舉與碰到別的 SID 收據檔的每一次存取，整段必須都是 0；把 `read` 改成列舉目錄的 mutation 被 `RECEIPT_DIRECTORY_LISTED` 殺掉。不虛增歷史計數：每趟移除後 journal 位元組都回到同一份空 schema6，`data` 底下只有 journal 與收據目錄，收據目錄恰為 4100 個 `<sid>.dat`（事後從磁碟數出）。Windows 本機原本約 46～54 秒（每趟 11～13 ms）；T4 B2b-4 起 admission 與 CLOSE 列落盤／開服 strict 載入只在 strict 趟做（見下方「strict 趟抽樣」），約 28 秒（每趟約 7 ms）。限制：JUnit 拿不到 owner 的 mint／proof，CLOSE 列以 journal fixture 放入；B 門、原生 checkpoint 與 proof 由 M7 GameTest 與原生 46 列負責。
@@ -838,6 +857,6 @@ CI（`.github/workflows/build.yml`）新增兩個 job，其他 job 不變：
 
 - `m7-home-native`（windows-latest，matrix 四片，`fail-fast: false`）：`ordinary`、`sealed`、`passable` 各以 `-DoorState` 跑 13 列；`restart-receipt` 依序以 `-Family restart`、`-Family receipt` 跑 3＋4 列。每次 runner 輸出的 `M7_HOME_SUMMARY=` 恰一行，路徑依序寫進 `build/m7-home-native/<shard>.txt`。驗證 step 對每一份跑 `-VerifySummary -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為該選擇的 `M7_HOME_VERIFIED_SHARD PASS … selection=doorState:<門態>|family:<族> HEAD=$GITHUB_SHA`（單份驗證對分片也是 exit 0，所以不只看 exit code）。artifact `m7-home-native-<shard>`：清單、summary、phase 證據（`.superpowers/verification/m7-home-*/**`）、各 root 的 `preservation.json`、`server.properties`、`world/data/**`。
 - `m7-home-native-aggregate`（`needs: m7-home-native`，windows-latest）：以 `merge-multiple` 把四片 artifact 下載回 workspace 根目錄。summary 內記的是絕對路徑，所以彙總也必須在 windows-latest（workspace 路徑與分片 job 相同）；先核四個清單恰為 `ordinary,passable,restart-receipt,sealed`、合計 5 份 summary、每份 summary 引用的 `preservation.json` 與 phase receipt 都已下載（`M7_HOME_CI_AGGREGATE_*`），再跑 `-VerifyAggregate … -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=46 phases=92 … HEAD=$GITHUB_SHA`。結果另存 artifact `m7-home-aggregate`。
-- runner 環境比對（T4 B2b-4，B2b3-M3）：每片在執行 step 之前，以「記錄 Windows M7 原生分片 runner 環境」step 寫 `build/m7-home-native/<shard>.runner.json`（`shard`、`workspace`＝`GITHUB_WORKSPACE` 的絕對路徑、`imageOS`、`imageVersion`），隨分片 artifact 上傳。彙總 step 先記下自己的值，逐片比對：缺記錄或 shard 不符 `M7_HOME_CI_AGGREGATE_RUNNER`、workspace 不同 `M7_HOME_CI_AGGREGATE_WORKSPACE`、`ImageOS` 不同 `M7_HOME_CI_AGGREGATE_IMAGE`，訊息附兩邊的 workspace 與 image；同一個 image 只有 `ImageVersion` 不同時只記一行 `M7_HOME_CI_AGGREGATE_IMAGE_VERSION_DIFFERS`、不失敗（不影響路徑）。這些比對排在原本的清單、summary 數與原件存在檢查之前，所以路徑不同時以具名錯因失敗，不會看起來像原件沒上傳。彙總 step 的主體包在 `try/catch` 裡：任何錯誤都先把訊息、error record、例外與 script stack 附加到上傳的 `build/m7-home-native-aggregate.log`（`M7_HOME_CI_AGGREGATE_FAIL …`），再原樣丟出；原本的判定沒有改。
+- runner 環境比對（T4 B2b-4，B2b3-M3）：每片在執行 step 之前，以「記錄 Windows M7 原生分片 runner 環境」step 寫 `build/m7-home-native/<shard>.runner.json`（`shard`、`workspace`＝`GITHUB_WORKSPACE` 的絕對路徑、`imageOS`、`imageVersion`），隨分片 artifact 上傳。彙總 step 先記下自己的值，逐片比對：缺記錄或 shard 不符 `M7_HOME_CI_AGGREGATE_RUNNER`、workspace 不同 `M7_HOME_CI_AGGREGATE_WORKSPACE`、`ImageOS` 不同 `M7_HOME_CI_AGGREGATE_IMAGE`，訊息附兩邊的 workspace 與 image；同一個 image 只有 `ImageVersion` 不同時只記一行 `M7_HOME_CI_AGGREGATE_IMAGE_VERSION_DIFFERS`、不失敗（不影響路徑）。這些比對排在清單檔名檢查之後（runner 記錄要靠清單的檔名才找得到）、summary 數與原件存在檢查之前（`.github/workflows/build.yml` 彙總 step），所以路徑不同時以具名錯因失敗，不會看起來像原件沒上傳。彙總 step 的主體包在 `try/catch` 裡：任何錯誤都先把訊息、error record、例外與 script stack 附加到上傳的 `build/m7-home-native-aggregate.log`（`M7_HOME_CI_AGGREGATE_FAIL …`），再原樣丟出；原本的判定沒有改。
 - timeout：分片 job 90 分鐘、執行 step 60 分鐘、驗證 10 分鐘；彙總 job 30 分鐘。依據：本機門態分片 450～572 秒、restart 約 103 秒、receipt 約 130 秒；同 runner 上 M6 原生鏈本機約 8 分鐘、CI job 24～31 分鐘（約 3～3.9 倍），M7 JUnit 約 3～3.5 倍，估門態分片在 CI 約 30～40 分鐘（含第一個 phase 的冷編譯）。
 - 這些 step 目前沒有 `ci-rule-check.ps1` 的 fixture；T4 B2b-3 以 SDD 內一次性的 harness 逐字抽出 step 原文實跑驗證（見 SDD `t4b2b3-report.md`）。
