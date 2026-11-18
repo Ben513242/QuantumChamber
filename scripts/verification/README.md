@@ -807,6 +807,25 @@ manifest 在 close 矩陣 39 列之後再接 7 列（B2a 的 5 列、T4 P1 的 `
 - **覆蓋界線**：「那一列本次有變動又不符」只有 JUnit 證據（含運作中移除收據後恢復寫出），沒有原生跨 JVM 列（原生列 `receipt-mismatch-stop` 是「那一列未變動」的情況）；開服拒絕由 JUnit 證明 journal 載入失敗，沒有以原生列實跑。
 - 其他 journal 寫入失敗（例如 Windows atomic move 的 AccessDenied）在原生存檔時記的是另一則 ERROR，開頭是 `原生存檔（autosave、/save-all 或停服）的 journal 寫出失敗：`，marker `QUANTUMCHAMBER_COLLAPSE_TICK`，訊息裡寫明收斂方式（多數由下一次存檔或 recovery 的 journal 退避重試收斂，少數寫明需要重啟）。這則 ERROR 也可能由 checkpoint 的 `server.save` 觸發（M5 投影、MEASURED 清理、HOME 收尾），不一定對應到 autosave 或指令。
 
+### 管理員說明：永久封存的解除與親手關門才再出發（T4A）
+
+給伺服器管理員與人工驗收。依據：SDD `t4a-v16-report.md`、`t4a-v16-review.md`；技術契約見 M7 spec 文末「2026-11-18 v1.6 遊玩條件組合裁示（依使用者裁示）」節的 A、D 與 G 第 7 點；結案紀錄見 M7 note「最新：T4A CLOSED（2026-11-18）」節。
+
+- **永久封存的解除**：
+  - 適用：這座艙在 journal 的每一列都是已 checked 的永久原因 SEALED（舊列 `EXISTING_INELIGIBLE`、`AUTHORITY_CORRUPT`、`PROJECTION_CONFLICT`、`TRANSFER_RECOVERY_REQUIRED`；HOME 列 `ENTRY_AUTHORITY_INVALID`、`AUTHORITY_CORRUPT`、`TRANSFER_RECOVERY_REQUIRED`；舊列與 HOME 列混合但全是永久封存也適用），current＝flushed，沒有 roll-forward、隔離、未確認寫入、runtime／暫占或走廊 reservation。可重試原因（含 restart-only）、DORMANT、WAITING 都不適用。
+  - 做法：停用原艙（雙手空手蹲下右鍵 Controller，切換 `Enabled`）並斷電。實際電位 LOW 時，供電協調把 power state 設為 `OFF`（比較器 0）並解除保護，之後以創造模式拆除 Controller（玩家拆除只限創造模式）。重新啟用或供電就回到保護。
+  - 拆除後可以在原地重建，新艙取得新的 Chamber UUID，不是 busy。舊封存列只在 registry 於同一 world key、同一 frame 仍登記同一個 Chamber UUID（ORIGIN、未拆除）時才管這扇門；GameTest 證實新艙的門（待套用門、重啟後第一次觀察、chunk 重新載入）不被舊封存列改動，新艙 PREPARE 中參與者關門照常取消。待套用門的這項核對只擋關門與套上量子膜的目標，開門類目標維持原行為（spec G 第 7 點）。
+  - 封存列原樣保留在 journal，不歸檔、不刪除、不改原因；M4 candidate ledger、projection／allocation／discovery ledger 與既有回程收據都不動。session 本身仍沒有出口。
+  - 同艙另一端的回程（HOME 列）只剩已 checked 的永久封存時，原艙的拆除防線同樣放行；GameTest 以 journal 正式入口造出 HOME 封存列驗證。HOME 永久封存的產生點與它的 ERROR 字句屬 T6。
+  - ERROR：舊列進入永久原因 SEALED 時那一則，以及每個 server instance 開服時的提醒，都附上解除路徑（`CollapseService.PERMANENT_RELEASE_HINT`，開頭「解除佔地：」，並寫明封存紀錄保留在 journal）。既有片段不變。目前沒有測試斷言這段字句，以 log 原件確認。
+  - 驗證界線：GameTest 以 `ChamberLifecycleService.setEnabled` 停用原艙，以原生 setter 移除 Controller，沒有走玩家的蹲下右鍵與創造模式拆除。兩者在程式上等價（玩家停用最後同樣經 lifecycle 的停用；創造模式拆除要求 OFF 與 `mayMutate`，再經 `dismantleOrigin` 的拆除防線），這是讀碼判定，不是實跑。
+- **親手關門才再出發**：
+  - 每座原艙的 Controller block entity 有持久布林 `RearmRequiresPlayerClose`（NBT，缺 key 讀成 false）。
+  - 上鎖：PREPARE 期間或通道期間參與者關門的 checked 終局，在系統排入關門之前；`CLOSE_AFTER_TERMINAL` 套用之前另以冪等呼叫補設。其他終局與未選門的整組返還不上鎖。
+  - 效果：上鎖期間供電協調回 `IDLE`（比較器 3），正式 start 也拒絕；停用（INVALID）優先。
+  - 解鎖：只有非旁觀玩家經正式門互動、攔截結果為照一般門、整面門由開切成關時，才在延後刷新之前清除。斷電再供電、停用再啟用、系統改門、直接寫方塊與 `/reload` 都不解鎖。
+  - 回家（HOME 到 A）與 B 收尾之後的上鎖屬 T6、T7，還沒有實作。
+
 ### >4096 趟回程歷史（T4 B2b-2，plan Task 4 :265、V10）
 
 `M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（JUnit，`m7-inventory.json` 的 `scale.portable.junit`，兩平台都跑；T4 B2b-5 起不在 M7 gate 內，改在獨立的規模段執行，見下方「規模測試獨立一段」）：4100 個互異 SID 各自經 admission 的同名檔查詢與同卷探測、CLOSE 列進熱 journal、正式 `publishOrVerify` 發布、正式 checked 移除（`terminateHome`，`finishHomeClose` 核過 proof 後的同一個本體）。之後舊 SID（前、中、4096 邊界前後、最後）以「旅程識別碼已有歷史」拒絕重用、新 SID 仍可 admission；抽樣的舊收據 exact 讀回、位元組自發布後不變。禁止全目錄掃描以 instrumentation 證明：收據 store 建在委派預設檔案系統的 `ListingProbe` 上，記錄目錄列舉與碰到別的 SID 收據檔的每一次存取，整段必須都是 0；把 `read` 改成列舉目錄的 mutation 被 `RECEIPT_DIRECTORY_LISTED` 殺掉。不虛增歷史計數：每趟移除後 journal 位元組都回到同一份空 schema6，`data` 底下只有 journal 與收據目錄，收據目錄恰為 4100 個 `<sid>.dat`（事後從磁碟數出）。Windows 本機原本約 46～54 秒（每趟 11～13 ms）；T4 B2b-4 起 admission 與 CLOSE 列落盤／開服 strict 載入只在 strict 趟做（見下方「strict 趟抽樣」），約 28 秒（每趟約 7 ms）。限制：JUnit 拿不到 owner 的 mint／proof，CLOSE 列以 journal fixture 放入；B 門、原生 checkpoint 與 proof 由 M7 GameTest 與原生 46 列負責。

@@ -1,10 +1,230 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂見下節，待審查。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 最新：T4A CLOSED（2026-11-18）
+
+下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`，V 指 `.superpowers/verification/`，兩者都 gitignored。本節的事實讀自 S 的 `STATUS.md`（18:5x、18:1x、17:3x、16:3x、15:5x、15:3x、14:1x 各段）、`t4a-v16-report.md`（含 fix1 節）、`t4a-v16-fix1/`、`t4a-v16-review.md`、`t4a-v16-fix1-review.md`、`t4a-v16-accept-check/`、`ci-44259424086/`（含 `run.json`）、`ci-44281662893-run.json`、`ci-44281662893-m7ubuntu/`、`m5-water-control-flake-investigation.md`、`user-m5-water-flake-ruling-20261118.md`，V 的 `run-all-5ff86c0b885e46e691645c7608afe69f`（`console.log`、`summary.json`），以及 git 的唯讀查詢。
+
+- **狀態**：T4A CLOSED。
+  - code pin：production 的最後一筆是 `c091581`。之後的 fix1 `099252f` 只改 testmod：`git diff --stat c091581..099252f` 只列 `src/testmod/java/dev/quantumchamber/gametest/M7RearmGameTests.java`（+23 行）。`git ls-remote origin` 讀回 `codex/m7-return-home` 是 `099252fb4c3279435a2ca03b5a43296b2e5ccd72`。
+  - commit 範圍 `5ae0a04..099252f`，共五筆（見下表）。
+  - 完整回歸：`c091581` 的 run-all 自然 `END ALL exit=0`，採計條件 26 項全 PASS。
+  - 審查：T4A 一席（spec＋quality 同席）spec ✅、quality Approved，C0／I0／M9；fix1 一席 Approved，C0／I0／M3。
+  - CI：`c091581` 的 44259424086 attempt 1 FAIL，原判保留、不 rerun；`099252f` 的 44281662893 attempt 1 十個 job 全部 success。
+  - 採計方式見下方「B+C 採計」。
+  - 前一筆 docs commit `5ae0a04`（spec v1.6）的 CI 44244964002 attempt 1 十個 job 全部 success（S `STATUS.md` 14:1x 段）。
+  - T4A 結案不代表 M7 完成。main 合併、tag、人工代操作、worktree 退役仍各自另問使用者。
+
+### commit
+
+| commit | 內容 |
+| --- | --- |
+| `7a0e39d` | test：RED 三案、testmod entrypoint、inventory（`src/main` 與 `5ae0a04` 相同） |
+| `fc78e13` | test：永久封存 RED 的失敗訊息先組好再收尾（只改診斷順序） |
+| `4acf64a` | fix 第一段：latch 與永久封存的解除路徑（中間候選，還沒有座標核對） |
+| `c091581` | fix 第二段：原艙座標的門權威 |
+| `099252f` | fix1（test）：idle 案收尾還原 checkpoint 預檢 WARN 的去重記號 |
+
+`5ae0a04..c091581` 的改動檔恰為 plan Task 4A「新增／修改」所列的 16 檔，逐檔 stage（審查的核取項表 :519 那一列已核對）。`S/{gates,m7-ci-gametest}.ps1` 由 inventory 驅動，不需要改。
+
+### RED
+
+- `prepare_participant_close_requires_player_reclose_windows`、`passage_participant_close_requires_player_reclose_windows`：在 `7a0e39d` 以 `REARM_DEPARTED_AFTER_PARTICIPANT_CLOSE` 失敗。參與者關門終局之後，同艙立刻開出新的 ARMING session，比較器 7。plan 記為推論的取消後立刻再出發，因此在 Windows 上證實。root S `t4a-v16-red/gate-t4a-v16-red-gt-9882d736aaa741f8b2585e366c8bbaa7`，GameTest XML SHA-256 `065aa202…2b0a`。
+- `permanent_sealed_origin_dismantles_after_disable_and_power_off`：
+  - 第 1 root（同上）的失敗是測試自己的診斷 NPE：先收尾，封存列被終局 API 移除之後才組訊息，所以不是具名失敗。原 root 保留。
+  - `fc78e13` 只改訊息順序（test-only），以新 nonce 重跑，以 `PERMANENT_SEAL_NOT_RELEASED` 失敗：power=RETURNING、比較器 11、艙體不可寫，封存列是 SEALED/EXISTING_INELIGIBLE。root `t4a-v16-red/gate-t4a-v16-red-seal-71a1cf679ffa45cf958b56e1c5ce7a2b`，XML `7f6eef99…3505`。
+  - implementer 記為一次工具問題（RED 診斷順序），沒有重複發生。
+- 中間候選 `4acf64a`（已有解除路徑、還沒有座標核對；`4acf64a..c091581` 只改 `OriginDoors.java`）：
+  - `rebuilt_chamber_door_ignores_released_seal_after_restart_reapply` 以 `REBUILT_DOOR_CHANGED_BY_RELEASED_SEAL` 失敗：三個時點（待套用門、重啟後第一次觀察、chunk 重新載入），新艙的門都被舊封存列關上；
+  - 同一輪 `rebuilt_chamber_prepare_participant_close_still_cancels_windows` 也以 `REBUILT_PREPARE_CLOSE_NOT_CANCELLED` 失敗；
+  - root `t4a-v16-intermediate/gate-t4a-v16-mid-49c0133f9e514303a4cbf14e550e61d7`，XML `b0bf221d…3094`。
+
+### GREEN
+
+- pin `c091581`，root S `t4a-v16-green/gate-t4a-v16-green-gt-81118959694844238d747e3698d3ac9a`，GameTest XML `cdadc531…dfbf`：14 個 GameTest 全過；JUnit `M7RearmLatchTest` 3/3、`M7SealReleasePredicateTest` 1/1。
+- batch 名稱都是 `m7_home_*`，只在 M7 run 選入，沒有動 M5 run 的 60 案。`_windows` 三案只在 Windows 跑，其餘 11 案兩平台都跑。本機沒有 Ubuntu，兩平台案的 Ubuntu 分支由 CI 驗（見下方「fix1」與「同 SHA CI」）。
+- 實作做法的說明（審查都已核過）：
+  - `latch_survives_player_open_then_system_close`：已供電的登記艙受保護，真的 `/setblock` 會被拒絕，所以改以授權的直接寫方塊（`M5GameTestSupport.writeDoor`）代替，另有系統 `applyTarget(CLOSED)`（審查 M-9）。這與 V12 的 `/setblock` 字面不同。
+  - `/reload`：照 plan 沿 M6 的做法，直接觸發 Fabric START／END_DATA_PACK_RELOAD，不呼叫 `reloadResources`。
+  - 待套用門的座標核對只擋關門與套膜類目標，見下方「審查」的 3(a) 與 spec G 節第 7 點。
+  - Controller 未載入時補設 latch：實作是 `CLOSE_AFTER_TERMINAL` 套用前一律呼叫冪等的 `latchRearm`，不另設 pending 旗標；沒有具名測試單獨覆蓋（審查 4）。
+- 盤點：沒有找到依賴「取消後同艙自動再出發」的既有 M5／M6 GameTest 或原生鏈，逐項見 S `t4a-v16-report.md` 的「:497 盤點」節；審查 3(c) 靜態核對屬實；完整回歸的 default 166、M5 60、collapse 69、M6／M7 原生都通過。
+
+### mutation
+
+pin `c091581`，root S `t4a-v16-mutation/M<n>/`，完整 SHA 見同目錄的 `mutation-log.txt`、`pin-hashes-c091581.txt`。
+
+- 14 項都逐位元還原：六個 production 檔以 `sha256sum -c pin-hashes-c091581.txt` 全部 OK，`git status` 乾淨。M4 第一次還原少還原一行，中間 SHA 與 pin 不符而被發現，補還原後一致；這段期間沒有建置或測試。
+- 13 項由 plan 表列的全部具名測試殺掉。M8、M9、M11 的 GameTest 失敗點是後續斷言，錯因訊息與本意無關（審查 M-4），殺手仍然有效。
+- M10（忽略 rollForwardPending）：JUnit `onlyCheckedPermanentRowsQualify` 殺掉；GameTest `retryable_or_unchecked_seal_never_released` 是 PASS，沒有殺到。
+  - 審查 3(b) 判定等價成立：可達的 journal 狀態下，`rollForwardPending(sid)` 一定代表 current≠flushed；判定先要求 current＝flushed，roll-forward 條件因此被它涵蓋。
+  - 只由 JUnit 殺可以接受，不必用反射造出不可達的狀態；roll-forward 條件保留作縱深防禦。plan mutation 表的該列已在行末註記。
+
+### focused
+
+乾淨 pin `c091581` 兩輪，root S `t4a-v16-focused/r1`、`r2`：
+
+- M7 全集合：兩輪都是 `M7_VERIFIED PASS junit=52 gametest=43`（執行與 `-VerifyOnly -SelfTest` 各一次）。
+- `ChamberPowerCoordinatorTest` 19/19；加跑的 `MembraneStateTest`、`ChamberDoorServiceTest`、`ChamberControllerBlockEntityNbtTest`、`CollapseServiceTest` 分別 19、9、5、29 全過。
+- 受影響的 M5 run 10 案、default run 4 案，兩輪都通過。
+
+### 完整回歸（`c091581`）
+
+- holder S `t4a-v16-full-holder-d02de64847e740babcbf018b0a01f42c`：holder PID 16252、run-all PID 39996，07:30:40Z 開始，`CHILD_CODEPAGES=65001,65001,65001`，`exit.txt` 為 0。
+- run-all root `V/run-all-5ff86c0b885e46e691645c7608afe69f`，HEAD `c091581`。
+  - 15:30:41 開始，17:23:45 `END summary exit=0`，接著自然 `END ALL exit=0 HEAD=c09158127db2ebccc42714d0dc47e298f588983c`。
+  - console 第 2 行 `STATUS ` 後面是空的，沒有任何 `END … FAIL`；第一個 step `END w10-preflight exit=0`。
+  - 本筆讀回時 `console.log` 的 SHA-256 是 `1E50F294…7BFE`，`summary.json` 是 `D9D10CCA…4B33`。
+- `SUMMARY` 行（逐字）：
+
+  ```
+  SUMMARY default=166/166 windows=76 legacy=1/1 m5=60/60 m6=35/35 m6pace=35 normal=13/13 perTest=43+13+1 junit=1198 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=633entries/586classes sources=275 testmodHits=0 mainOnly=PASS m3=4+5 recovery=25 m5collapse=69 m6native=DIAGNOSTIC:2,FUNCTIONAL:25 ci=win:PASS,ubuntu:PASS m7native=COMPLETE:46 m7scale=PASS:11
+  ```
+
+- 其他關鍵行，都帶 `HEAD=c091581…`：
+  - `M7_VERIFIED PASS platform=Windows junit=52 gametest=43`（launched True、False 各一行）；
+  - `M7_SCALE_VERIFIED PASS platform=Windows junit=11`（launched True、False 各一行）；
+  - `M7_HOME_VERIFIED_COMPLETE PASS rows=46 phases=92 negativeChecks=376 selection=all`；
+  - `M6_NATIVE_VERIFIED PASS chains=9 phases=27 negativeChecks=479`。
+
+### 採計條件
+
+- 條件來源同 T4：S `t4b2b3-review.md`「B2b-4 審查」第 2 節，加上「B2b-5 審查」第 4 節的延伸。T4A 版把 M7 的預期案數改由 `m7-inventory.json` 推出（T4 版寫死 48／29／59），這次推出 junit 52、gametest 43、與規模段聯集 63。
+- controller 以唯讀腳本逐項核對，26 項全 PASS（`ACCEPT_FAILS=0`）。原件在 S `t4a-v16-accept-check/`：`t4a-accept-check.ps1`（SHA-256 `1AD089AF…CE60`）、`t4a-accept-check-result.json`（`419F2EA3…6310`）。
+- 核對內容：
+  - `END ALL exit=0 HEAD=c091581…` 恰一行，沒有 `END … FAIL`；
+  - `m7HomeNative` 為 COMPLETE、46 列、92 phase，記錄的 SHA 與重算一致（`m7-home-run-769f03f8f4ad.json`，`61E89A98…023A`）；
+  - console 有 46 列 COMPLETE 的 verify 行、`END m7-home-native exit=0`、`negativeChecks=376` 的 COMPLETE 行；
+  - `SUMMARY` 行尾有 `m7native=COMPLETE:46` 與 `m7scale=PASS:11`；
+  - `END m7-home exit=0` 與 `M7_VERIFIED PASS … junit=52 gametest=43`；
+  - `END m7-scale exit=0`，launched 與 VerifyOnly 兩行 `M7_SCALE_VERIFIED PASS`；
+  - `m7HomeScale` 的 scope、status、head 相符，11 案；`m7Home.junitCases` 恰 52 個、不含規模測試，兩者聯集 63；
+  - 規模段的 `execution.json` 為 600／90、`phaseDeadline` 為空、只有一個 `--tests`；M7 gate 的 `execution.json` 不含規模測試。
+
+### 審查
+
+- T4A：S `t4a-v16-review.md`，一席（spec＋quality 同席），範圍 `5ae0a04..c091581`，只讀，審查員沒有跑 Gradle。spec ✅、quality Approved，C0／I0／M9。給 controller 的四個判定：
+  - 3(a) 開門類待套用門不做座標核對：接受。目前不可達，就算發生也不會關住人，也不會取消新艙的 PREPARE 或通道；要記成 controller 讀法（偏離 spec D 字面的「待套用門的套用」），並把 Javadoc 的理由改成真正的不變量。已寫成 spec G 節第 7 點。
+  - 3(b) M10 是等價變異：成立（見上方「mutation」）。
+  - 3(c) 沒有既有案例依賴取消後同艙自動再出發：靜態核對屬實，最終以完整回歸為準；完整回歸已通過。
+  - 4 Controller 未載入時補設 latch 沒有具名測試：風險低，不擋結案。終局當下來源 ticket 讓 Controller 一定是 FULL，唯一的系統關門就是 `CLOSE_AFTER_TERMINAL`，補設排在它的 `applyTarget` 之前；建議補註解（M-2）。
+- fix1：S `t4a-v16-fix1-review.md`，一席，範圍 `c091581..099252f`，只讀。Approved，C0／I0／M3。審查認為修法消除了 CI 44259424086 的跨案干擾，不論 batch 順序都不會誤判 FAIL；spike 恰一則的斷言沒有放寬；還原的只是 log 去重記號，不影響 production 放行與否。真 Ubuntu 的行為以同 SHA CI 為準。
+- controller 的處置（不是使用者裁示）：M-1～M-8 與 fix1 的 M1～M3 不改 pin，交 T4B Step 0；M-9 是文件項，在本筆結案 docs 處理（見下方「殘留交 T4B Step 0」）。
+
+### fix1：Ubuntu 測試互相干擾
+
+- 失敗：CI 44259424086 的 Ubuntu `m7homespikegametests.checkpoint_capability_remains_rejected_on_ubuntu`，訊息「真正式入口到達checkpoint平台拒絕，非較早前置拒絕」。spike 自己的 capture 期待恰一則預檢 WARN，實得 0 則。
+- 原因（讀碼加 CI artifact）：
+  - `SuperpositionSessionManager.checkpointWarning` 是整個 server 共用的去重記號，同一原因只記第一次，只在預檢通過或停服時清掉；Ubuntu 的預檢永遠不通過。
+  - T4A 新案 `participant_close_latch_shows_idle_until_player_reclose`（batch `m7_home_rearm_idle`）在玩家親手關門解鎖之後，正式 start 走到預檢，留下記號。Ubuntu `latest.log` 第 610 行是整個 M7 run 唯一一則預檢 WARN；spike 的 batch `m7_home_ubuntu` 在第 920 行才開始，再進預檢就被去重。
+  - batch 依名稱排序，所以必然重現。Windows 的預檢通過、不留記號，本機與 Windows CI 都看不到。
+- 修法（`099252f`，只改 testmod）：本案開始時記下記號的值，收尾時還原；讀寫用既有的 testmod 反射 `M4CandidateTestAccess.get/set`，還原掛在本案既有的 hooks 上。Ubuntu 分支新增斷言 `reclosedStartReachedTheCheckpointPrecheck`。production、spike 與其他既有斷言都沒有動。
+- 定向驗證（Windows，乾淨 pin `099252f`，在 controller 的完整回歸 `exit.txt` 出現之後才跑），root 在 S `t4a-v16-fix1/`：
+  - compile gate PASS；
+  - r1、r2 兩輪：batch `m7_home_rearm_idle`、`m7_home_windows`、`m7_home_portable` 加 JUnit `M7RearmLatchTest`，GameTest 4/4、JUnit 3/3。Windows 上本案走已出發分支，這兩輪只證明修法在 Windows 沒有回歸；
+  - 補充：暫時改碼的 Windows 模擬 Ubuntu 分支（`CheckpointPlatformFault.simulateUnsupported`）PASS；拿掉還原 hook 的負控只有 `simMemoRestoredAfterRelease=false`，具名 FAIL。改碼已逐位元還原，`M7RearmGameTests.java` 的 SHA-256 與 `099252f` 的檔案相同。模擬不等於真 Ubuntu。
+- 真 Ubuntu：`099252f` 的 CI 44281662893，Ubuntu M7 的 GameTest 39 案 0 失敗，`checkpoint_capability_remains_rejected_on_ubuntu` 與 `participant_close_latch_shows_idle_until_player_reclose` 都 PASS；S `ci-44281662893-m7ubuntu/summary.json` 為 status PASS、head `099252f`、junitCases 52、gameCases 39。
+
+### 同 SHA CI
+
+本筆讀 S 的 `ci-44259424086/run.json` 與 `ci-44281662893-run.json`（`gh run view --json jobs` 的原件）。
+
+| run | head | 結果 | 說明 |
+| --- | --- | --- | --- |
+| 44259424086 | `c091581` | attempt 1 **FAIL**，原判保留、不 rerun | 十個 job 中八個 success。失敗的兩個：`m7-validation (ubuntu-latest, Ubuntu)` 的 step 6「執行 M7 獨立 GameTest」，即上方 fix1 的測試互相干擾；`windows-native` 的 step 8「Windows 原生 M5 GameTest」與 step 9「Windows M6 JUnit 與獨立 GameTest」。step 8 是 M5 `projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids` 對照組等待逾時（controlPistonPushed=true、waterMoved=false，至 tick 233）；step 9 是它連帶的 `M6_SCOPE_MISMATCH：GameTest run 範圍不符（m5）：expected=60 actual=60 缺 [] 多 []`。原件 S `ci-44259424086/` |
+| 44281662893 | `099252f` | attempt 1，十個 job 全部 success | build、m7-validation（Ubuntu、Windows）、m7-home-native 四片（ordinary、sealed、passable、restart-receipt）、m7-home-native-aggregate、m6-native、windows-native。「執行 M7 獨立 GameTest」step：Windows 259 秒（上限 600 秒）、Ubuntu 153 秒。最晚完成的是 windows-native（10:03:20Z→10:39:09Z）。沒有動用下方的 M5 忽略讀法 |
+
+### B+C 採計
+
+- production 的完整回歸採 `c091581` 的 `run-all-5ff86c0b…`。
+- fix1 `099252f` 只改 testmod，依既有 B+C 規則採計：只改測試、腳本或文件時，做一席審查、定向驗證與 CI，免 mutation 與本機完整回歸（出處見本檔「流程指示」節與 AGENTS）。fix1 的三項是：一席審查 C0／I0／M3、Windows 定向兩輪、`099252f` 的 CI 44281662893。
+- 這是 controller 依既有 B+C 規則的判定，不是使用者裁示。`c091581` 自身的 CI 44259424086 FAIL 原判保留，不 rerun，也不因 44281662893 改判。
+
+### M5 熔岩偶發與使用者裁示
+
+- 調查：S `m5-water-control-flake-investigation.md`（只讀，HEAD `c091581`）。
+  - M5 既有 GameTest `m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids` 的對照組，在 normal 地形上偶爾被自然熔岩搶先流進 `wet` 格而變成圓石。這是吸收態，延長等待無效。
+  - 分類 (c)：既有 M5 測試的 fixture 在 M6 改成 normal 地形之後的環境偶發，與 M7 改動無關；這個案例的程式碼從 `dfed554` 到 `c091581` 都沒有改。
+  - Windows CI 3/86、Ubuntu 0/86。調查建議的是改 fixture 封住鄰格（調查第 7 節的選項 B）。
+- 次數更正：同簽章三次是 M6 分支的 42355698932（`dfed554`，2026-11-07）、M7 的 44078380354（`a8755ce`）與 44259424086（`c091581`）。下方歷史節「過程中的 CI」表 44078380354 列寫的「首次偶發」不正確：M6 那次沒有寫進任何 tracked 文件。原句保留，已在該列加註更正。
+- 使用者裁示（2026-11-18 18:0x，AskUserQuestion，題目與選項由 controller 撰寫；S 原文檔 `user-m5-water-flake-ruling-20261118.md`）：
+  - 題目（header「M5 偶發」）「M5 既有測試「投影不變格」在 Windows CI 約 3.5% 會因自然熔岩搶先流入而失敗（和 M7 無關）。要怎麼處理？」
+  - 選項：
+    1. 「修測試 fixture（建議）」：「放水之前先把對照格周圍接觸自然地形的格子封成石頭（比照 M6 已有的做法），並加「不是流體」的前置斷言。判定與 200 tick 時限都不動，只改測試，當成 M7 裡獨立的小 task，走一席審查與 CI。」
+    2. 「記為已知偶發，同簽章可重跑一次」：「不改碼。CI 只出現這個簽章時，保留原判、重跑那個 job 一次；同一 SHA 再發生就停下回報。每次 CI 仍有約 3.5% 機率紅。」
+    3. 「維持現狀，每次都問」：「不改碼，也不訂重跑規則；每次出現都停下來問你。」
+  - 使用者以「Other」自行輸入，原文：
+
+    > 可以忽略，我記的玩家穿越到水底下或岩漿裡面就要承擔風險，盒子照樣生成
+
+- controller 的讀法（照 S 原文檔第二節，不是使用者裁示；原文檔記為已在回報中告知使用者，使用者可更正）：
+  - 不改 fixture、不重跑、不再為這個簽章停下詢問。
+  - 範圍限定為「完全相同的簽章」：失敗案恰為上述 M5 案、訊息為對照組等待逾時且 `waterMoved=false`，以及它連帶造成的 `M6_SCOPE_MISMATCH（m5）`（expected=actual、缺與多都是空集合）。同一 CI run 中只要有其他任何失敗，照原規則停下回報。
+  - 符合上述範圍時，該次 CI 視為不阻擋 task 結案；結案 docs 必須逐筆列出被忽略的 run id、job、step 與簽章，不寫成「CI 全綠」。
+  - 使用者附帶的玩法說明（玩家穿越到水下或岩漿裡自行承擔風險、盒子照樣生成）與 M7 spec 既有的「不調整 Y」已知行為一致，不新增實作。
+- T4A 結案沒有動用這條讀法，被忽略的 run 是零筆：44281662893 十個 job 全部 success；44259424086 在裁示之前，而且同一個 run 另有 Ubuntu 的失敗，不符合範圍，原判保留。
+
+### 計數
+
+- AccessDenied：`c091581` 這個 code pin 沒有發生（S `STATUS.md` 18:5x 段）。fix1 只改 testmod，沒有本機完整回歸。
+- 完整回歸啟動器歷史 2/3 不變。
+- M5 熔岩偶發：同簽章累計 3 次（見上方小節）。
+
+### plan Task 4A 核取框
+
+判定規則（controller 的派工要求，不是使用者裁示）：完全達成才勾；有偏離，或找不到具名測試、原件證實的子項，就不勾，在該行末註明。9 項中勾 5 項（:465、:467、:471、:473、:477），4 項不勾：
+
+- :469：補設 latch 沒有具名測試（審查 4、M-2）；「這兩個單獨變異不會被殺」是審查 4 的靜態分析，沒有實跑。
+- :475：待套用門的座標核對只擋關門與套膜類目標（審查 3(a)、spec G 節第 7 點）；registry 紀錄的 ORIGIN、未拆除兩個子條件沒有具名測試（M-3）。
+- :498：M10 只由 JUnit 殺（等價，審查 3(b)）。
+- :519：沒有用候選 commit，改成五筆分開 commit；production 的 CI 44259424086 FAIL，結案的 CI 是 fix1 的 `099252f`（B+C）；報告與證據 root 改用 `t4a-v16-*`。
+
+勾選項的具名證據：
+
+- :465：上方「RED」的三個 root 與中間候選 root。
+- :467：JUnit `nbtRoundTripAndLegacyDefault`、`latchedOriginReturnsIdleWithoutStart`；GameTest `formal_start_refuses_latched_origin`、`rearm_latch_survives_power_cycle_enable_toggle_and_system_writes`；mutation M1、M5、M6、M7 被殺；位置與判斷順序由審查以行號核對（`ChamberPowerCoordinator.java:249-257`、`SuperpositionSessionManager.java:285-288`）。
+- :471：GameTest `latch_survives_player_open_then_system_close`、`rearm_latch_survives_power_cycle_enable_toggle_and_system_writes`；mutation M2、M3 被殺；`MembraneStateTest` 核對的 mutator 字串不變（focused 兩輪 19/19）。
+- :473：JUnit `M7SealReleasePredicateTest.onlyCheckedPermanentRowsQualify`、`permanentSealOnlyReachesOffWhenDisabledAndLow`；GameTest `permanent_sealed_origin_dismantles_after_disable_and_power_off`、`permanent_sealed_stays_protected_while_enabled_or_powered`、`retryable_or_unchecked_seal_never_released`、`home_permanent_seal_allows_root_removal_after_disable`、`rebuild_after_release_gets_new_identity_and_is_not_busy`；mutation M8、M9、M11、M12 被殺。ERROR 字句的解除路徑沒有具名斷言（M-8），以 log 原件證實：GREEN root 的 `latest.log` 第 170 行是帶解除路徑的開服提醒；完整回歸 `gate-m5-gametest-bfd1b202…` 的 `latest.log` 有 9 則帶解除路徑的「塌縮進入 SEALED」ERROR。
+- :477：上方「GREEN」的 root 中 14 個 GameTest（含上述 RED 與原地重建兩案）全過，JUnit `M7RearmLatchTest` 3、`M7SealReleasePredicateTest` 1；兩平台的 11 案在 `099252f` 的 Ubuntu CI XML 都 PASS（審查另核 44259424086 的 Ubuntu XML，這 11 案在 `c091581` 本身也 PASS）；:481 是「或」，`applyTarget(CLOSED)` 那一支成立（`M7RearmGameTests.java:224-226`）。以授權直接寫方塊代替 `/setblock` 是 spec V12 的字面差異，記在上方「GREEN」，不是 :477 本身的偏離（T4A 結案 docs 審查 M-1，controller 決定改勾）。
+
+### 殘留交 T4B Step 0
+
+以下交 T4B Step 0，是 controller 的決定（S `STATUS.md` 15:5x、18:1x、18:5x 段），不是使用者裁示：
+
+- T4A 審查（S `t4a-v16-review.md`）：
+  1. M-1：`OriginDoors.claimsDoor` 的 Javadoc 理由（`OriginDoors.java:492-498`）改寫成 3(a) 的可達性不變量；目前寫的「不會把人關住」不足以說明安全。
+  2. M-2：`OriginDoors.java:797-798` 的補設 latch 補註解，寫明終局時門開著、唯一的系統關門就是 `CLOSE_AFTER_TERMINAL`、Controller 由來源 ticket 保持 FULL。
+  3. M-3：`ownsDoor` 的 ORIGIN／非 destroyed 子條件補具名測試（抽成純述詞補 JUnit），或記為 production 不會產生的縱深防禦後結案。
+  4. M-4：`M7SealReleaseGameTests` 的保護斷言具破壞性（:420-428、:231-235），回歸時錯因訊息會誤導；對照步驟失敗時以具名前綴立即丟出，試拆之前先記下狀態。
+  5. M-5：`ChamberDoorService` 新的 `toggle(…, Toggled)` 多載與 `Toggled` 介面降為 package-private。
+  6. M-6：`OriginDoors.java:364` 的 Javadoc 過時（`sessionAt` 現在也讀 `ChamberRegistryState`）。
+  7. M-7：判定把已失效的暫占記號也當成 runtime（`SuperpositionSessionManager.java:467`），屬 fail-closed，解除要等重啟，可達性未證；記下這個保守行為，或改用 `runtime(chamber)!=null || provisionalClaimed(…)`。
+  8. M-8：在新的 M7 案以 `PERMANENT_RELEASE_HINT` 的字面片段斷言一次（不改舊斷言），或交 T8 人工驗收。
+- fix1 審查（S `t4a-v16-fix1-review.md`）：
+  9. M1：新斷言的鑑別力依賴 batch 順序；`capture` 記下原值後立即把記號設成 null，一律期待恰 1 則，收尾仍還原原值。spike 也可比照。
+  10. M2：已出發分支補平台 witness（例如 `departsOnlyOnCheckpointPlatform`），讓兩案獨立守住誤放行。
+  11. M3：`CheckpointMemo.capture` 納入失敗收尾；Javadoc 補上記號也決定是否記「已恢復通過」INFO。
+- 可選加固（審查 3(a) 的 (ii)）：
+  12. 評估是否讓開門類待套用門只在 registry 於該 frame 有一筆不同 UUID（或非 ORIGIN、或 destroyed）的紀錄時才丟棄，完全沒有紀錄時照舊；claims 目標維持嚴格的同 UUID 核對。
+
+M-9（docs truth）由本筆結案 docs 處理：
+
+- 根目錄 `README.md` 的 M5 段（:43 行末補親手關門才再出發；:45 第一句之後補永久封存的解除路徑），以及 `scripts/verification/README.md` 的 M7 段（新增「管理員說明：永久封存的解除與親手關門才再出發（T4A）」小節，接在既有的管理員說明之後）。兩處都只描述已實作、已驗證的行為；verification README 另註明回家（HOME 到 A）與 B 收尾之後的上鎖屬 T6、T7，還沒有實作。
+- plan :511（M10 列）行末註記等價與 JUnit 殺手。
+- V12 的 `/setblock` 以授權的直接寫方塊代替：記在本節「GREEN」小節；plan :477 改為勾選，行末寫明 :481 的「或」由 `applyTarget(CLOSED)` 成立，並指向這裡。
+- 證據 root 改名 `t4a-v16-*`（避免覆寫 T4 Phase A 的唯一原件）：plan :519 行末註記。
+- spec G 節的讀法連同 3(a) 的新讀法：spec G 節加第 7 點，下次回報時告知使用者。
+
+### 下一步
+
+1. 派 T4B（含上列 T4B Step 0），之後依序 T5～T8。這是 controller 的排序，不是使用者裁示。
+2. 下次回報時，告知使用者 spec G 節第 7 點（待套用門座標核對的範圍讀法）。
+3. main 合併、tag、人工代操作、worktree 退役、PR、LICENSE 仍各自另問使用者。
 
 ## 最新：spec v1.6 修訂（2026-11-18）
 
-下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`（gitignored）。
+（已被上方 T4A CLOSED 節接續）下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`（gitignored）。
 
 - **狀態**：spec v1.6 與 plan 修訂已採用。
   - 一席獨立審查（S `spec-v16-review.md`）結論 C0／I2／M11；原作者依 controller 的處置做 fix1（見下方「審查與 fix1」）；原席窄複審 C0／I0／M5，原 I-1、I-2 與 11 項 Minor 全部 CLOSED，新的五項 Minor（N-1～N-5）由 controller 在同一筆修正。
@@ -457,7 +677,7 @@ T5 Step 0 要處理：
 | 44028009042 | `fca6d31` | success | 五個 job；B2a 三個新 GT 第一次在 Ubuntu 跑 |
 | 44039568902 | `73132bc` | success | 五個 job |
 | 44066568721 | `dbbb0d4` | success | 五個 job |
-| 44078380354 | `a8755ce` | **FAIL** | windows-native：M5 GameTest 60 案中 `m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids` 1 案 FAIL（活塞與水的對照組沒有在時限內發生，`M5_WATER_GEOMETRY stage=timeout`），連帶 M6 scope 檢查 `M6_SCOPE_MISMATCH（m5）`。判讀為 M5 既有測試在 CI 上的首次偶發（推論）；再出現就另外調查並交使用者（controller 的決定）。其他四個 job success |
+| 44078380354 | `a8755ce` | **FAIL** | windows-native：M5 GameTest 60 案中 `m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids` 1 案 FAIL（活塞與水的對照組沒有在時限內發生，`M5_WATER_GEOMETRY stage=timeout`），連帶 M6 scope 檢查 `M6_SCOPE_MISMATCH（m5）`。判讀為 M5 既有測試在 CI 上的首次偶發（推論）；再出現就另外調查並交使用者（controller 的決定）。其他四個 job success（2026-11-18 更正：「首次」不正確。M6 分支的 42355698932（`dfed554`，2026-11-07，Windows）已有同簽章，這次是第 2 次，44259424086（`c091581`）是第 3 次；出處 S `m5-water-control-flake-investigation.md` 第 1 節，處置見上方「最新：T4A CLOSED（2026-11-18）」節的「M5 熔岩偶發與使用者裁示」） |
 | 44097956125 | `98e8e20` | **FAIL** | M7 Windows：`M6_PHASE_DEADLINE_EXCEEDED reason=idle`（elapsed 157.4 秒、idle 90.03 秒、timeout 600），即 B2b-2 審查的 I-1。其他四個 job success；windows-native 的 M5 這次 PASS |
 | 44107563893 | `434c858` | success | 十個 job（第一次有原生分片與彙總）。分片約 ordinary 21 分、sealed 16 分、passable 21 分、restart-receipt 12 分，彙總 30 秒 COMPLETE；windows-native 約 48 分是整個 CI 的牆鐘上限；M7 Windows step 491 秒 |
 | 44117707536 | `926425c` | success | 十個 job（attempt 1）。M7 Windows 的「執行 M7 獨立 GameTest」step 494 秒，其中 scale 測試 204.456 秒、GameTest 177.4 秒；這是 2026-11-18 規模測試裁示的背景 |

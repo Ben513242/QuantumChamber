@@ -5,7 +5,7 @@
 **目標（Goal）**　合法 COMPLETE 投影 B 的參與者走固定回家門，先回 B，再經 B 的膜以原座標回 A。旅程終局可安全解除同艙占用。
 **架構（Architecture）**　將既有 checked journal 擴充為能同存舊列與 HOME 列的單一權威。沿用走廊、回收、票額、原生移動與 chunk checkpoint，分別核對 Entry=B 與 Root=A。每 SID 的終局收據保留歷史，活躍列負責完成 B 的最後門狀態。
 **技術基線（Tech Stack）**　Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Loom 1.7.4、Java 21、Gradle 8.8、PowerShell 7。
-**對應規格（Spec）**　[v1.6 遊玩條件組合裁示](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `34930F8E97CDD9443A2BC332E0C1C575A619884B010C6C2832D2AABE8BFFBA8B`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
+**對應規格（Spec）**　[v1.6 遊玩條件組合裁示](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `E8AB80D3D7C1296CF64E00CEC16EE14AED30EED6AA06E35819794357DD68ECA2`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
 
 ## 2026-11-13 現行續行授權與止損
 
@@ -462,19 +462,19 @@ AccessDenied 單次重跑規則的適用範圍：使用者 11:5x 第 4 題選「
 
 **產出**　Controller BE 的 latch：設定 public、清除 package-private；`SessionActions` 新增 latch 與「只剩永久封存」兩個查詢；gateway 新增 `permanentlySealedOnly(MinecraftServer,UUID): boolean`（default false）。T5～T7 只經這組 API 設定與檢查 latch。
 
-- [ ] RED：`prepare_participant_close_requires_player_reclose_windows`、`passage_participant_close_requires_player_reclose_windows`、`permanent_sealed_origin_dismantles_after_disable_and_power_off`；先在現行程式記具名失敗。「取消後立刻再出發」是推論：若前兩案在現行程式上不會自動出發，保留原件、回報 controller，比照 T4 的處理改以守門測試加 production mutation，不得改 fixture 硬造失敗。T4 的先例：GameTest 版 `permanent_seal_cannot_be_archived` 的 RED 不成立，改由 JUnit `M7CloseMatrixTest.permanentSealCannotBeArchived` 守門加 Phase A M4 mutation（:253 行末註記）。原地重建的座標權威案（`rebuilt_chamber_door_ignores_released_seal_after_restart_reapply`）在 T4A 之前不可達：在「已有解除路徑、尚未加座標核對」的中間候選上取得具名 RED；若實作順序取不到，改以變異「拿掉座標核對」證明並記下原因。
+- [x] RED：`prepare_participant_close_requires_player_reclose_windows`、`passage_participant_close_requires_player_reclose_windows`、`permanent_sealed_origin_dismantles_after_disable_and_power_off`；先在現行程式記具名失敗。「取消後立刻再出發」是推論：若前兩案在現行程式上不會自動出發，保留原件、回報 controller，比照 T4 的處理改以守門測試加 production mutation，不得改 fixture 硬造失敗。T4 的先例：GameTest 版 `permanent_seal_cannot_be_archived` 的 RED 不成立，改由 JUnit `M7CloseMatrixTest.permanentSealCannotBeArchived` 守門加 Phase A M4 mutation（:253 行末註記）。原地重建的座標權威案（`rebuilt_chamber_door_ignores_released_seal_after_restart_reapply`）在 T4A 之前不可達：在「已有解除路徑、尚未加座標核對」的中間候選上取得具名 RED；若實作順序取不到，改以變異「拿掉座標核對」證明並記下原因。（2026-11-18 T4A 勾選：前兩案在 `7a0e39d` 以 `REARM_DEPARTED_AFTER_PARTICIPANT_CLOSE` 失敗，取消後立刻再出發在 Windows 證實；永久封存案第一次是測試自己的診斷 NPE，原 root 保留，`fc78e13` 只改訊息順序後以新 nonce 取得 `PERMANENT_SEAL_NOT_RELEASED`；原地重建案在中間候選 `4acf64a` 取得 `REBUILT_DOOR_CHANGED_BY_RELEASED_SEAL`。root 見 M7 note「最新：T4A CLOSED（2026-11-18）」節。）
 
-- [ ] Controller BE 新增 NBT 布林 `RearmRequiresPlayerClose`（缺 key 讀成 false）。供電協調在 `candidateRetryRequiresLow` 之後、資格預覽之前，latch 為真回 IDLE；`startClaimed` 的同一個條件式也拒絕。DISABLED 優先回 INVALID；斷電不清 latch。
+- [x] Controller BE 新增 NBT 布林 `RearmRequiresPlayerClose`（缺 key 讀成 false）。供電協調在 `candidateRetryRequiresLow` 之後、資格預覽之前，latch 為真回 IDLE；`startClaimed` 的同一個條件式也拒絕。DISABLED 優先回 INVALID；斷電不清 latch。
 
-- [ ] `OriginDoors.terminateByDoor` 成功時、排入關門之前，設定原艙 latch；Controller 未載入時，在 `CLOSE_AFTER_TERMINAL` 的 `applyTarget` 之前補設。其他終局不設；未選門的整組返還也不設（v1.6 E）。
+- [ ] `OriginDoors.terminateByDoor` 成功時、排入關門之前，設定原艙 latch；Controller 未載入時，在 `CLOSE_AFTER_TERMINAL` 的 `applyTarget` 之前補設。其他終局不設；未選門的整組返還也不設（v1.6 E）。（2026-11-18 T4A 未勾：終局時上鎖已實作，變異「改成排入關門之後才上鎖」被 `prepare_participant_close_requires_player_reclose_windows` 殺掉；Controller 未載入時的補設也已實作（`CLOSE_AFTER_TERMINAL` 套用前一律呼叫冪等的 `latchRearm`，不另設 pending 旗標），但沒有具名測試單獨覆蓋；依審查 4 的分析，拿掉補設或把它移到 `applyTarget` 之後，這兩個單獨的變異都不會被殺（這兩個變異未實跑，是審查 4 的靜態分析）。審查 4 判定風險低、不擋結案，補註解交 T4B Step 0（審查 M-2）。）
 
-- [ ] `WorldChamberDoorAdapter.toggleDeferred`：攔截回 PASS、`ChamberDoorService.toggle` 成功，而且整面門由開切成關時，在延後刷新之前清 latch（`toggle` 帶出切換後的狀態）。系統 `apply`、攔截 HANDLED／REFUSED、由關切成開都不清。
+- [x] `WorldChamberDoorAdapter.toggleDeferred`：攔截回 PASS、`ChamberDoorService.toggle` 成功，而且整面門由開切成關時，在延後刷新之前清 latch（`toggle` 帶出切換後的狀態）。系統 `apply`、攔截 HANDLED／REFUSED、由關切成開都不清。
 
-- [ ] 永久封存解除：gateway 查詢只在該艙每一列都是已 checked 的永久封存，而且沒有 runtime、provisional、reservation 時為真。協調器的 COLLAPSE 與 BUSY 分支在 disabled 且 LOW 時設 OFF、回 INVALID；`HomeRootFence` 的拆除防線對同一條件放行；舊列（M5／M6）進入與開服時的 ERROR 字句（`CollapseService.java:1044,1100`）補解除路徑。HOME 永久封存目前沒有產生點與 ERROR，字句屬 T6 追加項。封存列、各 ledger、HOME 收據都不寫、不刪。
+- [x] 永久封存解除：gateway 查詢只在該艙每一列都是已 checked 的永久封存，而且沒有 runtime、provisional、reservation 時為真。協調器的 COLLAPSE 與 BUSY 分支在 disabled 且 LOW 時設 OFF、回 INVALID；`HomeRootFence` 的拆除防線對同一條件放行；舊列（M5／M6）進入與開服時的 ERROR 字句（`CollapseService.java:1044,1100`）補解除路徑。HOME 永久封存目前沒有產生點與 ERROR，字句屬 T6 追加項。封存列、各 ledger、HOME 收據都不寫、不刪。（2026-11-18 T4A 勾選：ERROR 字句的解除路徑沒有具名斷言（審查 M-8，交 T4B Step 0），以 GameTest 的 log 原件證實進入時與開服提醒兩種 ERROR 都帶解除路徑；其餘子項的具名測試與 mutation 見 M7 note「最新：T4A CLOSED（2026-11-18）」節。）
 
-- [ ] 原艙座標的門權威（v1.6 D，controller 的決定）：以原艙座標找到的舊列（M5／M6／M7），只在 registry 在該 frame 上仍登記同一個 Chamber UUID 時才取得門權威；否則視為無主，不攔截、不重套、不代關。涵蓋 `OriginDoors.sessionAt`、`watchDoor`／`reapplyDoor` 與待套用門的套用。保留「同位置可重建」。
+- [ ] 原艙座標的門權威（v1.6 D，controller 的決定）：以原艙座標找到的舊列（M5／M6／M7），只在 registry 在該 frame 上仍登記同一個 Chamber UUID 時才取得門權威；否則視為無主，不攔截、不重套、不代關。涵蓋 `OriginDoors.sessionAt`、`watchDoor`／`reapplyDoor` 與待套用門的套用。保留「同位置可重建」。（2026-11-18 T4A 未勾：三處都已涵蓋，座標核對的兩個變異都被殺；但待套用門的核對只擋關門與套上量子膜的目標（`CLOSE_ON_SEALED`、`CLOSE_AFTER_TERMINAL`、`PASSABLE`），開門類目標維持原行為，比本行與 spec v1.6 D 的「待套用門的套用」窄。審查 3(a) 判定接受，記為 controller 讀法（spec G 節第 7 點）；另外 registry 紀錄的 ORIGIN、未拆除兩個子條件沒有具名測試（審查 M-3）。兩者都交 T4B Step 0。）
 
-- [ ] GREEN：上述 RED，加上下列具名案例。
+- [x] GREEN：上述 RED，加上下列具名案例。（2026-11-18 T4A 勾選：上述 RED 與下列案例共 14 個 GameTest、4 個 JUnit 在 `c091581` 全部通過；兩平台的 11 案在 Ubuntu 由 `099252f` 的 CI 44281662893 驗到；盤點沒有找到依賴取消後同艙自動再出發的既有案例。:481 是「或」，`applyTarget(CLOSED)` 那一支成立（`M7RearmGameTests.java:224-226`）。另以授權的直接寫方塊（`M5GameTestSupport.writeDoor`）代替 spec V12 的 `/setblock`（已供電的登記艙受保護，`/setblock` 會被拒絕）；這是 V12 字面上的差異，記在 M7 note「最新：T4A CLOSED（2026-11-18）」節的「GREEN」小節（審查 M-9）。）
   - latch（GameTest）：
     - `participant_close_latch_shows_idle_until_player_reclose`（兩平台）；
     - `rearm_latch_survives_power_cycle_enable_toggle_and_system_writes`；
@@ -495,7 +495,7 @@ AccessDenied 單次重跑規則的適用範圍：使用者 11:5x 第 4 題選「
 
   盤點既有 M5／M6 GameTest 與原生鏈是否依賴「取消後同艙自動再出發」；有就逐案列出交 controller 處置，不得自行改舊斷言。新案放 M7 run，不改 M5 run 的 60 案集合。
 
-- [ ] 變異 production，每一項都要由對應的具名測試 killed，逐位元還原：
+- [ ] 變異 production，每一項都要由對應的具名測試 killed，逐位元還原：（2026-11-18 T4A 未勾：14 項都逐位元還原，13 項由表列的全部具名測試殺掉；「忽略 rollForwardPending」只由 JUnit 殺掉，GameTest 沒有殺到，審查 3(b) 判定為可達狀態下的等價變異，見表內該列。focused 兩輪在乾淨 pin `c091581` 上全過。）
 
   | 變異 | 殺掉它的具名測試 |
   | --- | --- |
@@ -508,7 +508,7 @@ AccessDenied 單次重跑規則的適用範圍：使用者 11:5x 第 4 題選「
   | `readNbt` 不讀新 key | `nbtRoundTripAndLegacyDefault` |
   | 可重試原因也放行 | `M7SealReleasePredicateTest.onlyCheckedPermanentRowsQualify`、`retryable_or_unchecked_seal_never_released` |
   | enabled 或供電時也設 OFF | `permanent_sealed_stays_protected_while_enabled_or_powered`、`permanentSealOnlyReachesOffWhenDisabledAndLow` |
-  | 忽略 rollForwardPending | `M7SealReleasePredicateTest.onlyCheckedPermanentRowsQualify`、`retryable_or_unchecked_seal_never_released` |
+  | 忽略 rollForwardPending | `M7SealReleasePredicateTest.onlyCheckedPermanentRowsQualify`、`retryable_or_unchecked_seal_never_released`（2026-11-18 T4A：GameTest 沒有殺到，在可達的 journal 狀態下是等價變異，只由 JUnit `onlyCheckedPermanentRowsQualify` 殺掉；審查 3(b) 判定成立，不必以反射造出不可達的狀態） |
   | 任何 HOME 列都放行拆除 | `home_permanent_seal_allows_root_removal_after_disable` |
   | 解除時改寫封存列 | `permanent_sealed_origin_dismantles_after_disable_and_power_off`（封存列位元組不變） |
   | 拿掉 `sessionAt` 的座標核對 | `rebuilt_chamber_prepare_participant_close_still_cancels_windows`（只有舊封存列在 `OriginDoors.sessionAt` 的走訪順序排在新 session 之前才殺得到；案例要先斷言或建構這個順序） |
@@ -516,7 +516,7 @@ AccessDenied 單次重跑規則的適用範圍：使用者 11:5x 第 4 題選「
 
   focused 跑兩個新 GameTest 類、`ChamberPowerCoordinatorTest`、`M7RearmLatchTest`、`M7SealReleasePredicateTest`、M7 全集合，以及受影響的 M5 door／passage 案例。
 
-- [ ] Controller 同步、逐檔 stage T4A 清單、候選 `fix: 取消與回家後須親手關門才再出發，永久封存可停用拆除`。核 W10、完整 run-all、獨立規格／品質 C/I 清零、push 並核同 SHA CI 才 closed。
+- [ ] Controller 同步、逐檔 stage T4A 清單、候選 `fix: 取消與回家後須親手關門才再出發，永久封存可停用拆除`。核 W10、完整 run-all、獨立規格／品質 C/I 清零、push 並核同 SHA CI 才 closed。（2026-11-18 T4A 未勾：沒有用這個候選 commit，改成 RED 兩筆、fix 兩段與 fix1 共五筆分開 commit（`5ae0a04..099252f`），逐檔 stage。run-all 的 `w10-preflight` step exit 0；完整 run-all 在 `c091581` 自然 `END ALL exit=0`；獨立審查 C/I 清零；已 push。但 CI 不是 production pin 的同 SHA：`c091581` 的 44259424086 FAIL 原判保留，結案採 fix1 `099252f` 的 44281662893（十個 job 全部 success），fix1 只改 testmod，依 B+C 採計，這是 controller 的判定。報告與證據 root 改用 `t4a-v16-*`，避免覆寫 T4 Phase A 的唯一原件。）
 
 ### Task 4B: 回程收尾的 B 有界票
 

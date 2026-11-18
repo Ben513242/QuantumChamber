@@ -1,6 +1,6 @@
 # QuantumChamber
 
-> **M7（正規回程）已開工（2026-11-13）：** 分支 `codex/m7-return-home`。目前只有範圍裁示，尚未實作；投影艙仍不能啟動，也還沒有正規回程。範圍見 [M7 實作紀錄](docs/implementation-notes/2026-11-13-m7-return-home.md)。
+> **M7（正規回程）已開工（2026-11-13）：** 分支 `codex/m7-return-home`，尚未合併 main。本分支已完成 T1～T4 與 T4A（回程終局與重啟防線、參與者關門取消後要親手關門才再出發、永久封存的艙可停用斷電後拆除）；投影艙仍不能啟動，也還沒有正規回程（T4B～T7 待實作）。範圍見 [M7 實作紀錄](docs/implementation-notes/2026-11-13-m7-return-home.md)。
 
 > **M6 已整合（2026-11-12）：** annotated tag `m6` 指向 `53573fc`；main 之後只以文件與驗證腳本修正快轉到 `2255027`，兩者已推送。平行宇宙只有主世界，Nether／End 共用原版。完整證據、已知限制與實際 refs 見 [M6 實作紀錄](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與 [M6 人工 smoke](docs/manual-acceptance/2026-10-24-m6-manual-smoke.md)。
 
@@ -40,9 +40,9 @@ M4 當時，完整側門右鍵只會 checked 鎖定候選，門保持關閉、�
 
 在 Overworld 側門選好候選之後，參與者先安全回到原艙；目的地準備期間門口是不可穿過的量子膜，準備完成才可穿過（比較器 15）。NEW／EXISTING 會在相同座標到達目的宇宙，畫面中央分別顯示「你已進入新的宇宙。」／「你已進入另一個宇宙。」；目的地是同 seed 的原始地形，**不是來源世界的複製**，身後的基岩投影艙不能啟動。SOURCE 候選只會塌縮並讓門一般開啟，不配置宇宙或傳送。M5 量子膜、兩軸向光影與跨越畫面已由 [人工 smoke](docs/manual-acceptance/2026-10-01-m5-manual-smoke.md) 實際驗收並經獨立 review。
 
-通道在全員跨過、約 60 秒到期、參與者關門或斷電時結束；已跨過的人不再收到「量子通道已關閉。」。本切片沒有正規回程、目的地預覽、完整 Nether／End family 或在當前宇宙重生；非參與者與騎乘中的參與者不能藉膜傳送，物品與坐騎不跟隨。新的 Nether／End 側門選擇會被拒絕。重啟後在原艙內登入，來源艙載入完成時會照原收據續行；玩家不必為此再進出一次。`ALREADY_SELECTED` 的「候選已鎖定。」在真 client 不保證看得到，請以實際收據與後續塌縮判斷。
+通道在全員跨過、約 60 秒到期、參與者關門或斷電時結束；已跨過的人不再收到「量子通道已關閉。」。本切片沒有正規回程、目的地預覽、完整 Nether／End family 或在當前宇宙重生；非參與者與騎乘中的參與者不能藉膜傳送，物品與坐騎不跟隨。新的 Nether／End 側門選擇會被拒絕。重啟後在原艙內登入，來源艙載入完成時會照原收據續行；玩家不必為此再進出一次。`ALREADY_SELECTED` 的「候選已鎖定。」在真 client 不保證看得到，請以實際收據與後續塌縮判斷。本分支 M7 T4A 起（尚未合併 main）：參與者在目的地準備期間或通道期間關門、結束這次塌縮之後，即使艙仍有電、門關著、全員仍有藥效，也不會立刻再出發，Controller 停在 `IDLE`（比較器 3）；要有玩家親手把整面門打開、再關上一次才會再出發。系統代關的門、指令或其他 mod 直接寫方塊、斷電再供電、停用再啟用與 `/reload` 都不算（指令與其他 mod 的寫入，GameTest 以授權的直接寫方塊代表；已供電的艙受保護，`/setblock` 本身會被拒絕）。
 
-永久原因的 SEALED 會讓原艙維持封鎖，管理員需看 ERROR；玩家仍可照一般方式開門離開。Windows 原子移動短暫 `AccessDeniedException` 依既有 fail-closed 與退避處理，外部持有者未查明。其他已知限制、存檔上限與模組接點見 [M5 實作紀錄](docs/implementation-notes/2026-10-01-m5-collapse-passage.md) 和 [相容性說明](docs/implementation-notes/compatibility.md)。
+永久原因的 SEALED 會讓原艙維持封鎖，管理員需看 ERROR；玩家仍可照一般方式開門離開。本分支 M7 T4A 起（尚未合併 main），這座艙的紀錄全部是已確認的永久封存時，管理員可以解除佔地：把原艙停用（雙手空手蹲下右鍵 Controller，切換 `Enabled`）並斷電，Controller 會進入 `OFF`（比較器 0）、解除保護，之後以創造模式拆除 Controller；也可以在原地重建，新艙取得新的 UUID。玩家拆除只限創造模式。GameTest 以 `ChamberLifecycleService.setEnabled` 停用、以原生 setter 移除 Controller，與玩家蹲下右鍵、創造模式拆除在程式上等價（讀碼判定，不是實跑）。封存紀錄原樣保留在 session journal，不歸檔、不刪除，這趟旅程本身仍沒有出口；重新啟用或供電就回到保護。ERROR 訊息會附上這條解除路徑。Windows 原子移動短暫 `AccessDeniedException` 依既有 fail-closed 與退避處理，外部持有者未查明。其他已知限制、存檔上限與模組接點見 [M5 實作紀錄](docs/implementation-notes/2026-10-01-m5-collapse-passage.md) 和 [相容性說明](docs/implementation-notes/compatibility.md)。
 
 已採計的本機完整 gate 基準為 default 179（其中 Windows 89）、legacy 1、M5 GameTest 60、JUnit 666（2 skip）、M5 跨 JVM collapse probe 69 phase（31 HALT）、release 432 entries／385 classes、sources 226；完整 root、其他項目與本輪最終結果以 [驗證 README](scripts/verification/README.md) 為準。已知偶發包括 Windows 原子移動拒絕、`m2_task4_disconnect_io` 多一則 WARN、走廊 test 未收尾引發 `m2_pin_capacity` 連坐，以及跨午夜的 log 輪替；失敗 root 必須保留，歸屬見 [M5 handoff §6](docs/handoffs/2026-10-21-m5-wrapup-to-m6-codex.md)。
 

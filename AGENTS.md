@@ -121,7 +121,19 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-18 最新：spec v1.6 修訂已採用（一席審查 C0／I2／M11 → fix1 → 原席複審 C0／I0／M5，五項 Minor 已同筆修正），下一步 T4A；T4 已 CLOSED。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：spec v1.6 修訂（2026-11-18）」節；T4 結案的細節見同檔「最新：T4 CLOSED（2026-11-18）」節。本段以下各點除最後一點外，都是 T4 結案時的紀錄。
+**2026-11-18 最新：T4A CLOSED，下一步 T4B（含 T4B Step 0）。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T4A CLOSED（2026-11-18）」節。
+- code pin：production 最後一筆 `c091581`；fix1 `099252f` 只改 testmod（`M7RearmGameTests.java` +23 行）。commit 範圍 `5ae0a04..099252f`，origin 讀回 `099252f`。
+- 完整回歸：`c091581` 的 `run-all-5ff86c0b…` 自然 `END ALL exit=0`，採計條件 26 項全 PASS。
+- 審查：T4A 一席 spec ✅、quality Approved，C0／I0／M9；fix1 一席 Approved，C0／I0／M3。
+- CI：`c091581` 的 44259424086 FAIL，原判保留（Ubuntu 是 T4A 新測試造成的測試互相干擾，由 fix1 修正；Windows 是 M5 熔岩偶發與連帶的 M6 scope 檢查）；`099252f` 的 44281662893 attempt 1 十個 job 全部 success。
+- 採計：production 的完整回歸採 `c091581`；fix1 依 B+C（一席審查、Windows 定向兩輪、`099252f` 的 CI）採計。這是 controller 依既有 B+C 規則的判定，不是使用者裁示。
+- M5 熔岩偶發：使用者 2026-11-18 裁示可以忽略；controller 讀為只限完全相同的簽章、同一 run 有其他失敗照舊停報、動用時結案 docs 逐筆列出被忽略的 run／job／step（這是 controller 的讀法，不是使用者裁示）。T4A 結案沒有動用。常駐規則見下方「M5 投影不變格熔岩偶發的 CI 處理（使用者 2026-11-18）」段，原文與讀法見 note 的「M5 熔岩偶發與使用者裁示」小節。
+- plan Task 4A 的 9 個核取框勾 5 個，4 個有偏離或缺具名測試，不勾並在行末註明。spec G 節加第 7 點（待套用門的座標核對只擋關門與套膜類目標），是 controller 讀法，下次回報時告知使用者。
+- 殘留交 T4B Step 0（controller 的決定）：T4A 審查 M-1～M-8、fix1 審查 M1～M3、審查 3(a) 可選加固的評估；清單見 note。
+- 計數：AccessDenied 在 `c091581` 沒有發生；完整回歸啟動器歷史 2/3 不變。
+- 下一步：T4B（含 Step 0）→ T5～T8。這是 controller 的排序，不是使用者裁示。main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-18：spec v1.6 修訂已採用（一席審查 C0／I2／M11 → fix1 → 原席複審 C0／I0／M5，五項 Minor 已同筆修正），下一步 T4A；T4 已 CLOSED。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：spec v1.6 修訂（2026-11-18）」節；T4 結案的細節見同檔「最新：T4 CLOSED（2026-11-18）」節。本段以下各點除最後一點外，都是 T4 結案時的紀錄。
 - code pin `e28784c`；docs HEAD `72b3445` 只改文件，origin 讀回相同。同 SHA CI 44207705353（`72b3445`）與 code pin 的 44198806056（`e28784c`），attempt 1 都是十個 job 全部 success。
 - 完整回歸：
   - 第一次 `run-all-c1442b78…` FAIL，原判保留。起點是第 10 案的真實 Windows atomic move AccessDenied，第 16、41 案是連坐；調查找不到 T4 改動參與的證據（其中兩項是推論，見 note）。
@@ -146,6 +158,15 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 - 簽章的辨識方式見「開發與 review 流程」的判定說明補充；該段寫明 M7 GameTest 與原生列刻意注入、路徑含 `m7-t4p2-native-fault` 的不算真實簽章。
 - 2026-11-18 T4 完整回歸那次 FAIL 混有連坐，不屬本規則，是由同日 09:14 第 1 題的單次授權重跑。
 - 本規則取代下方各節的舊規則：M7 AccessDenied 額度 1/1 已用完、不刷新，再遇到就停下來問使用者（各節原文用詞不完全相同）；舊文保留為歷史。
+
+**M5 投影不變格熔岩偶發的 CI 處理（使用者 2026-11-18）：** 題目「M5 既有測試「投影不變格」在 Windows CI 約 3.5% 會因自然熔岩搶先流入而失敗（和 M7 無關）。要怎麼處理？」，三個選項（修測試 fixture、記為已知偶發並可重跑一次、維持現狀每次都問）使用者都沒有選，以「Other」自行輸入，原文：「可以忽略，我記的玩家穿越到水底下或岩漿裡面就要承擔風險，盒子照樣生成」。原文檔：M7 SDD `user-m5-water-flake-ruling-20261118.md`，題目與選項由 controller 撰寫；選項原文與調查見 M7 note「最新：T4A CLOSED（2026-11-18）」節的「M5 熔岩偶發與使用者裁示」小節。
+- 對象：M5 既有 GameTest `m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids` 的對照組，在 normal 地形上被自然熔岩搶先流入而等待逾時（M7 SDD `m5-water-control-flake-investigation.md`）。同簽章已出現 3 次：42355698932（`dfed554`）、44078380354（`a8755ce`）、44259424086（`c091581`）。
+- controller 的讀法（不是使用者裁示；原文檔記為已在回報中告知使用者，使用者可更正）：
+  - 不改 fixture、不重跑、不再為這個簽章停下詢問；
+  - 只限完全相同的簽章：失敗案恰為上述 M5 案、訊息為對照組等待逾時且 `waterMoved=false`，以及它連帶造成的 `M6_SCOPE_MISMATCH（m5）`（expected=actual、缺與多都是空集合）；
+  - 同一 CI run 中只要有其他任何失敗，照原規則停下回報；
+  - 符合範圍時，該次 CI 不阻擋 task 結案，但結案 docs 要逐筆列出被忽略的 run id、job、step 與簽章，不能寫成 CI 全綠。
+- T4A 結案沒有動用這條讀法（44281662893 十個 job 全部 success；44259424086 在裁示之前，且同 run 另有 Ubuntu 失敗，不符合範圍）。
 
 **（歷史）2026-11-18：T4 Phase B 與 P1／P2 完成，各段審查清零（B2b-5 C0/I0/M2）；下一步 T4 完整回歸與同 SHA CI。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「T4 Phase B 與 P1／P2 完成，待完整回歸與同 SHA CI」節。
 - HEAD `e28784c`（已 push）；`926425c` 的 CI 44117707536 與 `e28784c` 的 CI 44198806056，十個 job 都全部 success（都是過程中的 CI，T4 結案以最終 SHA 為準）。Phase B 拆成 B0、B1、B2a、B2b-1～B2b-5，P1、P2 是期間插入的 production 修正輪；這個切分是 controller 的決定，不是使用者裁示。
