@@ -1,8 +1,8 @@
-# M7 正規回程：binding spec（v1.5，T4 原生存檔失敗不拖垮伺服器）
+# M7 正規回程：binding spec（v1.6，遊玩條件組合裁示：重新出發、B 門、B 收尾票、永久封存解除）
 
 日期：2026-11-13。基準工作樹：`codex/m7-return-home`，從 main `2255027` 開出。
 狀態：v1.0玩法/資料契約已第三輪C0/I0/M0採用，v1.1驗證平台勘誤亦曾採用。v1.2僅為使用者新裁示的T1 M6同等驗證收斂修訂，原同席C0/I0/M1後採用；玩法不改，本文不是實作/測試/人工/整合結果。
-v1.3狀態：2026-11-14真user巡檢明確canonical save邊界；僅本技術澄清/測試矩陣已原同席窄確認C0/I0/M1（門檻順序註記由文件同步），不重開其他已採用玩法或資料契約。來源原文見M7 note最上方「fix3只守canonical save內」。本文不代表fix3已實作/驗證。v1.4狀態：2026-11-17 依使用者裁示，在文末加入「2026-11-17 T4 ENTRY_STOPPED DISABLED 勘誤」節，只把一個不可達的訊號標明為不產生，其他玩法與資料契約不變；勘誤放在文末，前面各節行號不變。一席文件審查（SDD `t4a-docs-review.md`）初審 C0/I2/M11，修正後原席窄複核 C0/I0/M1 後採用。v1.5狀態：2026-11-17 依使用者裁示，在文末加入「2026-11-17 T4 原生存檔失敗不拖垮伺服器（依使用者裁示）」節，只規定原生存檔遇到 journal 寫入失敗時的處理，以及 M4 `readback-fault` 的新預期；玩法、資料格式與 checked 路徑不變。節放在文末，前面各節行號不變。一席文件審查（SDD `t4-closeout-docs-review.md`）C0/I0/M11 後採用，Minor 已在同一個 commit 修正。
+v1.3狀態：2026-11-14真user巡檢明確canonical save邊界；僅本技術澄清/測試矩陣已原同席窄確認C0/I0/M1（門檻順序註記由文件同步），不重開其他已採用玩法或資料契約。來源原文見M7 note最上方「fix3只守canonical save內」。本文不代表fix3已實作/驗證。v1.4狀態：2026-11-17 依使用者裁示，在文末加入「2026-11-17 T4 ENTRY_STOPPED DISABLED 勘誤」節，只把一個不可達的訊號標明為不產生，其他玩法與資料契約不變；勘誤放在文末，前面各節行號不變。一席文件審查（SDD `t4a-docs-review.md`）初審 C0/I2/M11，修正後原席窄複核 C0/I0/M1 後採用。v1.5狀態：2026-11-17 依使用者裁示，在文末加入「2026-11-17 T4 原生存檔失敗不拖垮伺服器（依使用者裁示）」節，只規定原生存檔遇到 journal 寫入失敗時的處理，以及 M4 `readback-fault` 的新預期；玩法、資料格式與 checked 路徑不變。節放在文末，前面各節行號不變。一席文件審查（SDD `t4-closeout-docs-review.md`）C0/I0/M11 後採用，Minor 已在同一個 commit 修正。v1.6狀態：2026-11-18 依使用者對遊玩條件組合分析的裁示（11:5x 第 1～3 題，以及 12:4x 兩個子題），在文末加入「2026-11-18 v1.6 遊玩條件組合裁示（依使用者裁示）」節，定義親手重新關門才再出發（含 M6 已出貨的取消後再出發修正）、回程期間 B 門的歸屬、回程收尾的 B 有界票，以及永久封存的最小解除路徑。節放在文末，前面各節行號不變。一席獨立審查（SDD `spec-v16-review.md`）初審 C0/I2/M11，fix1 後原席窄複審 C0/I0/M5 後採用，新 Minor 已在同一個 commit 修正。
 範圍唯一來源：[M7 note](../../implementation-notes/2026-11-13-m7-return-home.md) 的使用者裁示。
 未明列改變的 M2／M4／M5／M6 契約維持；建議稿不是另一份 binding spec。
 
@@ -411,3 +411,141 @@ W10 preflight前照verification README重建producer並用UTF-8 console；不是
   - 重啟後的 recover、verify 照舊。
 - **開服 strict 載入不變。** 載入時 `verifyReceipts` 核對全部熱列與收據，不符就是 load error，`SERVER_STARTED` 的 `requireHealthy` 拒絕開服，由管理員修檔（維持 T2 設計）。要改成開服時只隔離該 SID，需要使用者另外裁示。
 - 玩法、資料格式與其他 M5 契約不變。
+
+## 2026-11-18 v1.6 遊玩條件組合裁示（依使用者裁示）
+
+使用者的題目、選項與選項說明原文見 [M7 note](../../implementation-notes/2026-11-13-m7-return-home.md) 的「遊玩條件組合分析與使用者裁示（2026-11-18）」節（11:5x 第 1～3 題）與「最新：spec v1.6 修訂（2026-11-18）」節（12:4x 兩個子題）；分析報告在 SDD `gameplay-combination-analysis-20261118.md`。本節標 [U1]～[U3] 的句子對應 11:5x 第 1～3 題的選項說明，標 [S1]、[S2] 的對應 12:4x 第 1、2 題；其餘是 controller 依裁示寫成的技術契約 [D]，不是使用者裁示，使用者原文以 note 為準。本節只增補，前面各節的文字與行號不變；與前文衝突時，以本節列明的「取代／補充」為準。審查結論：一席獨立審查 C0／I2／M11 → 原作者 fix1 → 原席窄複審 C0／I0／M5（I-1、I-2 與 11 項 Minor 全部 CLOSED），新五項 Minor 由 controller 同筆修正後採用。
+
+### A. 親手重新關門才再出發 [U1][D]
+
+- [U1] A 與 B 一致：系統代關的門不算，要有玩家親手關門一次才會再出發；同時修正 M6 已出貨的「取消後立刻再出發」。
+- latch：每個端點（A 原艙、B 投影艙）的 Controller block entity 有持久布林 `RearmRequiresPlayerClose`（NBT，缺省 false；舊存檔讀成 false）。設定由 collapse owner 呼叫；清除只在 chamber package 的玩家關門路徑。
+- 上鎖事件（只有這四種）：
+  1. PREPARE 期間參與者關門的 checked 終局（M5 §7.3 :466）；
+  2. 通道期間參與者關門的 checked 終局（M5 §10.6 (a)）；
+  3. 每次對 A 發起 HOME 跨越之前（A FULL 已核的同一 server-thread 步驟）；
+  4. 每次 HOME 收尾改 B 門之前（所有 CloseReason）。
+
+  1、2 在終局確認、系統排入改門之前設定；當下 Controller 未載入時，在系統套用關門前補設。系統改門的 `applyTarget` 會在回傳前刷新 Controller，所以必須先上鎖再改門。
+- 解鎖：任何非旁觀玩家經 bulkhead 或 Controller 的開關門入口，攔截結果為照一般門、整面 25 格門切換成功，而且由開切成關時，在延後刷新之前清除該端 latch。下列都不解鎖：攔截處理或拒絕的操作（含取消本身那一下）、由關切成開、系統改門（含 CLOSE owner、無主膜正規化、SEALED 關門）、指令或其他 mod 寫方塊、斷電再供電、停用再啟用、重啟、`/reload`、區塊卸載。
+- 效果：latch 為真時該端不開始新 session。供電協調在「未知 preset 要求斷電」檢查之後、資格預覽之前回 IDLE（比較器 3，沿用既有數值）；A 的 start 與 B 的 startHome 入口也拒絕。DISABLED（0）、ARMED、READY、PASSAGE 的判斷順序不變。
+- 持久：latch 隨 Controller 所在 chunk 存檔，重啟、`/reload`、區塊卸載後保持。B 的 latch 寫在收尾原生 checkpoint 之前。A 的事件 1～3 只隨原版 chunk 存檔落盤，crash 在上鎖後、Controller 所在 chunk 存檔前時，事件 1～3 都可能退回 v1.5 行為一次（重啟後條件齊就出發），列為已知限制（同 §10 :303 不宣稱跨檔原子性）。原因：
+  - 事件 1、2：Controller 在門平面的 local (3,6,0)，門的 25 格可能跨兩個 chunk；原版存檔不跨 chunk 原子，可能「系統關門已存、latch 未存」。
+  - 事件 3：只寫 latch，A 的方塊沒有變動；玩家 playerdata 已存、A 的 chunk 還沒存時 crash，latch 就遺失。
+- 不上鎖：OPEN_AFTER_TERMINAL 的通道結束、SOURCE fast path、SEALED、DORMANT、WAITING，以及未選門的整組返還（[S2]，見 E 節）。
+- 取代／補充：
+  - 補充 M5 §7.3「PREPARE 期間的開關門」與 §10.5／§10.6 (a)：終局與改門不變，只加 latch。
+  - §9.3 :289 的「只有玩家重新操作關門」擴及所有 HOME 收尾，並以本節解鎖條件定義。
+  - §2「A 的既有內容」（:48 [N6]）與 §8 :212：事件 3 只寫 A Controller block entity 的 latch 欄，不寫方塊、門、容器或 registry；V07 的「A內容／關門不變」與 HOME A 寫入 hook=0 不計此欄。這個窄例外是 controller 的讀法，不是使用者裁示，待使用者知悉（G 節）。
+- M6 前後差異：PREPARE 與通道期間參與者關門後，若艙仍供電、門口無人、艙內全員有藥效，v1.5 會立刻開新 session（推論，未實測）；v1.6 停在比較器 3，玩家開一次再關一次門才出發。其他終局不變。
+
+### B. 回程期間 B 門由 session 管 [U2][S1][D]
+
+- [U2] 回程期間由 session 管：參與者在 B 關門就是取消回程（包括等家艙載入的期間），非參與者開關一律拒絕。
+- [S1] B 斷電或結構失效而進入等待時，使用者選「照一般門（建議）」。選項說明原文：「比照原艙門的等待：門可以自由開關；恢復供電後，原參與者走出艙再走進來就繼續回家。想放棄這一趟，只能由家艙 A 的主人停用 A。不新增系統改門，改動較小。」
+- B 斷電等待（WAITING）的門：
+  - 從 HOME 準備（含 B 的 PREPARE 膜）進入等待時，B 門依 §8 :210 沿用的 M5 §7.3「PREPARE 進行到一半時閘門不再成立」第 2 步交還一般開門（`OriginDoors.releasePrepareDoor` 的同一規則）。這是沿用既有改門，不是新增的系統改門。
+  - 返還完成時閘門就不成立、直接進入等待的，門維持原狀，照一般門自行開關。
+  - 之後依 M5 §7.1 的邊緣觸發：恢復供電後，原參與者走出艙再走進來就續行。
+- 擁有期間：HOME 列已選定、CloseIntent=NONE、StopReason 空、不是 SEALED，而且符合下列之一：
+  1. COLLAPSING、全員 Returned、lease 空、B 閘門成立的 HOME 準備，含 A 預載、HOME_CHECK_WAIT 與 B 的 PREPARE 膜；
+  2. PASSAGE_READY 且 now < expires。
+
+  checked CLOSE、StopReason latch、進入 SEALED、到期或 B 閘門失效時結束。期間外照一般門，比照 M5 §3 詮釋 3：走廊期間、返還與清理中、B 斷電等待（WAITING，[S1]）、SEALED、CLOSE 收尾中。把 [U2] 的「回程期間」限縮為上述擁有期間，是 controller 的讀法，不是使用者裁示，待使用者知悉（G 節）。
+- HOME 準備暫停：比照 M5 的「PREPARE 擁有原艙門」條件（`OriginDoors.java:376-378`），隔離、SEALED 寫入被拒待重試、READY 提交失敗後的退避期間，B 不擁有門：
+  - B 門依 M5 交還一般開門（`releasePrepareDoor` 的規則），攔截照一般門（PASS）；
+  - 暫停期間參與者開關門不算取消回程，比照 M5；
+  - 暫停結束後恢復擁有，膜規則重新判斷。
+  HOME_CHECK_WAIT 不是暫停：[U2] 明列等家艙載入的期間也能取消，所以它在擁有期間內。暫停的判定與「暫停期間參與者開關門不算取消」是 controller 依「比照原艙門」的讀法，不是使用者裁示。
+- 膜規則：沿 §8 :210 與 M5 §7.3「套用量子膜的條件」，在所有擁有子階段每個 tick 重新判斷，含 A 預載與 HOME_CHECK_WAIT。門口有 entity，或艙內有非參與者玩家時，改一般開門；否則 sealed 膜。退避本身不放開膜，也不停止這個每 tick 的判斷。
+- 參與者：該 SID 凍結 cohort 的成員，在線、存活、非旁觀，位於 exact live B world；不要求在艙內。
+- 期間內：
+  - 參與者開關 B 門 → `HomeClosure.onParticipantClose`，Phase 為 PREPARE（第 1 款）或 PASSAGE（第 2 款）→ checked PARTICIPANT_CLOSED、DoorGoal `CLOSE_IF_CLEAR_ELSE_OPEN`、收據與移除沿 §5.3。
+  - 非參與者（艙內或艙外）→ 拒絕、門不變，actionbar 顯示「這座艙已有旅程進行中」（`message.quantumchamber.m7.chamber_busy`）。
+  - roll-forward 未確認 → 拒絕、門不變（比照 M5 `OriginDoors.java:333`）。
+  - 參與者 mint 前的其他暫時條件（journal 有未 checked 寫入、current≠flushed、同 SID 已有操作、mint 被拒）→ 拒絕、門不變，之後可再按（比照 M5 `OriginDoors.terminateByDoor`）。膜規則照常每 tick 判斷。
+  - B 不提供原艙門的「艙內非參與者開門讓他離開」。§8 :210「非參與者能離開」由兩點保證：每 tick 的膜規則（非參與者在 sealed 膜期間出現在艙內，下一個 tick 門改一般開門；通道膜可穿過），以及暫停期間交還一般開門。
+- 攔截點：B 門攔截在開關門交易之前；期間內一律處理或拒絕，不進入開關門的授權寫入，所以 B 投影保護的繞過只發生在期間外的一般開關。攔截不得持有同 SID 的 session operation guard。journal 不健康時比照原艙門，照一般門。
+- 取代／補充：補充 §3 :71、§8 :210；§9.2 PARTICIPANT_CLOSED 列的「COLLAPSING 的實際 PREPARE」對 HOME 列即第 1 款（含 HOME_CHECK_WAIT）；§9.2 UNKNOWN 列與 §7 :199 的 HOME_CHECK_WAIT 期間，參與者關 B 門即 PARTICIPANT_CLOSED。資料格式與矩陣不變。
+
+### C. 回程收尾時替 B 取有界票 [U3][D]
+
+- [U3] 回程收尾時替 B 取有界票（避免全員回家後家艙永遠鎖住）。
+- owner：HOME 收尾 owner 是 B 收尾票的唯一 owner，沿 §7 A 票的有界做法。
+- 取票只在兩種情況：
+  1. CloseIntent=CLOSE 已 checked，exact live B world 存在，但 B 的 home chunks 或門鄰域尚未全部載入；
+  2. 開服集合中曾 READY 的 AUTHORITY_UNREADABLE SEALED，在 RESTART_CLOSED 前需要 B 載入才能核 entry 是否恢復。
+
+  CLOSE 之前不替 B 取收尾票（B 來源票照 §7 :203 由原 owner 持有）。取票前先釋放同 SID 的 A 票。
+- 範圍：B 的 `PassageTransferPolicy.homeChunks`，≤4 refs，FULL 語義與 A 票相同（非建立查詢）。
+- 上限：每 SID 同時最多一份 A 票或 B 收尾票；server 合計 A 票＋B 收尾票 ≤64 份／256 refs，與走廊共用 4096 coverage；coverage key 為 exact world＋chunk，A 與 B 同 XZ 不去重。
+- 租期：每次最多 200 server ticks 等 FULL；FULL 的 tick 照 §5.3 順序收尾。checked 移除、收尾失敗進退避、租期到、列不再適用、`/reload`、SERVER_STOPPING 都冪等釋放；退避期間不持票。
+- 取不到或不 FULL：
+  - 釋票，記 WARN（同 SID 同原因一則），沿收尾 owner 既有的 per-SID 退避（200→12000）後重取；
+  - 退避到上限仍失敗，每個 server instance 每 SID 再記一則 ERROR 請管理員處理；
+  - 期間保留 CLOSE、busy 與 A 保護，不猜另一個 B，不改 A。
+- 重啟：票是 process 資源，不寫 NBT；開服後依上列條件重新取得。
+- 取代／補充：
+  - §5.3 :173「缺載入…皆pending」改為「缺載入時先由 B 收尾票有界載入；票期內仍未就緒才 pending 並退避」。
+  - §7 :194 的票 owner 補 B 收尾票；§7 :197 的 64 份／256 refs 改為 A＋B 合計。
+  - §10 :301、:306–307 補「重啟後 B 無人時由 B 收尾票完成收尾」。
+
+### D. 永久封存的最小解除路徑 [U3][D]
+
+- [U3] 永久封存的艙給一條最小解除路徑。
+- 適用條件（全部成立）：
+  - journal 健康；該 Chamber 在 current、flushed、pending 中的每一列都是已 checked 的永久原因 SEALED：舊列 EXISTING_INELIGIBLE、AUTHORITY_CORRUPT、PROJECTION_CONFLICT、TRANSFER_RECOVERY_REQUIRED；HOME 列 ENTRY_AUTHORITY_INVALID、AUTHORITY_CORRUPT、TRANSFER_RECOVERY_REQUIRED。
+  - current=flushed、沒有 roll-forward、未隔離、沒有未確認寫入；沒有 runtime、provisional 或走廊 reservation。
+  - 可重試原因（含 restart-only）、DORMANT、WAITING 不適用。
+- 路徑：
+  - 原艙 registry 已停用，而且實際電位 LOW 時，供電協調把 power state 設為 OFF（比較器 0），照既有流程核對後解除保護。
+  - 之後沿既有拆除：創造模式攻擊 Controller，或 OFF 且已核對時的原生 setter 移除。同艙另一端回程的拆除防線對這種情況放行。
+  - 重新供電或啟用時回到既有保護。
+- 不終止 session：封存列原樣保留在 journal，不歸檔、不刪除、不改 SealedReason、不寫 StopReason 或 CLOSE、不發收據。§9.2 :284 不變，守門的 JUnit `M7CloseMatrixTest.permanentSealCannotBeArchived` 照舊通過；同名 GameTest 版的 RED 在 T4 不成立，沒有這個 GameTest（plan Task 4 :253 行末註記）。M4 candidate ledger、projection／allocation／discovery ledger 與既有 HOME 收據都不動。條件中任一列未 checked 就不適用，不依未 checked 的權威放行。
+- 拆除後：registry 移除該 Chamber；根事件對永久封存列不 latch；封存列仍標記該 UUID busy，但已無此艙，同位置重建得到新 UUID。舊列（M5／M6）與 HOME 永久封存列的 ERROR 照舊，字句補上這條解除路徑與「封存紀錄保留」。HOME 列的 ERROR 要到 T6 有產生點後才有。
+- 原艙座標的門權威：M5／M6／M7 舊列以原艙座標（world key、Controller 位置、朝向）找到的門權威，只在 registry 在該 frame 上仍登記同一個 Chamber UUID 時成立；否則該列對這扇門視為無主，不攔截開關門，也不重套或代關門。「仍登記同一個 Chamber UUID」指：registry 在同一 world key、同一 frame（Controller 位置與朝向）有一筆紀錄，其 chamber UUID 等於舊列記載的 UUID、instanceKind 為 ORIGIN、而且沒有 destroyed（controller 提案，待實作時以具名測試定案）。registry 不健康（例如有 loadError）時維持既有行為；這時 `sourceSignal` 回 DISABLED，門本來就依既有規則交還一般開門。涵蓋三處：
+  - 找所屬 session 的攔截（`OriginDoors.sessionAt`）；
+  - 重啟與 chunk 重新載入時的重新套用（`watchDoor`／`reapplyDoor`）；
+  - 待套用門的套用。
+
+  解除並拆除後，在同位置重建的新艙不受舊封存列影響：新艙的 PREPARE 與通道門權威照常，舊列不替新艙關門。
+- 保留「同位置可重建」並加上座標權威的窄修，是 controller 的決定，不是使用者裁示。理由：使用者 11:5x 第 3 題選「永久封存的艙給一條最小解除路徑」；分析報告把這項放 M7 的理由是「沒有出口時一座艙報廢就永久佔地」。controller 據此推論：拆了卻不能原地重建，只解了一半。
+- 取代／補充：
+  - 補充 M5 §2 :52 與 §11.2 :748：艙體可依本節解除佔地，session 仍無出口。
+  - 補充 §2 [R3]、§6 :185–186、§10 :310：HOME 永久封存時，A 可依本節在該趟未收尾時解除保護；非永久的 HOME 列照 [R3] 維持保護到收尾。這是 controller 對 [U3]「永久封存的艙」的讀法，不是使用者另行裁示，待使用者知悉（G 節）。
+
+### E. 範圍外（依 11:5x 第 3 題與 12:4x 第 2 題）
+
+- 放 M8（[U3]）：停用與拆除權限、離線參與者、原地重建艙、等待上限與狀態提示。
+- 只記為已知行為（[U3]）：PREPARE 無限等待、投影清空容器、不調整 Y。
+- 只記為已知行為（[S2]）：還沒選門就被系統整組送回艙內（例如隊友斷線、走廊容量或實體數上限、入場失敗）之後，若艙仍有電、門關著、藥效還在，可能立刻再出發；M7 不加 latch。「會立刻再出發」是推論，未實測。
+- 本節另列的已知限制：
+  - A 端 latch 的 crash 窗口：事件 1～3 都可能退回 v1.5 行為一次（A 節）。
+  - 解除後的封存列留在熱 journal；原地重建後抽到舊艙去過的宇宙，可能再次封存（D 節，原地重建屬 M8）。
+  - HOME 永久封存只解除 A。B 投影的 presence 仍是 COLLAPSE（比較器 11），不能再從那座 B 出發。
+  - 解除到 OFF 之後，艙體的一般寫入保護解除，與一般停用斷電的艙相同。艙殼是原版基岩，Controller 與門是基岩硬度，生存模式仍拆不動，指令與創造模式可以改。解除佔地的動作是移除 Controller，沿既有規則只限創造模式（權限屬 M8）。
+
+### F. 新增驗收列
+
+| ID | 自動驗收（每列至少一項精確斷言） |
+| --- | --- |
+| V12 | PREPARE 與通道期間參與者關門後，供電、門關、全員有藥效仍不出發、比較器 3；親手開一次再關一次才出發。斷電再供電、停用再啟用、系統改門、`/setblock`、重啟（NBT）、`/reload` 不解鎖；直接呼叫正式 start 也拒絕。HOME 到 A 之後（A 門原本關著）與 B 收尾之後同樣適用。 |
+| V13 | 擁有期間（含 HOME_CHECK_WAIT）參與者開關 B 門 = PARTICIPANT_CLOSED（Phase PREPARE／PASSAGE、DoorGoal 防夾、收據）；非參與者拒絕、門不變、有提示；HOME_CHECK_WAIT 中外人進入 sealed 的 B，下一個 tick 門改一般開門，他按門仍被拒；PREPARE 暫停時 B 門交還一般開門、照一般門，roll-forward 未確認時拒絕；期間外（含 B 斷電等待）照一般門，恢復供電後走出再走進即續行；攔截不在同 SID guard 內；journal 不健康照一般門。 |
+| V14 | B 無人無票時 CLOSE 以 ≤4 refs 收尾、A 解除 busy；額度滿或 200 tick 未 FULL 時釋票、WARN、退避重取；A＋B 合計 64 份／256 refs 與 4096 coverage，同 XZ 異世界不去重；重啟後完成；`/reload` 與 stop 釋放。 |
+| V15 | 永久封存（舊列四種、HOME 三種，逐一）停用且斷電 → OFF → 可拆；啟用或供電時仍受保護；可重試、未 checked、DORMANT、WAITING、混有其他列都不適用；封存列位元組與各 ledger 不變；拆除後同位置可重建且不 busy；重建後重啟或 chunk 重新載入時，舊封存列不改新艙的門，新艙 PREPARE 參與者關門仍會取消。 |
+
+| ID | required manual smoke（執行前另獲代操作授權） |
+| --- | --- |
+| H06 | A 探索中 PREPARE 參與者關門、回家到 A（A 門原本關著）、B 參與者關門取消三種情況，都確認不會自動出發，親手開關一次才出發。 |
+| H07 | 回程期間外人開關 B 門被拒並看到提示；參與者在 HOME 準備期間關 B 門取消回程，家艙解除佔用。一般遊玩中 A 預載通常很快完成，HOME_CHECK_WAIT 要 A 票 200 tick 都沒 FULL 才會進入，人工難以重現；H07 實際觀察的是 A 預載或 B PREPARE 膜這段短窗口，HOME_CHECK_WAIT 本身由 V13 的自動驗收負責。 |
+
+### G. controller 讀法（待使用者知悉）
+
+以下都是 controller 的讀法或決定，不是使用者裁示，會在下次回報時告知使用者：
+
+1. [U2] 的「回程期間」限縮為 B 節的擁有期間；走廊期間、返還清理中、B 斷電等待與 CLOSE 收尾中照一般門。依據：第 2 題標籤「比照原艙門」、M5 §3 詮釋 3，以及 §9.2 PARTICIPANT_CLOSED 要求全員 Returned。
+2. HOME 準備暫停時 B 不擁有門，暫停期間參與者開關門不算取消；HOME_CHECK_WAIT 不算暫停（B 節）。
+3. HOME 期間 A Controller block entity 的 latch 欄可寫，是 §2 :48 [N6] 與 §8 :212 的窄例外（A 節）。
+4. HOME 永久封存時，A 可在該趟未收尾時解除保護，是 [R3]「維持保護到這趟收尾」的例外（D 節）。
+5. 永久封存解除後保留「同位置可重建」，並加上原艙座標門權威的窄修（D 節）。
+6. 從 HOME 準備進入 B 斷電等待時，B 門依 M5 既有規則交還一般開門（B 節）。這是沿用既有改門，不是新增；但 12:4x 第 1 題未選的選項 2 說明把「進入等待時把 B 門改成一般開門」寫成該選項的額外成本，與實際不符。這是 controller 提問時的描述不準確；使用者選的選項 1 的核心（等待期間關門不算取消）不受影響，會告知使用者。

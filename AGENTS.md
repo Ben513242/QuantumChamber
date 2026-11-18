@@ -121,7 +121,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-18 最新：T4 CLOSED。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T4 CLOSED（2026-11-18）」節。
+**2026-11-18 最新：spec v1.6 修訂已採用（一席審查 C0／I2／M11 → fix1 → 原席複審 C0／I0／M5，五項 Minor 已同筆修正），下一步 T4A；T4 已 CLOSED。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：spec v1.6 修訂（2026-11-18）」節；T4 結案的細節見同檔「最新：T4 CLOSED（2026-11-18）」節。本段以下各點除最後一點外，都是 T4 結案時的紀錄。
 - code pin `e28784c`；docs HEAD `72b3445` 只改文件，origin 讀回相同。同 SHA CI 44207705353（`72b3445`）與 code pin 的 44198806056（`e28784c`），attempt 1 都是十個 job 全部 success。
 - 完整回歸：
   - 第一次 `run-all-c1442b78…` FAIL，原判保留。起點是第 10 案的真實 Windows atomic move AccessDenied，第 16、41 案是連坐；調查找不到 T4 改動參與的證據（其中兩項是推論，見 note）。
@@ -135,6 +135,7 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
   - `participantCloses` fixture 與 T3 fixture 的規則照舊。
 - 遊玩條件組合分析已完成（M7 SDD `gameplay-combination-analysis-20261118.md`）。使用者 2026-11-18 11:5x 四題都選建議項：回家或取消後要玩家親手重新關門才再出發；回程期間 B 門比照原艙門；其餘照建議分類（M7 加 B 有界票與永久 SEALED 最小解除路徑）；AccessDenied 規則 M7 從現在起適用。原文見 note「遊玩條件組合分析與使用者裁示」。
 - 下一步：本筆結案 docs 一席審查、commit、push → 依 11:5x 第 1～3 題修 spec v1.6 與 plan、獨立審查清零 → 派 T5（含 T5 Step 0）。這是 controller 的排序，不是使用者裁示。main 合併、tag、人工代操作、worktree 退役仍各自另問。
+- 2026-11-18 更新：spec v1.6 與 plan 修訂已採用（依 11:5x 第 1～3 題與 12:4x 兩個子題，使用者兩個子題都選建議項），新增 Task 4A、4B；下一步是 T4A，順序 T4A → T4B → T5（controller 的排序，不是使用者裁示，取代上一點的「派 T5」）。先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：spec v1.6 修訂（2026-11-18）」節。
 
 **M7 Windows atomic-move AccessDenied 單次重跑規則（使用者 2026-11-18）：** 題目「M7 之後如果完整回歸又只遇到 AccessDenied（沒有其他失敗），要不要訂一條固定規則？」，使用者選「比照 M6，每個 code pin 一次（建議）」。選項說明原文：「只限唯一失敗是 AccessDenied、沒有混其他失敗的情況。保留原 root，換新 nonce 重跑一次，不用再問；同一 pin 第二次發生就停下來回報。」原文檔：M7 SDD `user-t4-full-accessdenied-ruling-20261118.md`，題目與選項由 controller 撰寫。
 - 與「開發與 review 流程」的 M6「T14–T21 Windows atomic-move AccessDenied單次重跑規則」同構：唯一失敗是 AccessDenied 簽章、沒有其他 FAIL，且 production 仍 fail-closed／退避（這個前提選項說明沒有寫，依 M6 原文補上，是 controller 的解讀）；保留原 root；換新 nonce 重跑一次，不用再問；同一 pin 第二次就停報；混有其他 FAIL 不適用。

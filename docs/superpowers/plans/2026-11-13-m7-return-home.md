@@ -5,7 +5,7 @@
 **目標（Goal）**　合法 COMPLETE 投影 B 的參與者走固定回家門，先回 B，再經 B 的膜以原座標回 A。旅程終局可安全解除同艙占用。
 **架構（Architecture）**　將既有 checked journal 擴充為能同存舊列與 HOME 列的單一權威。沿用走廊、回收、票額、原生移動與 chunk checkpoint，分別核對 Entry=B 與 Root=A。每 SID 的終局收據保留歷史，活躍列負責完成 B 的最後門狀態。
 **技術基線（Tech Stack）**　Minecraft 1.21、Yarn 1.21+build.9、Fabric Loader 0.17.2、Fabric API 0.102.0+1.21、Loom 1.7.4、Java 21、Gradle 8.8、PowerShell 7。
-**對應規格（Spec）**　[v1.5 T4 原生存檔失敗不拖垮伺服器](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `E814B00C08ACB6C1FEFEB2F25E2B6CDF870B8FA38BBB52E2763FF10838BDB57F`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
+**對應規格（Spec）**　[v1.6 遊玩條件組合裁示](../specs/2026-11-13-m7-return-home-design.md)，SHA-256 `34930F8E97CDD9443A2BC332E0C1C575A619884B010C6C2832D2AABE8BFFBA8B`。玩法、R1–R4 與授權出處見 [M7 實作紀錄](../../implementation-notes/2026-11-13-m7-return-home.md)。
 
 ## 2026-11-13 現行續行授權與止損
 
@@ -56,7 +56,7 @@
 - 一個 task 的 C/I 全清且 required CI 各 job 真 success 才 closed。依現行續行授權，T2 起閉合就直接進下一 task；人工代操作（方式 Claude）、main、tag、工作樹退役、PR、LICENSE 各自另問，無需為執行計畫追加整份核可。
 - Root 僅 canonical `minecraft:overworld` 原 ORIGIN；Entry 僅 exact live catalog OVERWORLD COMPLETE PROJECTION。HOME door = `new DoorKey(sid, 1L, DoorKey.DoorWallSide.POSITIVE_LATERAL)`。SOURCE 與 legacy return-only 維持原意；FamilyCapabilityVersion=0，Nether／End 共用原版，M8 不排入。
 - 啟動與選門各驗 A 的實際供電一次。選後 LOW 不取消，停用／拆除／結構失效停止旅行、保留選擇、checked 收尾才解除 A 保護及鎖。A 絕不重建、改門或清容器。新旅程須重新關 B 門，不必出艙，可沿用未到期藥效。7×7×7 與一格外殼不變。
-- 相依順序 T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8。T1–T6 的定向入口限既有 testmod，可呼叫 production owner，release 的 B activation guard 到 T7 才放行。不得用 production 開關、偽造 catalog 或跳過真 checkpoint 替代這個順序。
+- 相依順序 T1 → T2 → T3 → T4 → T5 → T6 → T7 → T8。T1–T6 的定向入口限既有 testmod，可呼叫 production owner，release 的 B activation guard 到 T7 才放行。不得用 production 開關、偽造 catalog 或跳過真 checkpoint 替代這個順序。（2026-11-18 v1.6：改為 T4 → T4A → T4B → T5 → T6 → T7 → T8，這是 controller 的排序，不是使用者裁示；新 task 與 T5～T8 追加項見檔尾「2026-11-18 v1.6 修訂」節。本段接在同一行，是為了不讓 Task 4 核取項的行號位移。）
 
 ### 常用命令與全程資料安全
 
@@ -299,7 +299,7 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 ### Task 5: 從 B 入走廊、唯一 HOME 選擇與保留式返 B
 
 
-**新增**　`P/collapse/HomeDoorInteraction.java`、`P/corridor/HomeDoorLayout.java`、`J/corridor/M7HomeDoorLayoutTest.java`、`G/{M7HomeCorridorGameTests,M7HomeCorridorPhases}.java`、`R/models/block/quantum_bulkhead_home.json`。
+**新增**　`P/collapse/HomeDoorInteraction.java`、`P/corridor/HomeDoorLayout.java`、`J/corridor/M7HomeDoorLayoutTest.java`、`G/{M7HomeCorridorGameTests,M7HomeCorridorPhases}.java`、`R/models/block/quantum_bulkhead_home.json`。（v1.6 追加見檔尾「2026-11-18 v1.6 修訂」節。）
 
 **修改**　`P/superposition/{SuperpositionSessionManager,SuperpositionSession}.java`、`P/persistence/{SessionRecoveryManager,SessionRecoveryState,MeasuredWorldSaveCheckpoint}.java`、`P/corridor/{CorridorPageManager,CorridorGeometry,CorridorRepositionService,SessionEntranceDoorService}.java`、`J/chamber/MembraneStateTest.java`、`P/chamber/{QuantumBulkheadBlock,ChamberCollapsePort}.java`、`P/candidate/CandidateDoorInteraction.java`、`R/blockstates/quantum_bulkhead.json`、`G/M7HomeProbe.java`、`src/testmod/resources/fabric.mod.json`、`S/{m7-inventory.json,m7-home-probe.ps1}`。
 
@@ -333,9 +333,9 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 ### Task 6: HOME 準備、B 膜與 canonical 原生傳送
 
 
-**新增**　`P/collapse/HomePassage.java`、`P/universe/{CanonicalHomeTarget,CatalogUniverseTarget,HomeTransferResult}.java`、`J/universe/M7HomeTransferTest.java`、`G/{M7HomePassageGameTests,M7HomeTransferPhases}.java`、`G/mixin/M7HomeTransferWindowMixin.java`。
+**新增**　`P/collapse/HomePassage.java`、`P/universe/{CanonicalHomeTarget,CatalogUniverseTarget,HomeTransferResult}.java`、`J/universe/M7HomeTransferTest.java`、`G/{M7HomePassageGameTests,M7HomeTransferPhases}.java`、`G/mixin/M7HomeTransferWindowMixin.java`。（v1.6 追加見檔尾「2026-11-18 v1.6 修訂」節。）
 
-**修改**　`P/collapse/{CollapseService,EntryWatch,PassageService,OriginDoors,PassageTransferPolicy,HomeClosure}.java`、`P/universe/UniverseTransferService.java`、`P/persistence/SessionRecoveryManager.java`、`G/M7HomeProbe.java`、`src/testmod/resources/{fabric.mod.json,quantumchamber-test.mixins.json}`、`S/{m7-inventory.json,m7-home-probe.ps1}`。
+**修改**　`P/collapse/{CollapseService,EntryWatch,PassageService,OriginDoors,PassageTransferPolicy,HomeClosure}.java`、`P/universe/UniverseTransferService.java`、`P/persistence/SessionRecoveryManager.java`、`G/M7HomeProbe.java`、`src/testmod/resources/{fabric.mod.json,quantumchamber-test.mixins.json}`、`S/{m7-inventory.json,m7-home-probe.ps1}`。（v1.6 修改追加 `R/lang/{zh_tw,en_us}.json`，見檔尾「2026-11-18 v1.6 修訂」節 Task 6 追加項。）
 
 **消費**　checked HOME、T5 exact Entry/Returned/走廊清理、T3 `HOME_PREPARE_PASSAGE`、T4 root stop／close、原 `UniverseTransferService.NativeMove` 與 PassageTransferPolicy。
 
@@ -367,7 +367,7 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 ### Task 7: 開放正常 B 操作、在地提示與端到端回歸
 
 
-**新增**　`G/{M7HomeEntryGameTests,M7HomeEntryPhases}.java`、`J/chamber/M7HomeFeedbackTest.java`、`docs/manual-acceptance/2026-11-13-m7-manual-smoke.md`（先建未執行清單）。
+**新增**　`G/{M7HomeEntryGameTests,M7HomeEntryPhases}.java`、`J/chamber/M7HomeFeedbackTest.java`、`docs/manual-acceptance/2026-11-13-m7-manual-smoke.md`（先建未執行清單）。（v1.6 追加見檔尾「2026-11-18 v1.6 修訂」節。）
 
 **修改**　`P/chamber/{ChamberPowerCoordinator,ChamberActivationService,ChamberControllerLoadSyncQueue,ChamberRedstoneService,ChamberControllerBlock,QuantumBulkheadBlock,WorldChamberDoorAdapter,ChamberProtectionService,ChamberSessionGateway}.java`、`P/collapse/{HomeDoorInteraction,HomePassage,HomeClosure,OriginDoors}.java`、`P/superposition/SuperpositionSessionManager.java`、`R/lang/{zh_tw,en_us}.json`、`G/M7HomeProbe.java`、`src/testmod/resources/fabric.mod.json`、`S/{m7-inventory.json,m7-home-probe.ps1,README.md}`、`G/{M5CollapseWindows,M5CollapseDormantChains,M5CollapseFixture,M5UniverseProjectionGameTests}.java`。
 
@@ -399,7 +399,7 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 ### Task 8: 整分支驗收、人工 smoke 與整合交回
 
 
-**修改**　`docs/manual-acceptance/2026-11-13-m7-manual-smoke.md`、`docs/implementation-notes/2026-11-13-m7-return-home.md`、`AGENTS.md`、本計畫。依賴 T1–T7 全數 closed，採實際 release JAR、HEAD 與證據，沒有新 production API。
+**修改**　`docs/manual-acceptance/2026-11-13-m7-manual-smoke.md`、`docs/implementation-notes/2026-11-13-m7-return-home.md`、`AGENTS.md`、本計畫。依賴 T1–T7 全數 closed，採實際 release JAR、HEAD 與證據，沒有新 production API。（v1.6 追加見檔尾「2026-11-18 v1.6 修訂」節。）
 **消費與產出**　讀上方 gate 原件、V01–V11 索引及 H01–H05；產出逐項結果、已知 crash 界線、未驗事項、基準範圍與待核可整合狀態。
 
 
@@ -443,5 +443,161 @@ N3後source0a首次完整full已自然ENDALL0/actualExit0（HEAD5df/summaryDFAC8
 | H01–H05 | 各次實際操作及單人、兩人、release 的不同證據由 T8 同名五列逐項採計，逐列須有結果與實際原件。 |
 
 本計畫列的是待執行工作。SDD 的 `progress.md` 記錄實際 task、fix round、review／hash／CI 與阻點，tracked 文件由 controller 按事實同步。
+
+## 2026-11-18 v1.6 修訂：新增 Task 4A／4B 與 T5～T8 追加項
+
+依 spec「2026-11-18 v1.6 遊玩條件組合裁示（依使用者裁示）」節（下稱 v1.6 A～G）；使用者原文見 M7 note「最新：spec v1.6 修訂（2026-11-18）」節與「遊玩條件組合分析與使用者裁示（2026-11-18）」節。本節只增補，放在檔尾，前面各節行號不變；各 task 原有核取項不變，追加項與原項同樣由 controller 依實際證據勾選。
+
+執行順序改為 T4 → T4A → T4B → T5 → T6 → T7 → T8。這是 controller 的排序，不是使用者裁示。T4A、T4B 都是 production task，走完整門檻。
+
+AccessDenied 單次重跑規則的適用範圍：使用者 11:5x 第 4 題選「M7 從現在起適用（建議）」，選項說明原文是「M7 剩下的 T5～T8 都照這條。」提問時還沒有 T4A、T4B。controller 讀為「M7 剩下的所有 task」，含 T4A、T4B，依本檔 :18 與 AGENTS 的規則執行。這是 controller 的讀法，不是使用者裁示，會在下次回報時告知使用者。
+
+### Task 4A: 親手重新關門 latch 與永久封存解除（含 M6 已出貨行為修正）
+
+**新增**　`J/chamber/M7RearmLatchTest.java`、`J/superposition/M7SealReleasePredicateTest.java`、`G/{M7RearmGameTests,M7SealReleaseGameTests}.java`。「只剩永久封存」的判定抽成同 package 可單測的純函式，供 JUnit 逐一覆蓋。
+
+**修改**　`P/chamber/{ChamberControllerBlockEntity,ChamberPowerCoordinator,WorldChamberDoorAdapter,ChamberDoorService,ChamberSessionGateway}.java`、`P/superposition/SuperpositionSessionManager.java`、`P/collapse/{OriginDoors,HomeRootFence,CollapseService}.java`、`J/chamber/ChamberPowerCoordinatorTest.java`、`src/testmod/resources/fabric.mod.json`、`S/m7-inventory.json`。runner 若仍有硬編清單，最小同步 `S/{gates,m7-ci-gametest}.ps1`，與 source／XML exact 同審。
+
+**消費**　T2 journal 全體讀者、T3 `globalChamberBusy`、T4 root fence，以及既有 `OriginDoors`／`PassageService` 的終局路徑。
+
+**產出**　Controller BE 的 latch：設定 public、清除 package-private；`SessionActions` 新增 latch 與「只剩永久封存」兩個查詢；gateway 新增 `permanentlySealedOnly(MinecraftServer,UUID): boolean`（default false）。T5～T7 只經這組 API 設定與檢查 latch。
+
+- [ ] RED：`prepare_participant_close_requires_player_reclose_windows`、`passage_participant_close_requires_player_reclose_windows`、`permanent_sealed_origin_dismantles_after_disable_and_power_off`；先在現行程式記具名失敗。「取消後立刻再出發」是推論：若前兩案在現行程式上不會自動出發，保留原件、回報 controller，比照 T4 的處理改以守門測試加 production mutation，不得改 fixture 硬造失敗。T4 的先例：GameTest 版 `permanent_seal_cannot_be_archived` 的 RED 不成立，改由 JUnit `M7CloseMatrixTest.permanentSealCannotBeArchived` 守門加 Phase A M4 mutation（:253 行末註記）。原地重建的座標權威案（`rebuilt_chamber_door_ignores_released_seal_after_restart_reapply`）在 T4A 之前不可達：在「已有解除路徑、尚未加座標核對」的中間候選上取得具名 RED；若實作順序取不到，改以變異「拿掉座標核對」證明並記下原因。
+
+- [ ] Controller BE 新增 NBT 布林 `RearmRequiresPlayerClose`（缺 key 讀成 false）。供電協調在 `candidateRetryRequiresLow` 之後、資格預覽之前，latch 為真回 IDLE；`startClaimed` 的同一個條件式也拒絕。DISABLED 優先回 INVALID；斷電不清 latch。
+
+- [ ] `OriginDoors.terminateByDoor` 成功時、排入關門之前，設定原艙 latch；Controller 未載入時，在 `CLOSE_AFTER_TERMINAL` 的 `applyTarget` 之前補設。其他終局不設；未選門的整組返還也不設（v1.6 E）。
+
+- [ ] `WorldChamberDoorAdapter.toggleDeferred`：攔截回 PASS、`ChamberDoorService.toggle` 成功，而且整面門由開切成關時，在延後刷新之前清 latch（`toggle` 帶出切換後的狀態）。系統 `apply`、攔截 HANDLED／REFUSED、由關切成開都不清。
+
+- [ ] 永久封存解除：gateway 查詢只在該艙每一列都是已 checked 的永久封存，而且沒有 runtime、provisional、reservation 時為真。協調器的 COLLAPSE 與 BUSY 分支在 disabled 且 LOW 時設 OFF、回 INVALID；`HomeRootFence` 的拆除防線對同一條件放行；舊列（M5／M6）進入與開服時的 ERROR 字句（`CollapseService.java:1044,1100`）補解除路徑。HOME 永久封存目前沒有產生點與 ERROR，字句屬 T6 追加項。封存列、各 ledger、HOME 收據都不寫、不刪。
+
+- [ ] 原艙座標的門權威（v1.6 D，controller 的決定）：以原艙座標找到的舊列（M5／M6／M7），只在 registry 在該 frame 上仍登記同一個 Chamber UUID 時才取得門權威；否則視為無主，不攔截、不重套、不代關。涵蓋 `OriginDoors.sessionAt`、`watchDoor`／`reapplyDoor` 與待套用門的套用。保留「同位置可重建」。
+
+- [ ] GREEN：上述 RED，加上下列具名案例。
+  - latch（GameTest）：
+    - `participant_close_latch_shows_idle_until_player_reclose`（兩平台）；
+    - `rearm_latch_survives_power_cycle_enable_toggle_and_system_writes`；
+    - `latch_survives_player_open_then_system_close`：上鎖後玩家開門，再由系統 `applyTarget(CLOSED)` 或 `/setblock` 關門，仍不出發；
+    - `formal_start_refuses_latched_origin`：直接呼叫正式 `start`，被拒，零副作用；
+    - `rearm_latch_survives_datapack_reload`：沿 M6 既有 `/reload` GameTest 的觸發方式。
+  - 永久封存解除（GameTest）：
+    - `permanent_sealed_stays_protected_while_enabled_or_powered`；
+    - `retryable_or_unchecked_seal_never_released`；
+    - `home_permanent_seal_allows_root_removal_after_disable`；
+    - `rebuild_after_release_gets_new_identity_and_is_not_busy`。
+  - 原地重建的座標權威（GameTest）：
+    - `rebuilt_chamber_door_ignores_released_seal_after_restart_reapply`：解除、拆除、原地重建後，模擬重啟的第一次觀察與 chunk 重新載入，新艙的門都不被舊封存列改動；
+    - `rebuilt_chamber_prepare_participant_close_still_cancels_windows`：新艙 PREPARE 中參與者關門照常取消。
+  - JUnit：
+    - `latchedOriginReturnsIdleWithoutStart`、`permanentSealOnlyReachesOffWhenDisabledAndLow`、`nbtRoundTripAndLegacyDefault`；
+    - `M7SealReleasePredicateTest.onlyCheckedPermanentRowsQualify`：舊列四種與 HOME 三種永久原因逐一為真；可重試與 restart-only 原因、DORMANT、WAITING、pending、roll-forward、隔離、混有其他列、有 runtime／provisional／reservation 逐一為假。
+
+  盤點既有 M5／M6 GameTest 與原生鏈是否依賴「取消後同艙自動再出發」；有就逐案列出交 controller 處置，不得自行改舊斷言。新案放 M7 run，不改 M5 run 的 60 案集合。
+
+- [ ] 變異 production，每一項都要由對應的具名測試 killed，逐位元還原：
+
+  | 變異 | 殺掉它的具名測試 |
+  | --- | --- |
+  | 拿掉協調器的 latch 檢查 | `prepare_participant_close_requires_player_reclose_windows`、`latchedOriginReturnsIdleWithoutStart` |
+  | 任何方向的切換都解鎖 | `latch_survives_player_open_then_system_close` |
+  | 系統 `apply` 也解鎖 | `rearm_latch_survives_power_cycle_enable_toggle_and_system_writes` |
+  | 改成排入關門之後才上鎖 | `prepare_participant_close_requires_player_reclose_windows` |
+  | `startClaimed` 不看 latch | `formal_start_refuses_latched_origin` |
+  | 斷電清 latch | `rearm_latch_survives_power_cycle_enable_toggle_and_system_writes` |
+  | `readNbt` 不讀新 key | `nbtRoundTripAndLegacyDefault` |
+  | 可重試原因也放行 | `M7SealReleasePredicateTest.onlyCheckedPermanentRowsQualify`、`retryable_or_unchecked_seal_never_released` |
+  | enabled 或供電時也設 OFF | `permanent_sealed_stays_protected_while_enabled_or_powered`、`permanentSealOnlyReachesOffWhenDisabledAndLow` |
+  | 忽略 rollForwardPending | `M7SealReleasePredicateTest.onlyCheckedPermanentRowsQualify`、`retryable_or_unchecked_seal_never_released` |
+  | 任何 HOME 列都放行拆除 | `home_permanent_seal_allows_root_removal_after_disable` |
+  | 解除時改寫封存列 | `permanent_sealed_origin_dismantles_after_disable_and_power_off`（封存列位元組不變） |
+  | 拿掉 `sessionAt` 的座標核對 | `rebuilt_chamber_prepare_participant_close_still_cancels_windows`（只有舊封存列在 `OriginDoors.sessionAt` 的走訪順序排在新 session 之前才殺得到；案例要先斷言或建構這個順序） |
+  | 拿掉重新套用與待套用門的座標核對 | `rebuilt_chamber_door_ignores_released_seal_after_restart_reapply` |
+
+  focused 跑兩個新 GameTest 類、`ChamberPowerCoordinatorTest`、`M7RearmLatchTest`、`M7SealReleasePredicateTest`、M7 全集合，以及受影響的 M5 door／passage 案例。
+
+- [ ] Controller 同步、逐檔 stage T4A 清單、候選 `fix: 取消與回家後須親手關門才再出發，永久封存可停用拆除`。核 W10、完整 run-all、獨立規格／品質 C/I 清零、push 並核同 SHA CI 才 closed。
+
+### Task 4B: 回程收尾的 B 有界票
+
+**新增**　`P/collapse/HomeEntryTickets.java`、`G/M7HomeEntryTicketGameTests.java`。
+
+**修改**　`P/collapse/{HomeClosure,HomeRootTickets}.java`、`P/corridor/{SlotAllocator,CorridorPageManager}.java`、`P/superposition/SuperpositionSessionManager.java`（初始化）、`J/corridor/M7HomeCoverageTest.java`、`G/{M7HomeProbe,M7HomeChainPhases}.java`、`src/testmod/resources/fabric.mod.json`、`S/{m7-inventory.json,m7-home-probe.ps1,README.md}`。新增原生列 `restart-close-unloaded-b` 會改變硬編的 46 列／92 phase，所以另改 `S/run-all.ps1`（:55-64 summary step 重驗、:294-301 `m7-home-native` step）與 `.github/workflows/build.yml`（:120 `m7-home-native` 的四片分配、:263 aggregate 的 `rows=46 phases=92`）。
+
+**消費**　T3 root coverage 與 A 票、T4 `HomeClosure.converge`、開服集合與 `ChunkSaveCheckpoint`。
+
+**產出**　`HomeEntryTickets.acquire(MinecraftServer,UUID,HomeSessionRecord.EntryEndpoint,Purpose): Optional<Lease>`，`Purpose` 恰為 CLOSE_CONVERGE／RESTART_VERIFY；`Lease.full()`、`close()` 在 server thread。`CorridorPageManager.reserveRootCoverage` 改收 world＋chunk。
+
+- [ ] RED：`close_loads_unloaded_b_with_bounded_ticket`（現行 B 無人無票時永遠 pending）、`entryAndRootSameXzDifferentWorldCountSeparately`（現行同 chunk long 會去重）。
+
+- [ ] coverage key 改為 world＋chunk；A 票傳 overworld。既有走廊與 A 票的計量不變：同 world 同 chunk 才去重，不同 SID 各記責任。
+
+- [ ] B 收尾票只在 v1.6 C 的兩種情況取；取前釋放同 SID 的 A 票。≤4 refs、200 ticks、非建立 FULL 查詢；與 A 票合計 64 份／256 refs、共用 4096。checked 移除、失敗進退避、租期到、列不再適用、reload、stopping 都冪等釋放；退避期間不持票。
+
+- [ ] 取不到或 200 tick 未 FULL：WARN（同 SID 同原因一則）並沿 `HomeClosure` 的 per-SID 退避重試；達 12000 上限仍失敗再記一則 ERROR（每 instance 每 SID）。期間保留 CLOSE、busy 與 A 保護。
+
+- [ ] GREEN：上述 RED，加上 `close_ticket_never_full_releases_and_backs_off`、`close_ticket_budget_exhausted_warns_and_retries`、`close_ticket_released_on_reload_and_stop`，以及開服時曾 READY 的 AUTHORITY_UNREADABLE 列走 RESTART_VERIFY。T4 既有 39 列原生鏈（B 由測試票保持載入）行為不變。Windows 原生新增 1 列 `restart-close-unloaded-b`：READY 時 crash、重開時 B 無人，收尾完成、A 解除 busy、Crossed 不重播。這列先依 T5 Step 0 第 5 點定 SelfTest 餘量策略；超過 479 交使用者裁示。
+
+- [ ] 變異 production：coverage key 拿掉 world；退避期間持票；CLOSE 未 checked 就取票；不先釋放 A 票；逾時不記 WARN；移除後不釋票。各由具名測試 killed，逐位元還原。focused 跑新 GameTest、`M7HomeCoverageTest`、`ProjectionProtectionIndexTest`、M7 全集合與新原生列＋SelfTest。
+
+- [ ] Controller 同步、逐檔 stage T4B 清單、候選 `feat: 回程收尾以有界票載入投影端`。核 W10、完整 run-all、獨立規格／品質 C/I 清零、push 並核同 SHA CI 才 closed。
+
+### Task 5 追加項
+
+- [ ] （v1.6 A）`startHome` 在任何 claim、ticket、reservation 或 ARMING 之前，B Controller 的 latch 為真就受控拒絕，與 A 的 `startClaimed` 同序。具名 `start_home_refuses_latched_entry`；變異拿掉守門，須被 killed。
+- [ ] （v1.6 C）T5 Step 0 第 6 點（B1 假設 (c)）改為：以 T5 的正式 B 來源票重驗 COLLAPSING／ARMING 的開服返還。「重開時 B 無人無票」的收尾已由 T4B 的 B 收尾票處理，不再期待 pending。
+
+B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔截。
+
+### Task 6 追加項
+
+**修改追加**　`R/lang/{zh_tw,en_us}.json`（`message.quantumchamber.m7.chamber_busy`，T7 尚未加入時由 T6 先加）。本 Task 原「**修改**」行（:338）也以行末附加指向這裡。
+
+- [ ] （v1.6 A）每次對 A 發起 HOME 跨越之前，在 A FULL 已核的同一步驟冪等設定 A 的 latch。具名 `home_arrival_requires_player_reclose_at_a`：A 門原本關著、到達者有剩餘藥效、A 供電；收尾後 A 比較器 3、不出發，親手開關一次才出發。原 GREEN（:359）的「HOME A-write hooks=0」不計 latch 欄，另斷言 A 的方塊、門、容器與 registry 都不變。變異拿掉 A latch，須被 killed。
+- [ ] （v1.6 B）`OriginDoors.door` 在舊列找不到所屬 session 時，查 exact Entry 相符的 HOME 列，交純函式 `homeDoorAction`；擁有期間由 `HomePassage` 提供（HOME 準備含 A 預載、HOME_CHECK_WAIT、B PREPARE 膜，以及未到期的 READY；B 斷電等待不在期間內）。參與者 → `onParticipantClose`（Phase PREPARE／PASSAGE）；非參與者 → REFUSED 並顯示 `message.quantumchamber.m7.chamber_busy`；期間外 PASS；攔截不持同 SID guard；journal 不健康 PASS。
+- [ ] （v1.6 B）膜規則與暫停，比照 M5：
+  - 每 tick 的膜規則（門口有 entity、艙內有非參與者就改一般開門）在所有擁有子階段持續執行，含 A 預載與 HOME_CHECK_WAIT；退避本身不放開膜。
+  - HOME 準備暫停（隔離、SEALED 寫入被拒待重試、READY 提交失敗後的退避）時不擁有門：B 門交還一般開門、攔截 PASS，暫停期間參與者開關門不算取消。
+  - 只有 roll-forward 未確認時拒絕、門不變；mint 前的其他暫時條件拒絕、門不變，之後可再按。
+  - 從 HOME 準備進入 B 斷電等待時，依 M5 交還一般開門；恢復供電後，原參與者走出再走進即續行。
+- [ ] （v1.6 D）HOME 永久封存（ENTRY_AUTHORITY_INVALID、AUTHORITY_CORRUPT、TRANSFER_RECOVERY_REQUIRED）的產生點落地時，管理員 ERROR 的字句一併補上 v1.6 D 的解除路徑與「封存紀錄保留」。
+- [ ] （v1.6 B）GREEN：
+  - `home_b_door_participant_cancels_during_check_wait`、`home_b_door_participant_cancels_during_prepare_and_passage`；
+  - `home_b_door_refuses_non_participants_while_owned`；
+  - `home_b_door_passes_outside_owned_window`：含走廊期間、返還中、B 斷電等待、SEALED、CLOSE 收尾中；
+  - `home_b_door_interception_runs_outside_sid_guard`：走真實 bulkhead `onUse`；
+  - `home_b_check_wait_outsider_teleported_in_gets_open_door`：HOME_CHECK_WAIT 中把外人傳進 sealed 的 B，下一個 tick 門改一般開門，他按門仍被拒；
+  - `home_b_prepare_pause_releases_door_and_passes`：隔離或 SEALED 寫入被拒時，B 門是一般開門、照一般門，參與者開關門不取消；roll-forward 未確認時拒絕；
+  - `home_b_waiting_resumes_after_power_and_reentry`：B 斷電等待中恢復供電，原參與者走出再走進即續行。
+
+  變異，每一項都要被 killed：HOME_CHECK_WAIT 判成期間外；B 斷電等待判成期間內；B 艙內非參與者改為開門；跳過 HOME 查找；參與者改以「人在艙內」判定；退避期間停掉每 tick 的膜規則；暫停時仍擁有門。
+
+### Task 7 追加項
+
+- [ ] （v1.6 A）`HomeClosure.converge` 每次改 B 門之前設定 B 的 latch（所有 CloseReason）；B 分支協調與 `startHome` 檢查 latch。`formal_projection_trip_uses_real_controls` 與 `root_stop_unlocks_only_after_checkpoint` 加斷言：收尾後 B 比較器 3，玩家實際開關一次才有新 SID（落實 :385）。變異：收尾不設 B latch；B 分支不看 latch。
+- [ ] （v1.6 B、C、D）`formal-home-trip` 端到端涵蓋：真入口下 B 門的擁有期間、非參與者拒絕與提示；B 無人時收尾由 B 收尾票完成；A 永久封存（testmod 注入）停用斷電後可拆。
+
+### Task 8 追加項
+
+- [ ] （v1.6 F）人工清單加 H06、H07，取得代操作授權後與 H01～H05 同輪執行。
+- [ ] whole-branch 審查加入下方焦點 6～10。
+
+### 審查焦點追加
+
+6. latch 必須在系統改門觸發的刷新之前設定；玩家親手關門與系統排入的關門交錯時，最終狀態仍可解釋。由 T4A `prepare_participant_close_requires_player_reclose_windows` 與變異「排入關門之後才上鎖」驗。
+7. 永久封存解除只在全列已 checked 時放行，而且不改寫封存列。由 T4A `retryable_or_unchecked_seal_never_released` 與變異「忽略 rollForwardPending」「解除時改寫封存列」驗。
+8. B 收尾票與 A 票同 XZ、不同 world 時不去重。由 T4B `entryAndRootSameXzDifferentWorldCountSeparately` 驗。
+9. 解除並原地重建之後，舊封存列不得以原艙座標取得新艙的門權威，也不得替新艙代關門。由 T4A `rebuilt_chamber_door_ignores_released_seal_after_restart_reapply`、`rebuilt_chamber_prepare_participant_close_still_cancels_windows` 與座標核對的兩個變異驗。
+10. B 擁有期間不得困人：每 tick 的膜規則在 HOME_CHECK_WAIT 也執行，PREPARE 暫停時交還一般開門。由 T6 `home_b_check_wait_outsider_teleported_in_gets_open_door`、`home_b_prepare_pause_releases_door_and_passes` 與對應變異驗。
+
+### 驗收索引追加
+
+| 規格 | 可驗條件與 owning task |
+| --- | --- |
+| V12 | T4A M6 兩類取消、斷電再供電與系統改門不解鎖、NBT；T6 HOME 到 A；T7 B 收尾與 B 啟動。 |
+| V13 | T6 擁有期間、參與者取消、非參與者拒絕、每 tick 膜規則、暫停交還、B 斷電等待照一般門與續行；T7 真入口。 |
+| V14 | T4B 有界票、world＋chunk 計量、重啟原生列。 |
+| V15 | T4A 舊列四種與 HOME 三種永久封存解除、判定的純函式 JUnit、原地重建的座標權威；T7 端到端。 |
+| H06–H07 | T8 同名兩列逐項採計。 |
 
 
