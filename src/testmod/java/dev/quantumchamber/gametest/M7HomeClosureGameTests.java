@@ -1316,8 +1316,91 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         untilStep(c, label, bound, bound, done, then, timeout);
     }
 
+    /**
+     * T5 Step 0（T4B 審查 M-7）：{@link #until} 的判斷式 {@code done} 丟出（含斷言失敗）時沒有任何回呼的 guard，fixture 與 hooks 不會還原，FakeBackend、票 owner 的
+     * 停服旗標、開服集合、Budget 佔用等全域測試狀態會留給後面的 batch。每個 TestContext 可登記判斷式失敗時的收尾（{@link Projection} 建立時登記
+     * {@code close}＋{@code hooks.releaseAfter}），判斷式丟出時依登記的相反順序執行，再丟出失敗。收尾都是冪等的；正常收尾（{@link Projection#close}）時取消登記。
+     * 只在 server thread 使用。
+     */
+    private static final Map<TestContext, Deque<java.util.function.Consumer<Throwable>>> PREDICATE_FAILURE_CLEANUP = new IdentityHashMap<>();
+
+    /** 登記 {@code c} 的判斷式失敗收尾；回傳取消登記的動作（冪等）。 */
+    static Runnable onPredicateFailure(TestContext c, java.util.function.Consumer<Throwable> cleanup) {
+        Objects.requireNonNull(cleanup, "cleanup");
+        PREDICATE_FAILURE_CLEANUP.computeIfAbsent(c, ignored -> new ArrayDeque<>()).push(cleanup);
+        return () -> {
+            var registered = PREDICATE_FAILURE_CLEANUP.get(c);
+            if (registered == null) return;
+            registered.removeIf(entry -> entry == cleanup);
+            if (registered.isEmpty()) PREDICATE_FAILURE_CLEANUP.remove(c);
+        };
+    }
+
+    /**
+     * 判斷式丟出：先執行 {@code c} 的登記收尾（收尾本身的例外附在失敗上，不遮蔽原因），再回傳要丟出的失敗。原本就是 GameTestException（例如斷言）時原樣回傳；
+     * 其他例外包成以 {@code M7_GT_WAIT_PREDICATE} 開頭的 GameTestException（原例外為 cause；原版只把 GameTestException 記為測試失敗，其他例外會讓 test server 崩潰）。
+     */
+    private static GameTestException predicateFailed(TestContext c, String label, Throwable failure) {
+        GameTestException result;
+        if (failure instanceof GameTestException test) result = test;
+        else {
+            result = new GameTestException("M7_GT_WAIT_PREDICATE：" + label + " 的判斷式丟出：" + failure);
+            result.initCause(failure);
+        }
+        var cleanups = PREDICATE_FAILURE_CLEANUP.remove(c);
+        if (cleanups != null) for (var cleanup : cleanups) {
+            try { cleanup.accept(result); }
+            catch (RuntimeException | Error cleanupFailure) { if (cleanupFailure != result) result.addSuppressed(cleanupFailure); }
+        }
+        return result;
+    }
+
+    /**
+     * T5 Step 0（T4B 審查 M-7）：判斷式丟出時，{@link #until} 先執行本 context 登記的收尾（相反順序、各一次）再丟出；then／timeout 都不執行；GameTestException 原樣、
+     * 其他例外包成 {@code M7_GT_WAIT_PREDICATE}；收尾之後登記清空；已取消的登記不執行。第一次判斷在呼叫當下同步進行，所以本案可以直接接住丟出的失敗。
+     * 不建 fixture、不碰 journal 或世界；登記以本案的 context 為 key，結束時已清空，不留給其他案例。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_until_predicate_guard", tickLimit = 100)
+    public void until_predicate_failure_runs_registered_cleanup(TestContext c) {
+        var witness = new LinkedHashMap<String, Boolean>();
+        var order = new ArrayList<String>();
+        var callbacks = new ArrayList<String>();
+        Throwable[] seen = {null, null};
+        onPredicateFailure(c, failure -> { order.add("first"); seen[0] = failure; });
+        var cancelled = onPredicateFailure(c, failure -> order.add("cancelled"));
+        onPredicateFailure(c, failure -> { order.add("last"); seen[1] = failure; });
+        cancelled.run();
+        GameTestException runtime = null;
+        try {
+            until(c, "until_predicate_guard/runtime", 5, () -> { throw new IllegalStateException("M7_T50_PREDICATE_FAULT"); },
+                    () -> callbacks.add("then"), () -> callbacks.add("timeout"));
+        } catch (GameTestException failure) { runtime = failure; }
+        witness.put("runtimeWrapped", runtime != null && runtime.getMessage().startsWith("M7_GT_WAIT_PREDICATE：until_predicate_guard/runtime 的判斷式丟出：")
+                && runtime.getCause() instanceof IllegalStateException cause && "M7_T50_PREDICATE_FAULT".equals(cause.getMessage()));
+        witness.put("cleanupRanInReverseOnce", order.equals(List.of("last", "first")));
+        witness.put("cleanupGotTheFailure", runtime != null && seen[0] == runtime && seen[1] == runtime);
+        witness.put("registrationCleared", !PREDICATE_FAILURE_CLEANUP.containsKey(c));
+        int[] again = {0};
+        onPredicateFailure(c, failure -> again[0]++);
+        var assertion = new GameTestException("M7_T50_PREDICATE_ASSERTION");
+        GameTestException same = null;
+        try {
+            until(c, "until_predicate_guard/assertion", 5, () -> { throw assertion; }, () -> callbacks.add("then"), () -> callbacks.add("timeout"));
+        } catch (GameTestException failure) { same = failure; }
+        witness.put("gameTestExceptionKept", same == assertion);
+        witness.put("secondRegistrationRanOnce", again[0] == 1);
+        witness.put("thenAndTimeoutNotRun", callbacks.isEmpty());
+        witness.put("registrationClearedAgain", !PREDICATE_FAILURE_CLEANUP.containsKey(c));
+        PREDICATE_FAILURE_CLEANUP.remove(c);
+        if (witness.containsValue(false)) throw new GameTestException("UNTIL_PREDICATE_GUARD：判斷式丟出時的收尾不符：" + witness + " order=" + order + " callbacks=" + callbacks);
+        c.complete();
+    }
+
     private static void untilStep(TestContext c, String label, int bound, int remaining, BooleanSupplier done, Runnable then, Runnable timeout) {
-        if (done.getAsBoolean()) {
+        boolean reached;
+        try { reached = done.getAsBoolean(); }
+        catch (RuntimeException | Error failure) { throw predicateFailed(c, label, failure); }
+        if (reached) {
             WAIT_LOG.info("M7_GT_WAIT used={} bound={} case={}", bound - remaining, bound, label);
             then.run();
             return;
@@ -1345,6 +1428,8 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         final EntryEndpoint entry;
         final ChamberOriginAuthority root;
         private Runnable release = () -> { };
+        /** T5 Step 0（T4B 審查 M-7）：{@link #until} 的判斷式失敗收尾登記；{@link #close} 時取消。 */
+        private final Runnable predicateCleanup;
         private boolean closed;
         /** T4 B2b-1（P2-M3 修法 3）：本 fixture 經 {@link #settled}／{@link #dormant} 建立的 HOME SID；{@link #close} 時收掉仍留在 journal 的列。 */
         private final List<UUID> owned = new ArrayList<>();
@@ -1352,6 +1437,8 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         Projection(TestContext c, M2CorridorGameTests.TestHooks hooks) {
             this.c = c;
             f = new M2CorridorGameTests.NativeEntry(c, 1);
+            // 判斷式丟出時比照回呼的 guard（M7HomeEntryTicketGameTests.guard）：收掉 fixture、釋放 hooks（兩者都冪等）。
+            predicateCleanup = onPredicateFailure(c, failure -> { close(); hooks.releaseAfter(failure); });
             try {
                 requireCandidateStores(f.server);
                 var a = f.controller();
@@ -1381,8 +1468,17 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         HomeSessionRecord dormant(UUID sid, int slot) {
             var settled = settled(sid, slot);
             var dormant = new HomeSessionRecord(sid, chamber, root, entry, settled.participants(), List.of(), SessionState.MEASURED, settled.home());
-            c.assertTrue(SessionRecoveryState.get(f.server).commitHomeRollForward(f.server, settled, dormant).committed(), "checked 清除租約");
+            committed(SessionRecoveryState.get(f.server).commitHomeRollForward(f.server, settled, dormant), "checked 清除租約");
             return dormant;
+        }
+
+        /**
+         * fixture 的 checked 寫入（T5 Step 0）：沒有 committed 時先記一則帶 cause 鏈的 ERROR（{@link M5GameTestSupport#logFixtureCommitFailure}），
+         * 再照原本的斷言失敗；不重試、不放寬斷言。
+         */
+        private void committed(SessionRecoveryState.CommitResult result, String message) {
+            if (!result.committed()) M5GameTestSupport.logFixtureCommitFailure("M7 Projection " + message, result);
+            c.assertTrue(result.committed(), message);
         }
 
         /** 經正式 journal 入口走到已選定、全員返回、租約仍在的 MEASURED（下一步才清除租約）。 */
@@ -1397,17 +1493,19 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
             var empty = new Home(new Unselected(), -1, -1, -1, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty());
             var arming = new HomeSessionRecord(sid, chamber, root, entry, List.of(person), List.of(lease), SessionState.ARMING, empty);
             c.assertTrue(gate().claimProvisional(server, chamber, sid), "先占後寫");
-            c.assertTrue(journal.admitHome(server, arming).committed() && gate().finishProvisional(server, chamber, sid), "checked ARMING");
+            var admitted = journal.admitHome(server, arming);
+            if (!admitted.committed()) M5GameTestSupport.logFixtureCommitFailure("M7 Projection checked ARMING", admitted);
+            c.assertTrue(admitted.committed() && gate().finishProvisional(server, chamber, sid), "checked ARMING");
             var active = new HomeSessionRecord(sid, chamber, root, entry, List.of(person), List.of(lease), SessionState.SUPERPOSITION, empty);
-            c.assertTrue(journal.commitHomeRestore(server, arming, active).committed(), "checked SUPERPOSITION");
+            committed(journal.commitHomeRestore(server, arming, active), "checked SUPERPOSITION");
             long time = server.getOverworld().getTime();
             var selected = new Home(new Selected(new dev.quantumchamber.corridor.DoorKey(sid, 1, dev.quantumchamber.corridor.DoorKey.DoorWallSide.POSITIVE_LATERAL),
                     actor, time), -1, -1, -1, List.of(), List.of(), Optional.empty(), -1, new None(), Optional.empty());
             var measured = new HomeSessionRecord(sid, chamber, root, entry, List.of(person), List.of(lease), SessionState.MEASURED, selected);
-            c.assertTrue(journal.commitHomeRestore(server, active, measured).committed(), "checked HOME 選擇");
+            committed(journal.commitHomeRestore(server, active, measured), "checked HOME 選擇");
             var returned = new SessionRecoveryRecord.Participant(actor, Vec3d.ZERO, Vec3d.ZERO, 0, 0, new NbtCompound(), true);
             var settled = new HomeSessionRecord(sid, chamber, root, entry, List.of(returned), List.of(lease), SessionState.MEASURED, selected);
-            c.assertTrue(journal.commitHomeRollForward(server, measured, settled).committed(), "checked 返回 B");
+            committed(journal.commitHomeRollForward(server, measured, settled), "checked 返回 B");
             return settled;
         }
 
@@ -1447,6 +1545,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         @Override public void close() {
             if (closed) return;
             closed = true;
+            predicateCleanup.run();
             try { closeOutResidue(); }
             finally {
                 try { release.run(); }

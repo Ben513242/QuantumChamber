@@ -366,7 +366,7 @@ final class M5GameTestSupport {
         var measured = M4CandidateTestAccess.measuredReceipt(server, origin, people, leases, newCandidate);
         owner.accept(measured.sessionUuid());
         if (suspend) M5TestHooks.suspendCollapse(measured.sessionUuid());
-        journal.put(measured); journal.flush(server);
+        journal.put(measured); fixtureFlush(journal, server, "M5 collapseFixture MEASURED");
         var record = M4CandidateTestAccess.collapsing(measured, time);
         requireCommitted(journal.commitRestore(server, measured, record), "MEASURED→COLLAPSING");
         if (phase == SessionState.PASSAGE_READY) {
@@ -429,7 +429,47 @@ final class M5GameTestSupport {
     }
 
     private static void requireCommitted(SessionRecoveryState.CommitResult result, String edge) {
-        if (!result.committed()) throw new IllegalStateException("M5 fixture " + edge + " 未確認：" + result);
+        if (!result.committed()) {
+            var failure = new IllegalStateException("M5 fixture " + edge + " 未確認：" + result);
+            logFixtureCommitFailure("M5 fixture " + edge, result);
+            throw failure;
+        }
+    }
+
+    // ---- fixture 的 checked 寫入失敗（T5 Step 0） ----
+
+    /**
+     * fixture 的 checked journal flush（T5 Step 0；使用者 2026-11-19 06:3x 所選選項說明「測試寫入失敗時要記下原因的修正，排進 T5 Step 0」）：寫入失敗時先記一則
+     * 帶 cause 鏈的 ERROR（logger {@code quantumchamber-testmod}，開頭 {@code TESTMOD_FIXTURE_WRITE_FAILED}；stack 含每一層 cause，例如 Windows atomic move 的
+     * {@code AccessDeniedException}），再原樣丟出同一個例外。不重試、不吞錯、不改任何斷言。GameTest XML 只記 message、這條路徑也不印 stack，
+     * 沒有這則 ERROR 就無法判定 cause（T4B 完整回歸第一次 FAIL）。
+     */
+    static void fixtureFlush(SessionRecoveryState journal, MinecraftServer server, String fixture) {
+        try { journal.flush(server); }
+        catch (RuntimeException | Error failure) { logFixtureWriteFailure(fixture, failure); throw failure; }
+    }
+
+    /** 回傳 {@link SessionRecoveryState.CommitResult} 的 checked 寫入沒有 committed 時，記同一種 ERROR（附 result 的 failure 與 cause 鏈）；呼叫端照原樣失敗。 */
+    static void logFixtureCommitFailure(String fixture, SessionRecoveryState.CommitResult result) {
+        logFixtureWriteFailure(fixture + "（" + result.status() + "）", result.failure().orElse(null));
+    }
+
+    private static void logFixtureWriteFailure(String fixture, Throwable failure) {
+        try {
+            if (failure == null) LOGGER.error("TESTMOD_FIXTURE_WRITE_FAILED fixture={} cause=（沒有附 failure）", fixture);
+            else LOGGER.error("TESTMOD_FIXTURE_WRITE_FAILED fixture={} cause={}", fixture, causeChain(failure), failure);
+        } catch (RuntimeException logging) { if (failure != null && logging != failure) failure.addSuppressed(logging); }
+    }
+
+    /** {@code 類別: message <- 類別: message ...}，最多 16 層、遇到循環就停。 */
+    static String causeChain(Throwable failure) {
+        var line = new StringBuilder();
+        var seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<Throwable, Boolean>());
+        for (Throwable cursor = failure; cursor != null && seen.add(cursor) && seen.size() <= 16; cursor = cursor.getCause()) {
+            if (line.length() > 0) line.append(" <- ");
+            line.append(cursor.getClass().getName()).append(": ").append(cursor.getMessage());
+        }
+        return line.toString();
     }
 
     /**
@@ -470,7 +510,7 @@ final class M5GameTestSupport {
         M4CandidateTestAccess.removeSpaceForTeardown(CorridorPageManager.forServer(server), sid);
         if (record.state().collapseState()) M4CandidateTestAccess.terminateCollapseFixture(server, sid);
         else if (record.state() == SessionState.MEASURED) M4CandidateTestAccess.removeMeasuredForTeardown(server, sid);
-        else { journal.remove(sid); journal.flush(server); }
+        else { journal.remove(sid); fixtureFlush(journal, server, "M5 removeFixture"); }
     }
 
     /** flushed 的狀態名稱；沒有 record 時為 ABSENT（診斷訊息用）。 */
@@ -594,11 +634,11 @@ final class M5GameTestSupport {
             return M4CandidateTestAccess.measuredReceipt(server, M4CandidateTestAccess.origin(chamber, frame.controllerPos()), people, List.of(), newCandidate);
         }
 
-        /** 加入 {@link #owned}（收尾時移除），再 put＋flush。 */
+        /** 加入 {@link #owned}（收尾時移除），再 put＋flush；flush 失敗時記帶 cause 鏈的 ERROR 再原樣丟出（{@link #fixtureFlush}）。 */
         SessionRecoveryRecord own(SessionRecoveryRecord record) {
             var journal = SessionRecoveryState.get(server);
             owned.add(record.sessionUuid());
-            journal.put(record); journal.flush(server);
+            journal.put(record); fixtureFlush(journal, server, "M5 DormantOrigin.own session=" + record.sessionUuid());
             return record;
         }
     }

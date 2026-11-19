@@ -114,6 +114,38 @@ final class M4CandidateTestAccess {
         } catch(InvocationTargetException failure) {throw new IllegalStateException("M4_DISK_DECODE：正式 reader 呼叫失敗",failure.getCause());}
         catch(ReflectiveOperationException failure) {throw new IllegalStateException("M4_DISK_DECODE：無法取得正式 reader",failure);}
     }
+    /**
+     * 測試 probe 把整份 journal 寫進正式檔（模擬「已寫入正式檔」，T5 Step 0）：走正式 schema5 寫入路徑（{@code SessionJournalStore.prepareSchemaFive}
+     * 的 exact 讀回預檢＋{@code writePrepared} 的原子寫入，皆以反射呼叫 package 可見的方法），strict 解碼改用本 server 安裝 state 的正式 validator
+     * （{@link #decodeRecords}，與 {@link #diskRecords} 相同）。兩參數的 {@code SessionJournalStore.write} 固定以拒絕 M6 intent 的 validator 解碼，
+     * 同一 server 先跑的案例留下 M6 NEW 候選時就會丟出（T4 完整回歸第 16 案）。不放寬任何驗證；寫入或解碼失敗原樣丟出。
+     */
+    static void writeJournalServerBound(MinecraftServer server,java.nio.file.Path path,net.minecraft.nbt.NbtCompound wrapped) throws java.io.IOException {
+        var store=dev.quantumchamber.persistence.SessionJournalStore.class;
+        // schema 5 之前沒有 M6 intent，照原本的兩參數寫入（schema5 預檢不接受舊 schema）。
+        if(wrapped.getCompound("data").getInt("SchemaVersion")<5) { dev.quantumchamber.persistence.SessionJournalStore.write(path,wrapped); return; }
+        try {
+            var readerType=Class.forName(store.getName()+"$StrictReader");
+            var reader=java.lang.reflect.Proxy.newProxyInstance(readerType.getClassLoader(),new Class<?>[]{readerType},(self,method,args) -> switch(method.getName()) {
+                case "accept" -> { decodeRecords(server,(net.minecraft.nbt.NbtCompound)args[0]); yield null; }
+                case "hashCode" -> System.identityHashCode(self);
+                case "equals" -> self==args[0];
+                case "toString" -> "M4_SERVER_BOUND_STRICT_READER";
+                default -> throw new UnsupportedOperationException(method.getName());
+            });
+            var prepare=store.getDeclaredMethod("prepareSchemaFive",net.minecraft.nbt.NbtCompound.class,readerType);
+            prepare.setAccessible(true);
+            var prepared=prepare.invoke(null,wrapped,reader);
+            var write=store.getDeclaredMethod("writePrepared",java.nio.file.Path.class,prepared.getClass());
+            write.setAccessible(true);
+            write.invoke(null,path,prepared);
+        } catch(InvocationTargetException failure) {
+            if(failure.getCause() instanceof java.io.IOException io) throw io;
+            if(failure.getCause() instanceof RuntimeException runtime) throw runtime;
+            if(failure.getCause() instanceof Error error) throw error;
+            throw new IllegalStateException("M4_JOURNAL_WRITE：正式寫入路徑丟出",failure.getCause());
+        } catch(ReflectiveOperationException failure) { throw new IllegalStateException("M4_JOURNAL_WRITE：無法取得正式寫入路徑",failure); }
+    }
     record ReceiptRecords(net.minecraft.nbt.NbtCompound nbt,Map<UUID,dev.quantumchamber.persistence.SessionRecoveryRecord> records) {}
     /** 當次 nonce 直下裸 receipt；同一 compressed snapshot 做首欄判別、有界解碼與未壓縮 EOF 核對。 */
     static ReceiptRecords receiptRecords(MinecraftServer server,java.nio.file.Path path) {

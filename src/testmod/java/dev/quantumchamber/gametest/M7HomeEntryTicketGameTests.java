@@ -377,6 +377,67 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
 
+    /**
+     * T5 Step 0（T4B 審查 M-2）：持有 B 收尾票（已 FULL）時收尾失敗進退避，退避的那一刻就要釋放票。CLOSE 已 checked、B 未載入時 owner 取 CLOSE_CONVERGE 票載入 B；
+     * B 門改為結案目標（OPEN）的寫入受控失敗（{@link DoorWriteFault#failOpens}：這座 B 門的開門寫入一律回 false，關門照常），owner 記一則「B 門尚未改為結案目標」WARN、
+     * 退避 200 tick。每個 tick 結束時（回程終局 owner 的推進之後，{@link TickEndWatch}）核對：失敗前一個 tick 結束時仍持票、開門寫入確實被擋（只有 B 已 FULL、
+     * 端點合法時 owner 才會改門）；失敗那個 tick 結束時與整個退避期間（到 retryAt 之前）都沒有票。之後解除故障，退避到期重試、收尾完成。
+     * 用來殺「{@code backOff} 不釋票」的單點變異（只拿掉 {@code backOff} 的釋放時，票要到 200 tick 租期才由票 owner 釋放）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_entry_ticket_handoff_fail", tickLimit = 2000)
+    public void close_ticket_released_when_the_door_write_fails_and_backs_off(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new M7HomeClosureGameTests.Projection(c, hooks);
+        var label = "close_ticket_released_when_the_door_write_fails_and_backs_off";
+        try {
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            var capture = M5GameTestSupport.captureLogs(hooks);
+            // B 門先設成普通關門：ROOT_DISABLED 的結案目標是一般開門，owner 才會寫門（門已是目標時 applyTarget 是 UNCHANGED、不寫入）。
+            whenBUnloaded(c, p, label, hooks, () -> c.assertTrue(new dev.quantumchamber.chamber.ChamberDoorService().applyTarget(p.b, p.frame,
+                    dev.quantumchamber.chamber.ChamberDoorService.DoorState.CLOSED).succeeded() && "CLOSED/NONE".equals(p.doorSummary()), "B 的門是普通關門"), () -> {
+                var sid = UUID.randomUUID();
+                var dormant = p.dormant(sid, 33);
+                var witness = new LinkedHashMap<String, Boolean>();
+                var fault = DoorWriteFault.failOpens(p.b, p.frame);
+                hooks.add(fault::close);
+                var watch = TickEndWatch.start(server, sid, hooks);
+                c.assertTrue(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
+                        server.getOverworld().getTime())).committed(), "原艙停止原因已 checked latch");
+                M7HomeClosureGameTests.until(c, label + "/door_failure", 400, () -> watch.failureTick() >= 0, guard(p, hooks, () -> {
+                    fault.close();
+                    int failureTick = watch.failureTick();
+                    long retryAt = watch.retryAtOf(failureTick);
+                    witness.put("doorWriteFaultHit", fault.failures() >= 1);
+                    witness.put("oneDoorWarn", doorWarns(capture, sid) == 1);
+                    witness.put("backedOff200", watch.delayOf(failureTick) == 200 && retryAt == failureTick + 200L);
+                    witness.put("leaseHeldBeforeTheFailure", watch.leaseAt(failureTick - 1));
+                    witness.put("noTicketAtTheFailureTickEnd", !watch.leaseAt(failureTick));
+                    M7HomeClosureGameTests.until(c, label + "/backoff", 260, () -> server.getTicks() >= retryAt, guard(p, hooks, () -> {
+                        witness.put("noTicketDuringTheBackoff", watch.noLeaseBetween(failureTick, retryAt - 1));
+                        if (witness.containsValue(false)) {
+                            fail(p, hooks, "HANDOFF_FAIL_TICKET_HELD：收尾失敗進退避時沒有釋放 B 收尾票：" + witness + " failureTick=" + failureTick + " retryAt=" + retryAt
+                                    + " leaseTicks=" + watch.leaseTicks(failureTick - 1, retryAt));
+                            return;
+                        }
+                        M7HomeClosureGameTests.until(c, label + "/close", CLOSE_TICKS, () -> !journal.allSessions().containsKey(sid)
+                                && !journal.allFlushedSessions().containsKey(sid), guard(p, hooks, () -> {
+                            witness.put("closedAfterTheRetry", "OPEN/NONE".equals(p.doorSummary()) && !gate().globalChamberBusy(server, p.chamber));
+                            witness.put("noTicketAfterTheClose", EntryTickets.lease(server, sid) == null);
+                            witness.put("stillOneDoorWarn", doorWarns(capture, sid) == 1);
+                            finish(c, p, hooks, witness, "B 門寫入失敗進退避時釋放 B 收尾票：" + witness + " failureTick=" + failureTick + " retryAt=" + retryAt);
+                        }), () -> pendingWithoutTicket(c, p, hooks, sid, label, "HANDOFF_FAIL_RETRY_NOT_CLOSED：解除故障、退避到期之後沒有收尾：" + witness));
+                    }), () -> fail(p, hooks, "HANDOFF_FAIL_BACKOFF_WAIT：260 tick 內沒有到 retryAt：" + witness));
+                }), () -> fail(p, hooks, "HANDOFF_FAIL_NO_FAILURE：400 tick 內沒有因 B 門寫入失敗而退避：row=" + describe(journal, sid) + " lease="
+                        + EntryTickets.describe(server, sid) + " openFailures=" + fault.failures() + " doorWarns=" + doorWarns(capture, sid)));
+            });
+        } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
+    }
+
+    private static int doorWarns(LogCapture capture, UUID sid) {
+        return capture.matching(org.apache.logging.log4j.Level.WARN, "B 門尚未改為結案目標", sid.toString()).size();
+    }
+
     /** 原艙票 owner（{@code HomeRootTickets}）是否仍有本 SID 的 lease（反射讀 private 欄位，只讀）。 */
     private static boolean rootLeasePresent(MinecraftServer server, UUID sid) {
         var owner = ((Map<?, ?>) M4CandidateTestAccess.get(dev.quantumchamber.collapse.HomeRootTickets.class, "servers")).get(server);
@@ -428,8 +489,14 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
      * （{@code getWorldChunk} 都是 null），之後才執行 {@code body}。等不到時以 {@code ENV_} 開頭的錯因失敗（測試環境，不是 owner 的失敗）。
      */
     static void whenBUnloaded(TestContext c, M7HomeClosureGameTests.Projection p, String label, M2CorridorGameTests.TestHooks hooks, Runnable body) {
+        whenBUnloaded(c, p, label, hooks, () -> { }, body);
+    }
+
+    /** 同上；{@code beforeRelease} 在 B 就緒、放掉測試票之前執行（例如先把 B 門設成普通關門）。失敗時收掉 fixture 再原樣丟出。 */
+    static void whenBUnloaded(TestContext c, M7HomeClosureGameTests.Projection p, String label, M2CorridorGameTests.TestHooks hooks, Runnable beforeRelease, Runnable body) {
         var chunks = homeChunks(p.frame);
         M7HomeClosureGameTests.until(c, label + "/entry_ready", 380, () -> dev.quantumchamber.persistence.ChunkSaveCheckpoint.ready(p.b, chunks), () -> {
+            guard(p, hooks, beforeRelease).run();
             releaseHold(p);
             M7HomeClosureGameTests.until(c, label + "/b_unloaded", UNLOAD_TICKS, () -> !anyLoaded(p.b, chunks), guard(p, hooks, body), () -> {
                 try { throw new GameTestException("ENV_B_NOT_UNLOADED：放掉測試票之後 " + UNLOAD_TICKS + " tick 內 B 的 home chunks 沒有卸載（有其他票或玩家）：loaded="
@@ -632,6 +699,68 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             M4CandidateTestAccess.set(context, "startup", Set.copyOf(with));
             hooks.add(() -> M4CandidateTestAccess.set(context, "startup", before));
             return (UUID) M4CandidateTestAccess.get(context, "instance");
+        }
+    }
+
+    /**
+     * T5 Step 0：每個 tick 結束時（{@code END_SERVER_TICK} 預設 phase 的回程終局 owner 推進之後）記下這個 SID 是否持 B 收尾票，以及回程終局 owner 對它的退避
+     * （{@code CollapseBackoff} 的 delayTicks／retryAtTick；沒有時為 0）。只讀；收尾時停止觀察。用來核「失敗那個 tick 結束時與退避期間都沒有票」：只存在一個 tick
+     * 的票、或失敗之後才釋放的票，test callback 看不到。
+     */
+    static final class TickEndWatch {
+        private static final net.minecraft.util.Identifier PHASE = net.minecraft.util.Identifier.of("quantumchamber:m7_t50_tick_end_watch");
+        private static final Map<UUID, TickEndWatch> ACTIVE = new java.util.concurrent.ConcurrentHashMap<>();
+        private static boolean registered;
+        private record Sample(int tick, boolean lease, int delay, long retryAt) {}
+        private final MinecraftServer server;
+        private final UUID sid;
+        private final List<Sample> samples = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        private TickEndWatch(MinecraftServer server, UUID sid) { this.server = server; this.sid = sid; }
+
+        static synchronized TickEndWatch start(MinecraftServer server, UUID sid, M2CorridorGameTests.TestHooks hooks) {
+            if (!registered) {
+                registered = true;
+                net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.addPhaseOrdering(net.fabricmc.fabric.api.event.Event.DEFAULT_PHASE, PHASE);
+                net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(PHASE, owner -> ACTIVE.values().forEach(watch -> watch.observe(owner)));
+            }
+            var watch = new TickEndWatch(server, sid);
+            ACTIVE.put(sid, watch);
+            hooks.add(() -> ACTIVE.remove(sid, watch));
+            return watch;
+        }
+
+        private void observe(MinecraftServer owner) {
+            if (owner != server) return;
+            var backoff = EntryTickets.backoff(server, sid) instanceof dev.quantumchamber.collapse.CollapseBackoff value ? value : null;
+            samples.add(new Sample(server.getTicks(), EntryTickets.lease(server, sid) != null, backoff == null ? 0 : backoff.delayTicks(),
+                    backoff == null ? 0 : backoff.retryAtTick()));
+        }
+
+        private Sample at(int tick) { return samples.stream().filter(sample -> sample.tick() == tick).findFirst().orElse(null); }
+
+        /** 第一次記到退避（delayTicks＞0）的那個 tick；還沒有時為 −1。 */
+        int failureTick() { return samples.stream().filter(sample -> sample.delay() > 0).mapToInt(Sample::tick).findFirst().orElse(-1); }
+
+        int delayOf(int tick) { var sample = at(tick); return sample == null ? -1 : sample.delay(); }
+
+        long retryAtOf(int tick) { var sample = at(tick); return sample == null ? -1 : sample.retryAt(); }
+
+        /** 這個 tick 結束時是否持票；沒有這個 tick 的樣本時為假。 */
+        boolean leaseAt(int tick) { var sample = at(tick); return sample != null && sample.lease(); }
+
+        /** {@code from}～{@code to}（含）每個 tick 結束時都有樣本、而且都沒有票。 */
+        boolean noLeaseBetween(int from, long to) {
+            for (long tick = from; tick <= to; tick++) {
+                var sample = at((int) tick);
+                if (sample == null || sample.lease()) return false;
+            }
+            return true;
+        }
+
+        /** {@code from}～{@code to}（含）之間持票的 tick（診斷訊息用）。 */
+        List<Integer> leaseTicks(int from, long to) {
+            return samples.stream().filter(sample -> sample.tick() >= from && sample.tick() <= to && sample.lease()).map(Sample::tick).toList();
         }
     }
 

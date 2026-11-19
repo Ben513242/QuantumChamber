@@ -1963,12 +1963,23 @@ public final class M2CorridorGameTests implements FabricGameTest {
     public void native_shared_entry_preserves_frozen_relative_pose_south_windows(TestContext context) { sharedEntry(context,Direction.SOUTH); }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_shared_west",tickLimit=100000)
     public void native_shared_entry_preserves_frozen_relative_pose_west_windows(TestContext context) { sharedEntry(context,Direction.WEST); }
+    /**
+     * 外層兩個回呼（入場、發布）的斷言失敗或例外：比照等待逾時（8-H），本 context 唯一登記的 fixture 仍有本艙 session 時走既有的正式失敗收尾
+     * （{@link NativeEntry#failAfterCallbackCleanup}），收尾結束才丟出原錯；不放寬任何斷言（T5 Step 0，T4 完整回歸第 10 案的連坐缺口）。
+     * 內層 {@code runAtTick(publishedTick+25)} 照舊自己 {@code fixture.close()}。
+     */
+    private static java.util.function.IntConsumer sharedEntryStep(TestContext context,java.util.function.IntConsumer body) {
+        return tick -> {
+            try { body.accept(tick); }
+            catch(RuntimeException failure) { NativeEntry.failAfterCallbackCleanup(context,tick,failure); }
+        };
+    }
     private static void sharedEntry(TestContext context,Direction facing) {
         if(!Platform.isWindows()) { context.complete(); return; }
         var fixture=new NativeEntry(context,2,facing);
         fixture.players.getFirst().player().setVelocity(new Vec3d(0.125,0.25,-0.375));
         context.waitAndRun(2,fixture::power);
-        when(context,3,() -> fixture.record()!=null,startedTick -> {
+        when(context,3,() -> fixture.record()!=null,sharedEntryStep(context,startedTick -> {
             var initial=fixture.record(); var chamber=fixture.controller().chamberUuid();
             context.assertEquals(SessionState.ARMING,initial.state(),"先checked ARMING,false才geometry／移動");
             context.assertTrue(!initial.restoreEntryEffectOnReturn(),"準備期KEEP_CURRENT政策");
@@ -1976,7 +1987,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             context.assertEquals(dev.quantumchamber.chamber.ChamberState.READY,fixture.controller().chamberState(),"來源staging comparator7");
             for(int i=0;i<3;i++) new dev.quantumchamber.chamber.ChamberPowerCoordinator().refresh(context.getWorld(),fixture.frame.controllerPos());
             context.assertEquals(initial.sessionUuid(),fixture.record().sessionUuid(),"held-high刷新不重複start");
-            when(context,startedTick+1,fixture::activeReady,publishedTick -> {
+            when(context,startedTick+1,fixture::activeReady,sharedEntryStep(context,publishedTick -> {
                 var entrance=fixture.pages.entrance(initial.sessionUuid());
                 var delta=new Vec3d(entrance.controllerPos().getX()-fixture.frame.controllerPos().getX(),
                         entrance.controllerPos().getY()-fixture.frame.controllerPos().getY(),entrance.controllerPos().getZ()-fixture.frame.controllerPos().getZ());
@@ -2021,8 +2032,8 @@ public final class M2CorridorGameTests implements FabricGameTest {
                         fixture.trustedTeardown(publishedTick+26,context::complete);
                     } catch(RuntimeException | Error failure) { fixture.close(); throw failure; }
                 });
-            });
-        });
+            }));
+        }));
     }
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m2_native_offline",tickLimit=100000)
     public void native_staging_disconnect_keeps_frozen_offline_participant_windows(TestContext context) {
@@ -2377,10 +2388,21 @@ public final class M2CorridorGameTests implements FabricGameTest {
             }
         }
         /**
+         * 回呼內的斷言失敗或例外（T5 Step 0：{@code sharedEntry} 外層回呼）：與等待逾時同一條路，本 context 唯一登記的 fixture 仍有本艙 session 時
+         * 走既有正式失敗收尾，收尾結束才丟出原錯；查詢失敗、沒有 session 或已有收尾時照原樣丟出。
+         */
+        static void failAfterCallbackCleanup(TestContext context,int tick,RuntimeException failure) {
+            failAfterCleanup(context,tick,failure,"callback-failure");
+        }
+        /**
          * 只供 {@code whenUntil} 的逾時分支（hooks==null）：本 context 唯一登記的 fixture 仍有本艙 session 時，
          * 改走既有正式失敗收尾，收尾結束才丟出原逾時錯誤；查詢失敗、沒有 session 或已有收尾時照原樣丟出。
          */
         static void failAfterTimeoutCleanup(TestContext context,int tick,RuntimeException timeout) {
+            failAfterCleanup(context,tick,timeout,"when-timeout");
+        }
+        /** {@link #failAfterTimeoutCleanup} 與 {@link #failAfterCallbackCleanup} 的共用本體；{@code stage} 只是收尾 trace 的標記。 */
+        private static void failAfterCleanup(TestContext context,int tick,RuntimeException timeout,String stage) {
             NativeEntry fixture=null; UUID sid=null;
             try {
                 if(TIMEOUT_CLEANUP.get(context) instanceof NativeEntry entry && !entry.cohortFailureOwned) {
@@ -2390,7 +2412,7 @@ public final class M2CorridorGameTests implements FabricGameTest {
             } catch(RuntimeException lookupFailure) { timeout.addSuppressed(lookupFailure); }
             if(fixture==null) throw timeout;
             TIMEOUT_CLEANUP.remove(context,fixture);
-            var trace=new CohortWaitTrace(fixture,sid,-1,tick,-1L,"when-timeout","when",null);
+            var trace=new CohortWaitTrace(fixture,sid,-1,tick,-1L,stage,"when",null);
             try { trace.failed(tick,timeout); }
             catch(RuntimeException diagnosticFailure) { timeout.addSuppressed(diagnosticFailure); }
             fixture.failCohortAfterCleanup(tick,timeout,trace);

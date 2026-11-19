@@ -102,7 +102,9 @@
       "quantumchamber:m1_empty|m7homeentryticketgametests.close_ticket_budget_exhausted_warns_and_retries",
       "quantumchamber:m1_empty|m7homeentryticketgametests.close_ticket_released_on_reload_and_stop",
       "quantumchamber:m1_empty|m7homeentryticketgametests.restart_verify_ticket_loads_b_for_unreadable_seal",
-      "quantumchamber:m1_empty|m7homeentryticketgametests.close_ticket_releases_the_root_ticket_first"
+      "quantumchamber:m1_empty|m7homeentryticketgametests.close_ticket_releases_the_root_ticket_first",
+      "quantumchamber:m1_empty|m7homeentryticketgametests.close_ticket_released_when_the_door_write_fails_and_backs_off",
+      "quantumchamber:m1_empty|m7homeclosuregametests.until_predicate_failure_runs_registered_cleanup"
     ]
   },
   "windows": {

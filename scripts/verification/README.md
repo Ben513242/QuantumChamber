@@ -845,7 +845,7 @@ manifest 在 close 矩陣 39 列之後再接 8 列（B2a 的 5 列、T4 P1 的 `
   - 開服收尾核對 B 時 B 已載入但端點不合法：`開服收尾核對 B：B 已載入，但端點不是 exact 合法投影（<狀態>）`。
   同一 SID 同一原因只記一則，沿回程終局 owner 的 per-SID 退避（200、400、…、12000 tick）重取；退避到上限仍失敗，每個 server instance 每 SID 再記一則 ERROR `回程收尾的 B 收尾票退避到上限（12000 tick）仍失敗，請管理員處理…`。期間結案、占用與 A 的保護都保留，不改 A，也不猜另一個 B。
 - **處理方式**：確認 B 的世界與它的 chunk 能載入（世界存在、磁碟可讀），以及伺服器的 chunk 票額度沒有被其他回程或走廊占滿；之後 owner 會依退避自行重取，不必重啟。
-- **驗證**：GameTest `M7HomeEntryTicketGameTests`（`close_loads_unloaded_b_with_bounded_ticket`、`close_ticket_never_full_releases_and_backs_off`、`close_ticket_budget_exhausted_warns_and_retries`、`close_ticket_released_on_reload_and_stop`、`restart_verify_ticket_loads_b_for_unreadable_seal`），JUnit `M7HomeCoverageTest.entryAndRootSameXzDifferentWorldCountSeparately`，Windows 原生列 `restart-close-unloaded-b`。永遠不 FULL、停服與開服集合以 testmod 反射模擬（換 backend、呼叫票 owner 的 `closeAll`、改本 instance 的開服集合），不是真的 chunk 載入失敗或真停服；真停服的釋放沒有另外的原生列。
+- **驗證**：GameTest `M7HomeEntryTicketGameTests`（`close_loads_unloaded_b_with_bounded_ticket`、`close_ticket_never_full_releases_and_backs_off`、`close_ticket_budget_exhausted_warns_and_retries`、`close_ticket_released_on_reload_and_stop`、`restart_verify_ticket_loads_b_for_unreadable_seal`；T5 Step 0 加 `close_ticket_released_when_the_door_write_fails_and_backs_off`：持票、已 FULL 時 B 門寫入受控失敗，失敗那個 tick 結束時與退避期間都沒有票），JUnit `M7HomeCoverageTest.entryAndRootSameXzDifferentWorldCountSeparately`，Windows 原生列 `restart-close-unloaded-b`。永遠不 FULL、停服與開服集合以 testmod 反射模擬（換 backend、呼叫票 owner 的 `closeAll`、改本 instance 的開服集合），不是真的 chunk 載入失敗或真停服；真停服的釋放沒有另外的原生列。
 
 ### >4096 趟回程歷史（T4 B2b-2，plan Task 4 :265、V10）
 
@@ -882,6 +882,7 @@ strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立
   - 規模段 SelfTest 的反例：`junit-drop`（`M7_JUNIT_SET`）、`junit-skip`（`M7_JUNIT_NOT_PASS`）、`wrong-segment` 與 `wrong-head`（`M7_INPUT_IDENTITY`）、`hash`（`M7_INPUT_HASH`）、`summary-junit-cases`（`M7_SAVED_JUNIT_CASES`）、`summary-scope` 與 `summary-extra-field`（`M7_SAVED_SUMMARY`），以及 `live-head-mismatch`。Main 段的 SelfTest 也多了 `wrong-segment`。
   - 輸出行：`M7_SCALE_VERIFIED PASS platform=<平台> junit=11 launched=… HEAD=…`。
 - CI（`m7-validation`，Windows 與 Ubuntu matrix）：在原本的「確認 M7 精確集合與隔離」之後新增「執行 M7 規模測試」（`-Segment Scale -OutputRoot .superpowers/m7-scale`）與「確認 M7 規模測試精確集合」（`-VerifyOnly -SelfTest`），證據另存 artifact `m7-scale-<平台>`（`.superpowers/m7-scale/**`）。原本的 step 與 artifact `m7-validation-<平台>` 沒有改。
+  - T5 Step 0（B2b-5 審查 M2）：這兩個規模段 step 加 `if: ${{ !cancelled() }}`，前面的 Main 段（或編譯）失敗時規模段照跑，兩段互不連坐（Main 段失敗時 job 仍是失敗）；step 時限執行 20 分、驗證 10 分（Ubuntu 原本只受 job 的 90 分鐘限制；Windows 另有 `Invoke-Gradle` 的 600 秒）。
 - run-all：`m7-home` 之後緊接新 step `m7-scale`（執行，再 `-VerifyOnly -SelfTest`；root 是 `<run root>/m7-scale`）。`summary` step 在 `M7_FINAL_PROOF` 之後唯讀重驗同一個 root（不跑負控，`M7_SCALE_FINAL_PROOF`），結果寫進 `summary.json` 新增的 `m7HomeScale`（在 `m7HomeNative` 之後），`SUMMARY` 行尾加 `m7scale=PASS:11`。其他 step 與 `summary.json` 既有欄位沒有改；`m7Home` 的 `junitCases` 不再含規模測試，Windows 從 59 個變成 48 個。
 
 ### run-all 與 CI 接線（T4 B2b-3）

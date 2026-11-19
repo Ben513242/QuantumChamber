@@ -332,13 +332,19 @@ public final class M4CandidateDoorGameTests {
                         && warnings.getFirst().message().contains(InitialFlushFaultProbe.READBACK_FAULT));
                 context.assertTrue(!witness.containsValue(false),"初始 ARMING 寫入後 readback 失敗：放棄後必須以 checked 寫出覆寫磁碟，WARN 依 chamber＋原因去重："
                         +witness+" faults="+probe.faults+" warnings="+warnings.stream().map(LogCapture.Entry::message).toList());
-            } catch(RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+            } catch(RuntimeException | Error failure) {
+                // T5 Step 0：失敗時也收掉 fixture（假玩家），不留給之後的 batch。
+                hooks.releaseAfter(failure);
+                try { fixture.close(); } catch(RuntimeException | Error cleanup) { if(cleanup!=failure) failure.addSuppressed(cleanup); }
+                throw failure;
+            }
             hooks.release();
             var owned=chamber;
+            var teardown=new M2CorridorGameTests.TestHooks(); teardown.add(fixture::close);
             whenTicks(context,3,100,() -> gateway.presence(server,owned)==dev.quantumchamber.chamber.ChamberSessionGateway.Presence.NONE
                     && journal.records().values().stream().noneMatch(record -> record.chamberUuid().equals(owned)),done -> {
-                fixture.close(); M4PerTestUniverseProbe.complete(context);
-            },() -> "readback fault cleanup presence="+gateway.presence(server,owned),null);
+                teardown.release(); M4PerTestUniverseProbe.complete(context);
+            },() -> "readback fault cleanup presence="+gateway.presence(server,owned),teardown);
         });
     }
 
@@ -1464,7 +1470,9 @@ public final class M4CandidateDoorGameTests {
                     var path=fixture.server.getSavePath(net.minecraft.util.WorldSavePath.ROOT).resolve("data").resolve(SessionRecoveryState.STATE_ID+".dat");
                     var wrapped=new net.minecraft.nbt.NbtCompound(); wrapped.put("data",journal.writeNbt(new net.minecraft.nbt.NbtCompound()));
                     net.minecraft.nbt.NbtHelper.putDataVersion(wrapped);
-                    try { SessionJournalStore.write(path,wrapped); }
+                    // T5 Step 0（T4 完整回歸第 16 案）：兩參數的 SessionJournalStore.write 固定以拒絕 M6 intent 的 validator 解碼，同一 server 先跑的案例留下
+                    // M6 NEW 候選時就寫不出；改走正式 schema5 寫入路徑、以本 server 安裝 state 的正式 validator strict 解碼，不受他案殘留影響。
+                    try { M4CandidateTestAccess.writeJournalServerBound(fixture.server,path,wrapped); }
                     catch(java.io.IOException failure) { throw new java.io.UncheckedIOException(failure); }
                     diskHadArming &= M4CandidateTestAccess.diskRecords(fixture.server).containsKey(initial.sessionUuid());
                     var temp=path.resolveSibling(path.getFileName()+"."+UUID.randomUUID().toString().replace("-","")+".tmp").toString();

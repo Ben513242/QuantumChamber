@@ -17,6 +17,7 @@ public final class DoorWriteFault {
     private static final ThreadLocal<Plan> CURRENT = new ThreadLocal<>();
     private static WriteObservation observation;
     private static ClearFailure clearFailure;
+    private static OpenFailure openFailure;
     private DoorWriteFault() { }
 
     public static <T> T during(ServerWorld world, ChamberFrame frame, boolean throwing, Supplier<T> action) {
@@ -57,6 +58,12 @@ public final class DoorWriteFault {
             clearFailure.attempts++;
             if (clearFailure.attempts==1) return false;
         }
+        var opens=openFailure;
+        if (CURRENT.get()==null && opens!=null && opens.world==world && opens.positions.contains(pos)
+                && state.isOf(ModBlocks.QUANTUM_BULKHEAD) && state.get(QuantumBulkheadBlock.OPEN)) {
+            opens.failures++;
+            return false;
+        }
         var plan = CURRENT.get();
         if (plan == null || plan.world != world || !plan.positions.contains(pos)
                 || !state.isOf(ModBlocks.QUANTUM_BULKHEAD)) return original.getAsBoolean();
@@ -67,6 +74,23 @@ public final class DoorWriteFault {
             return false;
         }
         return changed;
+    }
+    /**
+     * T5 Step 0（T4B 審查 M-2）：在 {@link OpenFailure#close} 之前，這座門（{@code world} 的 25 格門板）改成開門的寫入一律不寫入、回 false；關門照常寫入。
+     * 不限呼叫端（例如回程終局 owner 在 server tick 內的 {@code applyTarget}），只在 server thread 使用；不可重疊。原本的 {@link #during} 範圍內不套用。
+     */
+    public static OpenFailure failOpens(ServerWorld world,ChamberFrame frame) {
+        if (openFailure!=null) throw new IllegalStateException("開門故障scope不可重疊");
+        Set<BlockPos> positions = new HashSet<>();
+        for (int y = 1; y <= 5; y++) for (int x = 1; x <= 5; x++) positions.add(ChamberGeometry.localToWorld(frame, x, y, 0));
+        openFailure=new OpenFailure(world,positions); return openFailure;
+    }
+    public static final class OpenFailure implements AutoCloseable {
+        private final ServerWorld world; private final Set<BlockPos> positions; private int failures;
+        private OpenFailure(ServerWorld world,Set<BlockPos> positions) { this.world=world; this.positions=positions; }
+        /** 被擋下的開門寫入次數（每格每次一筆）。 */
+        public int failures() { return failures; }
+        @Override public void close() { if (openFailure==this) openFailure=null; }
     }
     public static ClearFailure failFirstClear(ServerWorld world,BlockPos position) {
         if (clearFailure!=null) throw new IllegalStateException("清理故障scope不可重疊");
