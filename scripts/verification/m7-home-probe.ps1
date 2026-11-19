@@ -11,7 +11,9 @@
 #                        （分片 PASS）。-RequireComplete 時分片以 M7_HOME_NOT_COMPLETE 失敗。treeClean 不是 true 的 summary 一律以 M7_HOME_SAVED_TREE_DIRTY 拒絕。
 #   -VerifyAggregate <檔,...>  唯讀彙總多份分片 summary（T4 B2b-2）：成員全部 treeClean、同一個 HEAD、各自通過單份驗證，列的聯集恰為 windows.native、沒有重疊；
 #                        合法組合只有「三個 -DoorState 分片＋restart＋receipt」與「close＋restart＋receipt」。PASS 輸出 M7_HOME_AGGREGATE_COMPLETE PASS（T4 完整 PASS）。
-#                        -SelfTest 另跑彙總負控與每一份成員的單份負控（總數上限 479，與 M6 同）。
+#                        -SelfTest 另跑彙總負控與每一份成員的單份負控。
+#   SelfTest 預算（使用者 2026-11-19 11:5x 裁示「上限改 1000 個＋時限 120 秒」）：每一次 -VerifySummary -SelfTest 或 -VerifyAggregate -SelfTest 呼叫各自最多
+#                        1000 個負控、SelfTest 計時 120 秒；超過個數以 M7_HOME_SELFTEST_BUDGET、超過時限以 M7_HOME_SELFTEST_TIME 失敗，不抽樣、不略過負控。
 #   -ExpectedHead <sha>  summary 的 HEAD；未給時用目前 HEAD
 # phase receipt 位置由 testmod M7HomeProbe 固定為 <repo>/.superpowers/verification/m7-home-<nonce>/<phase>/（halt.json 或 final.json）。
 param([string[]]$Only=@(),[ValidateSet('','ordinary','sealed','passable')][string]$DoorState='',[ValidateSet('','close','restart','receipt')][string]$Family='',
@@ -424,11 +426,28 @@ function Assert-M7Aggregate($members) {
     return $combination[0]
 }
 function Copy-M7Json($value) { return $value | ConvertTo-Json -Depth 40 | ConvertFrom-Json -DateKind String }
-# 負控必須以預期的具名錯因被拒（不是任意例外）。
+# SelfTest 預算（使用者 2026-11-19 11:5x 裁示）：每一次 -VerifySummary -SelfTest 或 -VerifyAggregate -SelfTest 呼叫各自最多 1000 個負控、SelfTest 計時 120 秒。
+# 每做完一個負控就核一次，超過就以具名錯誤停下（不抽樣、不略過剩下的負控）；SelfTest 結束（含最後的原件重驗）再核一次。
+$selfTestBudget=1000
+$selfTestSeconds=120
+function Assert-M7SelfTestBudget([int]$Count,[double]$Seconds) {
+    if($Count -gt $selfTestBudget){throw "M7_HOME_SELFTEST_BUDGET：負控 $Count 個超過每次呼叫的上限 $selfTestBudget 個（不抽樣、不略過）"}
+    if($Seconds -gt $selfTestSeconds){throw "M7_HOME_SELFTEST_TIME：SelfTest 耗時 $($Seconds.ToString('0.000',[Globalization.CultureInfo]::InvariantCulture)) 秒超過每次呼叫的上限 $selfTestSeconds 秒（不抽樣、不略過）"}
+}
+function Get-M7SelfTestSeconds { if($null -eq $script:m7SelfTestClock){return 0.0}; return $script:m7SelfTestClock.Elapsed.TotalSeconds }
+# 負控必須以預期的具名錯因被拒（不是任意例外）；每個負控計一次並核預算。
 function Test-M7Rejected([scriptblock]$Check,[string]$Case,[string]$Code) {
     $reason=''
     try {& $Check} catch {$reason=$_.Exception.Message}
     if($reason -cnotmatch ('^'+[regex]::Escape($Code)+'(：|$)')){throw "M7_HOME_SELFTEST_MISSED：$Case 預期 $Code，實際（$reason）"}
+    $script:m7Checks++
+    Assert-M7SelfTestBudget $script:m7Checks (Get-M7SelfTestSeconds)
+}
+# 預算判定本身的負控（每次呼叫一次）：多一個負控、多 0.1 秒都要以各自的具名錯誤被拒；恰在上限時不得被拒。
+function Invoke-M7BudgetSelfTest {
+    Test-M7Rejected {Assert-M7SelfTestBudget ($selfTestBudget+1) 0} 'budget-count' 'M7_HOME_SELFTEST_BUDGET'
+    Test-M7Rejected {Assert-M7SelfTestBudget 0 ($selfTestSeconds+0.1)} 'budget-time' 'M7_HOME_SELFTEST_TIME'
+    try {Assert-M7SelfTestBudget $selfTestBudget $selfTestSeconds} catch {throw "M7_HOME_SELFTEST_MISSED：budget-boundary 恰在上限（$selfTestBudget 個、$selfTestSeconds 秒）卻被拒（$($_.Exception.Message)）"}
 }
 
 # 單份 summary 的負控（-VerifySummary 與 -VerifyAggregate 的每一份成員共用）；計數累加到 $script:m7Checks。
@@ -444,31 +463,56 @@ function Invoke-M7SummarySelfTest($summary) {
         'head-mismatch'=@('M7_HOME_SAVED_SUMMARY',{param($s) $s.head='0'*40})
         'tree-dirty'=@('M7_HOME_SAVED_TREE_DIRTY',{param($s) $s.treeClean=$false})
     }
-    foreach($case in $global.Keys){$bad=Copy-M7Json $summary;& $global[$case][1] $bad;Test-M7Rejected {Assert-M7SavedSummary $bad} $case $global[$case][0];$script:m7Checks++}
+    foreach($case in $global.Keys){$bad=Copy-M7Json $summary;& $global[$case][1] $bad;Test-M7Rejected {Assert-M7SavedSummary $bad} $case $global[$case][0]}
     # 分片冒充完整（T4 B2b-2）：把分片的選擇改成 all 會被選擇核對拒絕；分片本身不能通過完整性判定。
     if(-not (Test-M7Complete $summary)){
         $bad=Copy-M7Json $summary;$bad.selection=[pscustomobject]@{mode='all';doorState='';family='';only=@()}
-        Test-M7Rejected {Assert-M7SavedSummary $bad;Assert-M7Complete $bad} 'shard-claims-complete' 'M7_HOME_SAVED_SELECTION';$script:m7Checks++
-        Test-M7Rejected {Assert-M7Complete $summary} 'shard-not-complete' 'M7_HOME_NOT_COMPLETE';$script:m7Checks++
+        Test-M7Rejected {Assert-M7SavedSummary $bad;Assert-M7Complete $bad} 'shard-claims-complete' 'M7_HOME_SAVED_SELECTION'
+        Test-M7Rejected {Assert-M7Complete $summary} 'shard-not-complete' 'M7_HOME_NOT_COMPLETE'
     }
     # 逐列：兩個 phase 的退出碼、receipt hash 與 receipt 內容（cut、事件序列、狀態）；只重驗該列，原件不改。
     for($i=0;$i -lt @($summary.rows).Count;$i++){
         foreach($p in 0,1){
             $bad=Copy-M7Json $summary;@(@($bad.rows)[$i].phases)[$p].javaExitCode=$(if($p -eq 0){0}else{77})
-            Test-M7Rejected {Assert-M7SavedGlobal $bad;Assert-M7SavedRow $bad $i} "exit-$i-$p" 'M7_HOME_SAVED_EXIT';$script:m7Checks++
+            Test-M7Rejected {Assert-M7SavedGlobal $bad;Assert-M7SavedRow $bad $i} "exit-$i-$p" 'M7_HOME_SAVED_EXIT'
             $bad=Copy-M7Json $summary;@(@($bad.rows)[$i].phases)[$p].receiptSha256='0'*64
-            Test-M7Rejected {Assert-M7SavedGlobal $bad;Assert-M7SavedRow $bad $i} "hash-$i-$p" 'M7_HOME_SAVED_RECEIPT_HASH';$script:m7Checks++
+            Test-M7Rejected {Assert-M7SavedGlobal $bad;Assert-M7SavedRow $bad $i} "hash-$i-$p" 'M7_HOME_SAVED_RECEIPT_HASH'
         }
         $crashReceipt=Read-M7Receipt @(@($summary.rows)[$i].phases)[0].receipt
         $reopenReceipt=Read-M7Receipt @(@($summary.rows)[$i].phases)[1].receipt
         $bad=Copy-M7Json $crashReceipt;$bad.cut=$(if($bad.cut -ceq 'before-close'){'after-close'}else{'before-close'})
-        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/crash"=$bad}} "crash-cut-$i" 'M7_HOME_RECEIPT_IDENTITY';$script:m7Checks++
+        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/crash"=$bad}} "crash-cut-$i" 'M7_HOME_RECEIPT_IDENTITY'
         $bad=Copy-M7Json $crashReceipt;$bad.events=@(@($bad.events)+@([pscustomobject]@{event='extra-event';serverTick=0;gameTime=0;detail='NONE'}))
-        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/crash"=$bad}} "crash-events-$i" 'M7_HOME_CRASH_EVENTS';$script:m7Checks++
+        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/crash"=$bad}} "crash-events-$i" 'M7_HOME_CRASH_EVENTS'
         $bad=Copy-M7Json $reopenReceipt;$bad.status='FAIL'
-        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-status-$i" 'M7_HOME_REOPEN_FAILED';$script:m7Checks++
+        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-status-$i" 'M7_HOME_REOPEN_FAILED'
         $bad=Copy-M7Json $reopenReceipt;$bad.events=@(@($bad.events)+@([pscustomobject]@{event='before-door';serverTick=0;gameTime=0;detail='OPEN/NONE'}))
-        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-events-$i" 'M7_HOME_REOPEN_EVENTS';$script:m7Checks++
+        Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-events-$i" 'M7_HOME_REOPEN_EVENTS'
+        # T4B 的 B 收尾票判定（T4B 審查 M-5；T5 Step 0）：restart／receipt 族才記這兩欄，close 矩陣的 phase 表不記。
+        $spec=Get-M7Spec @($summary.rows)[$i].row
+        if($spec.family -cne 'close'){
+            # M7_HOME_REOPEN_B_TICKET：第一個收尾事件一律不持票（B 無人無票列的 before-close 也還沒有票），改成持票就要被拒。
+            # reopen 沒有事件的列（receipt-player-closed）沒有可改的事件。
+            if(@($reopenReceipt.events).Count){
+                $bad=Copy-M7Json $reopenReceipt;$first=@($bad.events)[0];$first.entryTicket=-not [bool]$first.entryTicket
+                Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-b-ticket-first-$i" 'M7_HOME_REOPEN_B_TICKET'
+            }
+            if($spec.row -ceq 'restart-close-unloaded-b'){
+                # B 無人無票列：CLOSE 凍結之後的收尾事件必須持票、B 沒有玩家；改成沒有票或 B 有玩家都要被拒。
+                foreach($variant in 'released','player'){
+                    $bad=Copy-M7Json $reopenReceipt;$held=@(@($bad.events) | Where-Object {$_.event -cnotin @('before-close','after-close')})
+                    if(-not $held.Count){throw "M7_HOME_SELFTEST_FIXTURE：$($spec.row) 沒有 CLOSE 凍結之後的收尾事件，B 收尾票的負控無從改起"}
+                    if($variant -ceq 'released'){$held[0].entryTicket=$false}else{$held[0].bPlayers=1}
+                    Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-b-ticket-$variant-$i" 'M7_HOME_REOPEN_B_TICKET'
+                }
+                # crash 當下（READY、B 收尾票還沒有）不得持票。
+                $bad=Copy-M7Json $crashReceipt;$bad.atHalt.entryTicketLease=$true
+                Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/crash"=$bad}} "crash-entry-ticket-lease-$i" 'M7_HOME_CRASH_STATE'
+            }
+            # entryTicketLease：收尾之後不得仍持 B 收尾票。
+            $bad=Copy-M7Json $reopenReceipt;$bad.end.entryTicketLease=$true
+            Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-entry-ticket-lease-$i" 'M7_HOME_REOPEN_END'
+        }
     }
     # 負控不改原件：結束再完整重驗一次。
     Assert-M7SavedSummary $summary
@@ -488,26 +532,34 @@ function Invoke-M7AggregateSelfTest($members) {
     foreach($case in $cases.Keys){
         $copy=@(@($members) | ForEach-Object {[pscustomobject]@{path=$_.path;summary=(Copy-M7Json $_.summary)}})
         $bad=@(& $cases[$case][1] $copy)
-        Test-M7Rejected {Assert-M7Aggregate $bad | Out-Null} $case $cases[$case][0];$script:m7Checks++
+        Test-M7Rejected {Assert-M7Aggregate $bad | Out-Null} $case $cases[$case][0]
     }
 }
 
 $head=(git -c "safe.directory=$project" -C $project rev-parse HEAD).Trim()
 if($ExpectedHead){$head=$ExpectedHead}
-$selfTestBudget=479
 $script:m7Checks=0
+$script:m7SelfTestClock=$null
+# SelfTest 的計時從第一個負控之前開始，到最後的原件重驗之後結束；結束時再核一次預算（個數與時限），輸出行記實際的負控數與秒數。
+function Complete-M7SelfTest {
+    $script:m7SelfTestClock.Stop()
+    Assert-M7SelfTestBudget $script:m7Checks (Get-M7SelfTestSeconds)
+}
+function Format-M7SelfTestSeconds { return [Math]::Round((Get-M7SelfTestSeconds),1).ToString([Globalization.CultureInfo]::InvariantCulture) }
 if($VerifyAggregate.Count) {
     $members=@(foreach($path in $VerifyAggregate){[pscustomobject]@{path=$path;summary=(Read-M7Receipt $path)}})
     $combination=Assert-M7Aggregate $members
     if($SelfTest) {
+        $script:m7SelfTestClock=[Diagnostics.Stopwatch]::StartNew()
+        Invoke-M7BudgetSelfTest
         Invoke-M7AggregateSelfTest $members
         foreach($member in $members){Invoke-M7SummarySelfTest $member.summary}
-        if($script:m7Checks -gt $selfTestBudget){throw "M7_HOME_SELFTEST_BUDGET：負控 $($script:m7Checks) 個超過上限 $selfTestBudget"}
         # 負控不改原件：結束再完整重驗一次彙總。
         $null=Assert-M7Aggregate $members
+        Complete-M7SelfTest
     }
     $rowTotal=@($members | ForEach-Object {@($_.summary.rows)}).Count
-    Write-Output "M7_HOME_AGGREGATE_COMPLETE PASS combination=$combination summaries=$($members.Count) rows=$rowTotal phases=$(2*$rowTotal) negativeChecks=$($script:m7Checks) HEAD=$head（T4 完整 PASS：分片彙總）"
+    Write-Output "M7_HOME_AGGREGATE_COMPLETE PASS combination=$combination summaries=$($members.Count) rows=$rowTotal phases=$(2*$rowTotal) negativeChecks=$($script:m7Checks) selfTestSeconds=$(Format-M7SelfTestSeconds) HEAD=$head（T4 完整 PASS：分片彙總）"
     return
 }
 if($VerifySummary) {
@@ -515,12 +567,14 @@ if($VerifySummary) {
     Assert-M7SavedSummary $summary
     if($RequireComplete){Assert-M7Complete $summary}
     if($SelfTest) {
+        $script:m7SelfTestClock=[Diagnostics.Stopwatch]::StartNew()
+        Invoke-M7BudgetSelfTest
         Invoke-M7SummarySelfTest $summary
-        if($script:m7Checks -gt $selfTestBudget){throw "M7_HOME_SELFTEST_BUDGET：負控 $($script:m7Checks) 個超過上限 $selfTestBudget"}
+        Complete-M7SelfTest
     }
     $scope=$(switch -CaseSensitive ($summary.selection.mode){'doorState'{"doorState:$($summary.selection.doorState)"};'family'{"family:$($summary.selection.family)"};default{$summary.selection.mode}})
-    if(Test-M7Complete $summary){Write-Output "M7_HOME_VERIFIED_COMPLETE PASS rows=$(@($summary.rows).Count) phases=$($summary.phaseCount) negativeChecks=$($script:m7Checks) selection=$scope HEAD=$head（T4 完整 PASS）"}
-    else{Write-Output "M7_HOME_VERIFIED_SHARD PASS rows=$(@($summary.rows).Count)／$(@($inventory.windows.native).Count) phases=$($summary.phaseCount) negativeChecks=$($script:m7Checks) selection=$scope HEAD=$head（分片 PASS，不是 T4 完整 PASS；完整請用 -VerifyAggregate 彙總）"}
+    if(Test-M7Complete $summary){Write-Output "M7_HOME_VERIFIED_COMPLETE PASS rows=$(@($summary.rows).Count) phases=$($summary.phaseCount) negativeChecks=$($script:m7Checks) selfTestSeconds=$(Format-M7SelfTestSeconds) selection=$scope HEAD=$head（T4 完整 PASS）"}
+    else{Write-Output "M7_HOME_VERIFIED_SHARD PASS rows=$(@($summary.rows).Count)／$(@($inventory.windows.native).Count) phases=$($summary.phaseCount) negativeChecks=$($script:m7Checks) selfTestSeconds=$(Format-M7SelfTestSeconds) selection=$scope HEAD=$head（分片 PASS，不是 T4 完整 PASS；完整請用 -VerifyAggregate 彙總）"}
     return
 }
 
