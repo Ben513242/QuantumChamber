@@ -1,10 +1,311 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 最新：T4B CLOSED（2026-11-19）
+
+下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`，V 指 `.superpowers/verification/`，兩者都 gitignored。本節的事實讀自 S 的 `STATUS.md`（2026-11-19 的 11:5x、09:3x、08:3x、06:4x、02:2x、02:1x、02:0x、01:4x 各段與 2026-11-18 21:0x 段）、`t4b-report.md`、`t4b-review.md`、`t4b-closeout-docs-review.md`、`t4b-full-m5-fail-investigation.md`、`user-t4b-full-rerun-ruling-20261119.md`、`user-m7-selftest-cap-ruling-20261119.md`、`m7-selftest-margin-analysis.md`、`t4b-accept-check/`、`t4b-step0/mutation/mutation-log.txt`、`ci-44362426613-run.json`、兩個 holder 目錄，V 的 `run-all-902b2e397d67468b80a9e2b6ab61bb1a`、`run-all-b90f443e98784cbbb1c4903cb292d90c` 與 `t4b-m5-inv-ba90ecab264a4e7cb83e5a04d077bc71`，以及 git 與 `gh run view`（含 `--log`）的唯讀查詢。
+
+- **狀態**：T4B CLOSED。
+  - code pin：production 的最後一筆是 `0f04037`。之後的 `e3eea5a` 只改 testmod：`git diff --stat 0f04037 e3eea5a` 只列 `src/testmod/java/dev/quantumchamber/gametest/M7HomeEntryTicketGameTests.java`（+16／−5）。`git ls-remote origin` 讀回 `codex/m7-return-home` 是 `e3eea5a18e4baa4f00eef5cb41b2706edfc86c01`。
+  - commit 範圍 `70ed3d9..e3eea5a`，共五筆（見下表）。
+  - 完整回歸：第一次 `run-all-902b2e39…` 在 M5 GameTest FAIL，原判保留；依使用者 2026-11-19 06:3x 裁示換新 nonce 重跑一次，`run-all-b90f443e…` 自然 `END ALL exit=0`，採計條件 26 項全 PASS。兩次的 HEAD 都是 `e3eea5a`。
+  - 審查：一席（spec＋quality 同席）spec ✅、quality Approved，C0／I0／M7。
+  - CI：`e3eea5a` 的 44362426613 attempt 1 十個 job 全部 success，與完整回歸同一個 SHA。沒有動用 M5 熔岩偶發的讀法。
+  - 前一筆 docs commit `70ed3d9`（T4A 結案 docs）的 CI 44303845565 attempt 1 十個 job 全部 success（S `STATUS.md` 2026-11-18 21:0x 段）。
+  - SelfTest 負控上限：使用者 2026-11-19 11:5x 選「上限改 1000 個＋時限 120 秒（建議）」，實作排在 T5 Step 0 第一項（見下方「SelfTest 負控上限的使用者裁示」）。
+  - T4B 結案不代表 M7 完成。main 合併、tag、人工代操作、worktree 退役仍各自另問使用者。
+
+### commit
+
+| commit | 內容 |
+| --- | --- |
+| `71d5b90` | Step 0：`OriginDoors` 的 Javadoc 與註解、`ChamberDoorService` 的可見性、`SuperpositionSessionManager` 的 Javadoc、`M7RearmGameTests`／`M7SealReleaseGameTests` 新案、inventory、`scripts/verification/README.md` |
+| `8e12954` | test：RED 兩案（`src/main` 不變）；testmod 不能編譯 |
+| `6c6051f` | test：RED 編譯修正（未 checked 觀察窗口的 `until` 補上逾時回呼，+5／−1） |
+| `0f04037` | T4B 本體：production、測試、原生列、`run-all.ps1`／`build.yml`／README |
+| `e3eea5a` | test：每個 tick 結束時另核 CLOSE 未 checked 時不持 B 收尾票 |
+
+- 全部逐檔 stage（S `t4b-report.md` 末節）。`70ed3d9..e3eea5a` 的改動檔都在 plan Task 4B「新增／修改」與派工簡報的 Step 0 授權範圍內；plan 列的 `M7HomeProbe.java` 與 Step 0 授權的 `M7RearmLatchTest.java` 沒有改（審查第 2 節「清單外檔案：無」）。
+- `8e12954` 不能編譯而且已 push，bisect 會停在不能建置的 commit（審查 M-6）。Step 0 commit 的 type 寫 `test(m7)`，但含 production 的 Javadoc 與 M-5 的可見性調整（審查 M-6）。審查認為這些都已揭露，建議在 note 寫明、不改歷史。
+- 首次 push 遇到連不上 github.com:443（兩次），稍後重試成功（S `STATUS.md` 01:4x 段）。
+
+### Step 0（`71d5b90`）
+
+出處：S `t4a-v16-review.md` 的 M-1～M-8、S `t4a-v16-fix1-review.md` 的 M1～M3，以及下方「最新：T4A CLOSED（2026-11-18）」節「殘留交 T4B Step 0」的 12 點。審查第 1 節逐項判定都是 ✅。
+
+| 項 | 處置 |
+| --- | --- |
+| M-1、M-6 | `OriginDoors.claimsDoor` 的 Javadoc 改寫成 3(a) 的可達性不變量，標明是 spec G 節第 7 點的 controller 讀法；`OriginDoors.door` 的 Javadoc 改為 `sessionAt` 只讀記憶體內的 journal record 與 `ChamberRegistryState`。 |
+| M-2 | 補設 latch 那行加註解，另加具名 GameTest `M7RearmGameTests.close_after_terminal_relatches_before_system_close`（兩平台）。變異 S0-A（拿掉補設）與 S0-B（移到 `applyTarget` 之後）都以 `REARM_LATCH_LOST` 失敗。Windows 以出發殺掉；變異在 Ubuntu 分支會不會被殺只有讀碼推論。 |
+| M-3 | 新 GameTest `M7SealReleaseGameTests.door_authority_requires_origin_and_not_destroyed`：以反射把 registry 同一筆改成 destroyed、再改成 PROJECTION，都不排入重新套用。S0-C（拿掉 ORIGIN 條件）以 `projectionRowIsNotTheDoorAuthority=false`、S0-D（拿掉 destroyed 條件）以 `destroyedRowIsNotTheDoorAuthority=false` 失敗。 |
+| M-4 | `protectedNow` 與 HOME 對照改成在試拆之前以具名錯因立即丟出。只驗了 GREEN 通過，沒有以 T4A 的 M8／M9／M11 實跑新錯因。 |
+| M-5 | `ChamberDoorService.toggle(…, Toggled)` 多載與 `Toggled` 介面降為 package-private；唯一呼叫端 `WorldChamberDoorAdapter` 在同一個 package。 |
+| M-7 | 只評估、不改行為，結論寫進 `SuperpositionSessionManager.permanentlySealedOnly` 的 Javadoc：能留下失效暫占記號的只有同 SID 的 HOME 列，HOME 永久封存的產生點屬 T6，目前不可達、屬 fail-closed。 |
+| M-8 | `rebuilt_chamber_door_ignores_released_seal_after_restart_reapply` 補斷言：開服提醒恰一則、含「解除佔地：」與「封存紀錄保留在 journal」，不符時以獨立錯因 `PERMANENT_RELEASE_HINT_MISSING` 失敗。舊斷言不動。 |
+| fix1 M1～M3 | `CheckpointMemo` 記原值、清成 null、一律期待恰 1 則、收尾還原；已出發分支補 `departsOnlyOnCheckpointPlatform`；`capture` 失敗時先 `releaseAfter`，Javadoc 補「已恢復通過」INFO。 |
+| 3(a) 加固 | 不做。自然路徑造不出「開門類待套用門套到原地重建的新艙」，只能以反射造不可達狀態，與 T4A 審查 3(b) 對 M10 的判定同理；維持 spec G 節第 7 點的讀法。審查判定理由成立。 |
+
+- 證據：開發中定向 root S `t4b-step0/gate-t4b-step0-dev1-ba12f39c…`（8 個 GameTest 全過，JUnit `M7RearmLatchTest` 3/3）；變異 S `t4b-step0/mutation/{S0-A,S0-B,S0-C,S0-D}/`，pin `71d5b90` 的 `OriginDoors.java` SHA-256 記在 `pin-hashes-71d5b90.txt`。`mutation-log.txt` 只有三行：`S0-A restored OK`、`S0-B restored OK`、`S0-C restored OK (via S0-D apply); S0-D restored OK`。也就是 S0-A、S0-B、S0-D 還原後 `sha256sum -c` OK；S0-C 沒有單獨還原，直接改成 S0-D，中間沒有單獨核 SHA，最終還原 SHA 與 pin 相同（審查 M-6）。乾淨 pin 的證據併在下方「focused」。
+- Step 0 commit 同步在 `m7-inventory.json` 加了這兩個 GameTest（exact 集合由 inventory 驅動）。
+
+### RED
+
+- `8e12954` 的 testmod 不能編譯（未 checked 窗口的 `until` 少了逾時回呼），原 root S `t4b-red/gate-t4b-red-fb33909da89d47d78a15854de7d0e0d4` 保留；它是編譯失敗，不是具名 RED。`6c6051f` 只補回呼（test-only），implementer 記為一次自己的程式錯。
+- 具名 RED 取自 `6c6051f`。`71d5b90..6c6051f` 沒有 `src/main` 變更；`71d5b90` 對 `70ed3d9` 的 `src/main` 只有 Javadoc、註解與 M-5 的可見性，審查判定兩個 RED 都代表現行 production（審查第 2 節）。
+- GameTest：root S `t4b-red/gate-t4b-red-gt-60a12839e7c7471f930731e296edd0cf`（記有 `quantumchamber.m7game.head=6c6051f…`），XML SHA-256 `c56b43ea…2e78`。`close_loads_unloaded_b_with_bounded_ticket` 以 `CLOSE_PENDING_WITHOUT_B_TICKET` 失敗：CLOSE 已 checked、B 未載入時 400 tick 內沒有收尾，`row=current=CLOSE flushed=CLOSE rollForward=false 票=[]`。未 checked 窗口的樣本是 `current=CLOSE flushed=NONE rollForward=true`，前提成立。這個 root 的 thresholds 是重新保持 B 之後才記的（所以顯示 VALID），GREEN 已改成先記再保持（報告偏離 3、審查 M-6）。
+- JUnit：root S `t4b-red/gate-t4b-red2-3a29c247064747ca97c4f7eaeef62d55`，`entryAndRootSameXzDifferentWorldCountSeparately` 以 `A 與 B 同 XZ 異世界各記一格 ==> expected: <2> but was: <1>` 失敗，XML SHA-256 `d04992c1…e7ee`。這個 root 的 `execution/execution.json` 記有 `-Pm7Head=6c6051f1d1f4ec1ff661fa0e0e8889e4a7dd522a`（`gates.ps1:480` 以 `git rev-parse HEAD` 取得；GameTest root 的 `quantumchamber.m7game.head` 也是由同一個屬性帶入，`build.gradle:188`），所以兩個 RED root 記 HEAD 的證據等級相同，都沒有記工作樹是否乾淨；root 的啟動時間 21:10:05 也晚於 `6c6051f` 的 21:09:57。審查 M-6 寫「JUnit RED root 沒記 HEAD」，與原件不符（docs 審查 I-1）。RED 版以 T4 的 API（兩個 SID 同 chunk long）表達 A 與 B，GREEN 版改傳 world＋chunk，斷言相同。
+- JUnit 失敗時 Gradle 不跑 GameTest，所以兩個 RED 分兩個 root。原生新列沒有在 RED commit 上跑（plan :531 的 RED 只有上述兩案）。
+
+### GREEN
+
+- root S `t4b-green/gate-t4b-green-gt-5b43e970d3a54273bfe8aaa8e828ae81`（pin `e3eea5a`，head 已記）：6 個新 GameTest 全過（XML `3a93d704…aac`），JUnit `M7HomeCoverageTest` 4/4。
+- 新 GameTest 都在 `M7HomeEntryTicketGameTests`，batch 以 `m7_home_entry_ticket_` 開頭，兩平台都跑：
+  1. `close_loads_unloaded_b_with_bounded_ticket`（RED 案）：收尾只用過一份 `CLOSE_CONVERGE` 票，`refs` 等於 B 的 homeChunks 數；未 checked 期間在 test callback 與每個 tick 結束時都沒有票；checked 移除的那個 tick 結束時已沒有票；B 門 OPEN/NONE、收據 ROOT_DISABLED、解除 busy。
+  2. `close_ticket_never_full_releases_and_backs_off`：以反射把 `HomeEntryTickets.backend` 換成「不加票、永遠不 FULL」的 Proxy。
+  3. `close_ticket_budget_exhausted_warns_and_retries`：以 64 份遠處的測試 reservation 佔滿。
+  4. `close_ticket_released_on_reload_and_stop`：`/reload` 沿 M6／T4A 直接觸發 Fabric START／END_DATA_PACK_RELOAD；停服以反射呼叫票 owner 的 `closeAll(server, true)` 再還原 `stopping`，不是真的 SERVER_STOPPING（報告偏離 6）。
+  5. `restart_verify_ticket_loads_b_for_unreadable_seal`：READY→SEALED(AUTHORITY_UNREADABLE) 經正式 journal 入口；以反射把 SID 加進 `HomeClosure` 本 instance 的開服集合，以 RESTART_VERIFY 票載入 B、RESTART_CLOSED 收尾。
+  6. `close_ticket_releases_the_root_ticket_first`：plan 沒有列，為了殺變異「不先釋放 A 票」而加（報告偏離 7）。COLLAPSING 列持有正式 `HOME_PREPARE_PASSAGE` A 票時 checked latch 停止原因，下一個 tick 必須已有 B 票、沒有 A 票、沒有「取不到」WARN。
+- `e3eea5a` 只改 testmod：把 `RemovalWatch` 提前到凍結之前，並加每個 tick 結束時的 `leaseWithoutCheckedClose` 觀察，用來殺「CLOSE 未 checked 就取票」（只存在一個 tick 的票只有 tick 結束時的觀察看得到）。審查 4(c) 判定這個案例與 `e3eea5a` 都恰當。
+- B 本來就載入時不經票路徑，行為與 T4 相同；既有 39 列 close 矩陣（B 由測試票保持）的行為不變，由完整回歸的 47 列 COMPLETE 與 CI 的四片確認（見下方）。
+- Ubuntu：本機沒有 Ubuntu。CI 44362426613 的 Ubuntu `m7-validation` 讀回 `M7_VERIFIED PASS platform=Ubuntu junit=53 gametest=47`（launched True、False 各一行），exact 集合由 inventory 驅動；T4B 的 6 案與 Step 0 的 2 案都是兩平台案。
+
+### mutation
+
+pin `e3eea5a`，root S `t4b-mutation/M<n>/`；`pin-hashes-e3eea5a.txt` 記 `HomeClosure.java`、`HomeEntryTickets.java`、`SlotAllocator.java` 三檔的 SHA-256，審查核過與 `git show e3eea5a:` 的 blob 相同。`mutation-log.txt` 六次都是 `restored OK`，每次還原後 `git status` 乾淨。
+
+| # | plan :541 的變異 | 殺手（具名） |
+| --- | --- | --- |
+| M1 | coverage key 拿掉 world | JUnit `entryAndRootSameXzDifferentWorldCountSeparately`（expected 2 but was 1） |
+| M2 | 退避期間持票 | `close_ticket_never_full_releases_and_backs_off`：`NEVER_FULL_NOT_RELEASED` |
+| M3 | CLOSE 未 checked 就取票 | `close_loads_unloaded_b_with_bounded_ticket`：`noTicketWithoutACheckedCloseAtAnyTickEnd=false` |
+| M4 | 不先釋放 A 票 | `close_ticket_releases_the_root_ticket_first`：`entryTicketTakenInTheSameTick=false`、`noUnavailableWarn=false` |
+| M5 | 逾時不記 WARN | `close_ticket_never_full_releases_and_backs_off`：`oneExpiryWarn=false`、`oneCapError=false` |
+| M6 | 移除後不釋票 | `close_loads_unloaded_b_with_bounded_ticket`：`ticketReleasedInTheRemovalTick=false` |
+
+- M2、M3 都是兩處合成的變異，原件只有合成版的 diff 與 gate root。M2 同時拿掉「租期到的 close」與「`backOff` 的釋放」而被殺。
+  - 讀測試可以確認：沒有任何案例在「持票中發生門、移除或交接失敗」時核對釋放（審查 M-2）。
+  - 單改一處時另一個釋放點（`refresh` 或 START tick 的列不再適用）會補上、兩個元件各自單獨變異預期會存活，這兩點是 implementer 與審查 M-2 的讀碼分析；單點變異沒有實跑（審查員只讀、沒有跑 Gradle）。
+- M3 在 test callback 的觀察 `noTicketBeforeTheCloseIsChecked` 仍是 true，要靠 `e3eea5a` 的每 tick 結束時觀察才殺得到。
+
+### 原生列與 SelfTest
+
+- 新列 `restart-close-unloaded-b`（restart 族、passable、cut `ready-saved`）：crash 在 READY＋部分 Crossed 落盤之後；reopen 不保持 B、不讀 B 門，參與者收尾之後才登入。正式 owner 以 RESTART_CLOSED 凍結 CLOSE，取 `CLOSE_CONVERGE` 票載入 B；before-door 起每個事件都有票、B 玩家 0（Java `bClosedByTheEntryTicket`，runner 判定 `M7_HOME_REOPEN_B_TICKET`）；收尾後 `entryTicketLease=false`、A 解除 busy、`crossedKept`。implementer 實測 reopen tick 21 收尾。
+- 其他 restart／receipt 族 7 列另核 `noEntryTicket`，runner 核每個事件 `entryTicket=false` 與結束時 `entryTicketLease=false`。close 矩陣 39 列不改。
+- 原生列由 46 列／92 phase 變成 47 列／94 phase。硬編同步在 `m7-home-probe.ps1`、`m7-inventory.json`、`run-all.ps1`、`build.yml`、`scripts/verification/README.md`，審查第 2 節核過一致。
+- SelfTest 負控上限 479 沒有改（`m7-home-probe.ps1` 的上限）：
+  - 單份完整 47 列 384（8＋8×47）：完整回歸實際輸出 `negativeChecks=384`；
+  - CI 門態五份彙總 434（8＋10×5＋376）：CI 44362426613 的 `m7-home-native-aggregate` 讀回 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=47 phases=94 negativeChecks=434`；
+  - family 三份 414（8＋10×3＋376）：`scripts/verification/README.md` 的公式值，本筆沒有實跑原件。
+- 都在 479 之內。但 plan :539 要求的「先依 T5 Step 0 第 5 點定 SelfTest 餘量策略」沒有做：派工簡報把它收窄成 ≤479 的檢查，implementer 照簡報做；新判定 `M7_HOME_REOPEN_B_TICKET`、`entryTicketLease` 也沒有 SelfTest 負控（缺欄位時 fail closed，不是空判定）。兩者都是審查 M-5。使用者已於 2026-11-19 11:5x 裁示負控上限（見下方「SelfTest 負控上限的使用者裁示」），實作與補負控排在 T5 Step 0 第一項。
+- 乾淨 pin `e3eea5a` 本機另跑（S `t4b-native-clean/`）：`-Family restart` 4 列、`-Family receipt` 4 列、`-DoorState passable` 13 列，各自 `-VerifySummary -SelfTest` PASS，treeClean=true。ordinary、sealed 兩片與 47 列完整一次由完整回歸與 CI 負責。
+- 開發中一次 runner 失敗（StrictMode 下空集合被展開成 `$null`），是 implementer 自己的 script 錯，修正後 PASS。
+
+### focused
+
+乾淨 pin `e3eea5a` 兩輪，root S `t4b-focused/r1`、`r2`。每輪依序：M7 全集合（執行與 `-VerifyOnly -SelfTest`）、`ProjectionProtectionIndexTest`、`M7HomeCoverageTest`、新原生列加 `-VerifySummary -SelfTest`。
+
+| 項 | r1 | r2 |
+| --- | --- | --- |
+| M7 全集合 | `M7_VERIFIED PASS platform=Windows junit=53 gametest=51`（launched True、False），gametest.xml `3a616fd6…c299` | 同左，`ae27036f…23cb2` |
+| `ProjectionProtectionIndexTest` | 12/12 | PASS |
+| `M7HomeCoverageTest` | 4/4 | PASS |
+| 新原生列 | `M7_HOME PASS rows=1`，`M7_HOME_VERIFIED_SHARD PASS … negativeChecks=18 selection=only` | 同左 |
+
+M7 全集合的 gametest 51 是 T4A 的 43 加 Step 0 兩案、T4B 六案；junit 53 是 52 加 1。
+
+### 完整回歸第一次 FAIL（原判保留）
+
+- holder S `t4b-full-holder-da9559c954ec402b881ac7665ea6b8eb`：holder PID 27876、run-all PID 18668，2026-11-18 17:43:31Z 開始，`CHILD_CODEPAGES=65001,65001,65001`，`exit.txt` 為 1。
+- run-all root `V/run-all-902b2e397d67468b80a9e2b6ab61bb1a`，HEAD `e3eea5a`。2026-11-19 01:43:32（+08:00）開始；`w10-preflight`、`full`、`m4-normal`、`legacy` 都 exit=0，接著 `END m5-gametest FAIL GameTest gate exit=1`，沒有 `END ALL`。本筆讀回時 `console.log` 的 SHA-256 是 `D5BFCBDE…A717`。
+- 失敗：gate root `gate-m5-gametest-167629ab7ba74122808f04a49afea78c`，M5 GameTest 60 案中唯一失敗的是 `m5universeprojectiongametests.prepare_waits_while_another_projection_write_is_unconfirmed`，XML 的 message 是「(-12654555, -60, 7527424) journal checked 落盤失敗，保留 dirty 與上一個 durable snapshot」，`time="0.044"`。XML SHA-256 `CBFC2A61…4858`（調查第 1 節）。
+- 四個 gate 的世界都是 `exactRestored=true`，之後只剩 Gradle daemon（S `STATUS.md` 02:0x 段）。
+- 調查（S `t4b-full-m5-fail-investigation.md`，唯讀，HEAD `e3eea5a`）：
+  - 失敗點：例外只由 production `SessionRecoveryState.java:1101` 內層 catch 的 checked 包裝產生，表示 `save` 的 PREPARE／WRITE／READBACK 其中一段真的失敗；M5 run 的故障注入不會產生這則訊息（證實）。失敗的寫入是本案 fixture `DormantOrigin.own` 對新收據 `50c180cb…` 的 journal checked flush，約在 test tick 3～4，本案還沒進入 RESOLVE、也還沒裝任何故障注入（推論，強）。
+  - cause 未記錄：這條路徑把例外直接丟給 GameTest，XML 只寫 message，log 不印 stack，暫存檔也在 `finally` 刪掉。所以 runtime log 沒有 `AccessDeniedException` 不能排除 AccessDenied。最可能是 Windows atomic move 的暫時性 AccessDenied，這是推論（中），沒有證實；持鎖的程序從原件無法證明。
+  - 與 T4B 無關的證據（證實）：失敗路徑上的 `SessionRecoveryState`、`SessionJournalStore` 與 testmod 的 `M5GameTestSupport`、`M5UniverseSupport`、`M5UniverseProjectionGameTests`、`M4CandidateTestAccess` 在 `70ed3d9..e3eea5a` 都沒有改；本 run 的 journal 是 schema 5、沒有 HOME 列，log 中「回程」「B 收尾票」「原艙票」都是 0 筆，T4B 新增的 tick handler 在 M5 run 都不做事；`reserveRootCoverage`／`RootChunk` 只被 A 票與 B 收尾票使用；與 T4A `c091581` 的 M5 runtime log 正規化後逐類比較 WARN／ERROR，除了本次失敗本身與兩則數值格式差異之外完全相同。T4B 只可能極間接地改變 tick 時序，這不構成 journal IO 失敗的機制（推論）。
+  - 調查重現：在 `e3eea5a` 以新 nonce 跑三次，root `V/t4b-m5-inv-ba90ecab264a4e7cb83e5a04d077bc71/`。
+    - r1 完整 M5 gate：59/60。本案 PASS（3.069 秒）；另一案 `prepare_seals_a_conflict_when_another_chamber_completed_an_overlapping_projection` FAIL，log 證實 cause 是 `quantumchamber_projections.dat` 的 atomic move `java.nio.file.AccessDeniedException`，打在測試 fixture 自己的 checked 寫入，與 T2 `run-all-b893e945…` 同簽章。
+    - r2 完整 M5 gate：60/60。
+    - r3 只跑本案：1/1。
+    - 三次的世界都 `exactRestored=true`。本案在 `e3eea5a` 上三次都 PASS，`converged=201 ready=202`，與 T4A 同案相同。
+  - 分類：(b) 既有的環境偶發。因為 cause 沒有被記錄，只能寫「已知類型、原因推論」，不能寫成「已證實 AccessDenied」。
+  - 調查的建議：不修 production；簽章沒有被記錄、只能推論，不宜由 controller 自行套用 AccessDenied 單次重跑規則，交使用者裁示；另把 fixture 的寫入失敗記下 cause 列入 T5 Step 0（只改 testmod）。
+- 更正：S `STATUS.md` 02:0x 段原寫「runtime log AccessDenied 0 則，非 AccessDenied」。這條寫入路徑本來就不記 cause，log 0 則不能排除 AccessDenied，所以「非 AccessDenied」不成立；02:2x 段已更正為 cause 未記錄、無法判定，02:0x 段也已加註。
+
+### 使用者原文（2026-11-19 06:3x）
+
+AskUserQuestion，題目與選項由 controller 撰寫；S 原文檔 `user-t4b-full-rerun-ruling-20261119.md`。原文檔的背景段是 controller 寫的說明，不是使用者原文。
+
+- 題目（header「T4B 回歸」）「T4B 完整回歸的 M5 失敗，原因很可能是 Windows 存檔鎖檔（AccessDenied），但沒被記錄、無法證實；同一案重跑 3 次都通過，找不到 T4B 造成的證據。要怎麼處理？」
+- 選項：
+  1. 「視同 AccessDenied，重跑一次（建議）」：「保留原 root，換新 nonce 對同一個 pin 重跑完整回歸一次。調查時單跑 M5 碰到的那次 AccessDenied 不是完整回歸，不計入次數。重跑再失敗（任何原因）就停下回報。測試寫入失敗時要記下原因的修正，排進 T5 Step 0。」
+  2. 「先補診斷再跑」：「先改測試，讓寫入失敗時記下原因，順便修 T4B 審查的 Minor，用新 pin 重新跑完整回歸與 CI。較慢，但之後再遇到能判定簽章。」
+  3. 「先停在這裡」：「不重跑、不修改，T4B 維持未結案，等你另行指示。」
+- 使用者選「視同 AccessDenied，重跑一次（建議）」。
+- controller 的執行說明（不是使用者裁示，S 原文檔同名段）：
+  - 這次重跑用掉 `e3eea5a` 這個 pin 的 AccessDenied 單次額度；重跑再失敗（任何簽章）就停下回報，不再重跑。
+  - 調查用的 r1 依選項說明不計入次數。
+  - fixture 的 checked 寫入失敗時，記一則帶 cause 的 ERROR 再原樣丟出（只改 testmod），列入 T5 Step 0。
+
+### 重跑（依 06:3x 裁示，換新 nonce）
+
+- holder S `t4b-full-holder-b5aa425c22f2480b998e8adfdd1bfdec`：holder PID 32236、run-all PID 8852，2026-11-18 22:40:15Z 開始，`CHILD_CODEPAGES=65001,65001,65001`，`exit.txt` 為 0。
+- run-all root `V/run-all-b90f443e98784cbbb1c4903cb292d90c`，HEAD `e3eea5a`。
+  - 2026-11-19 06:40:15（+08:00）開始，08:23:27 `END summary exit=0`，接著自然 `END ALL exit=0 HEAD=e3eea5a18e4baa4f00eef5cb41b2706edfc86c01`。
+  - console 第 2 行 `STATUS ` 後面是空的，沒有任何 `END … FAIL`；`END m5-gametest exit=0`。
+  - 本筆讀回時 `console.log` 的 SHA-256 是 `8EC580A2…817C`，`summary.json` 是 `BFB454A0…AA2D`。
+- `SUMMARY` 行（逐字）：
+
+  ```
+  SUMMARY default=166/166 windows=76 legacy=1/1 m5=60/60 m6=35/35 m6pace=36.7 normal=13/13 perTest=43+13+1 junit=1199 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=639entries/592classes sources=276 testmodHits=0 mainOnly=PASS m3=4+5 recovery=25 m5collapse=69 m6native=DIAGNOSTIC:2,FUNCTIONAL:25 ci=win:PASS,ubuntu:PASS m7native=COMPLETE:47 m7scale=PASS:11
+  ```
+
+- 其他關鍵行，都帶 `HEAD=e3eea5a…`：
+  - `M7_VERIFIED PASS platform=Windows junit=53 gametest=51`（launched True、False 各一行）；
+  - `M7_SCALE_VERIFIED PASS platform=Windows junit=11`（launched True、False 各一行）；
+  - `M7_HOME PASS rows=47 phases=94 selection=all seconds=1683.7`；
+  - `M7_HOME_VERIFIED_COMPLETE PASS rows=47 phases=94 negativeChecks=384 selection=all`；
+  - `M6_NATIVE_VERIFIED PASS chains=9 phases=27 negativeChecks=479`。
+
+### 採計條件
+
+- 條件來源同 T4、T4A：S `t4b2b3-review.md`「B2b-4 審查」第 2 節，加上「B2b-5 審查」第 4 節的延伸。T4B 版沿用 T4A 版由 `m7-inventory.json` 推出 M7 預期案數（junit 53、gametest 51、與規模段聯集 64），另把原生的列數、phase 數與負控數改成參數。
+- controller 以唯讀腳本、參數 47／94／384 逐項核對，26 項全 PASS（`ACCEPT_FAILS=0`）。原件在 S `t4b-accept-check/`：`t4b-accept-check.ps1`（SHA-256 `75B5F43B…93C5`）、`t4b-accept-check-result.json`（`CF751431…79F3`）。
+- 核對內容：
+  - 乾淨 code pin：console 第 2 行 `STATUS ` 後面是空的（本筆讀 console 確認，不在 26 項腳本內）；
+  - `END ALL exit=0 HEAD=e3eea5a…` 恰一行，沒有 `END … FAIL`；
+  - `m7HomeNative` 為 COMPLETE、47 列、94 phase，記錄的 SHA 與重算一致（`m7-home-run-1f1cbce2c02d.json`，`9E9AC0BB…A9D4`）；
+  - console 有 47 列 COMPLETE 的 verify 行、`END m7-home-native exit=0`、`negativeChecks=384` 的 COMPLETE 行；
+  - `SUMMARY` 行尾有 `m7native=COMPLETE:47` 與 `m7scale=PASS:11`；
+  - `END m7-home exit=0` 與 `M7_VERIFIED PASS … junit=53 gametest=51`；
+  - `END m7-scale exit=0`，launched 與 VerifyOnly 兩行 `M7_SCALE_VERIFIED PASS`；
+  - `m7HomeScale` 的 scope、status、head 相符，11 案；`m7Home.junitCases` 恰 53 個、不含規模測試，兩者聯集 64；
+  - 規模段的 `execution.json` 為 600／90、`phaseDeadline` 為空、只有一個 `--tests`；M7 gate 的 `execution.json` 不含規模測試。
+- 負控：同一支腳本改用舊的 46／92／376 對同一個 root 核對，`ACCEPT_FAILS=5`（`native.rows`、`native.phases`、`native.verifyLine`、`native.neg`、`summaryLine.native`），證明參數化的項目真的會拒絕舊數字（S `STATUS.md` 08:3x 段）。負控原件是 S `t4b-accept-check/t4b-accept-check-negative-46-92-376.json`（SHA-256 `C8A95336…D8B6`，末行 `ACCEPT_FAILS=5`，STATUS 09:3x 段記為補存）。另外，本筆起草時以同一支唯讀腳本對同一個 root 重算正、負兩組，結果相同（腳本只讀檔、只輸出到 console），可作佐證。
+
+### 同 SHA CI
+
+本筆讀 S 的 `ci-44362426613-run.json`（`gh run view --json jobs` 的原件），另以 `gh -R Ben513242/QuantumChamber run view 44362426613` 讀回 event、時間與各 job 的關鍵 log 行。
+
+| run | head | 結果 | 說明 |
+| --- | --- | --- | --- |
+| 44362426613 | `e3eea5a` | attempt 1，event push，十個 job 全部 success | build、m7-validation（Ubuntu、Windows）、m7-home-native 四片（ordinary、sealed、passable、restart-receipt）、m7-home-native-aggregate、m6-native、windows-native。建立 17:46:46Z，最後更新 18:29:34Z。關鍵行：Ubuntu `M7_VERIFIED PASS platform=Ubuntu junit=53 gametest=47`、Windows `M7_VERIFIED PASS platform=Windows junit=53 gametest=51`、aggregate `negativeChecks=434`，都帶 `HEAD=e3eea5a…` |
+
+- 完整回歸與 CI 都在 `e3eea5a`，所以這次不涉及 T4A 那樣的 B+C 採計。
+- 沒有動用 M5 熔岩偶發的讀法，被忽略的 run 是零筆。
+
+### 審查
+
+- S `t4b-review.md`，一席（spec＋quality 同席），範圍 `70ed3d9..e3eea5a`，只讀，審查員沒有跑 Gradle、GameTest 或 run-all。spec ✅、quality Approved，C0／I0／M7。Step 0 逐項、plan Task 4B 各核取項與 spec v1.6 C 逐項的判定都是 ✅（附 Minor）。
+- 4(a) production 的測試接縫 `HomeEntryTickets.backend`（package 可見、非 final 的 static）：審查判定可接受（審查 M-4），controller 採用，記為已接受的偏離；這是 controller 的決定，不是使用者裁示。審查的理由：
+  - release JAR 預設 `NATIVE`，`src/main` 沒有任何寫入者；`Lease` 在建立時捕捉 backend，替換只影響之後新取得的票；
+  - 只在 server thread 讀寫，不需要 volatile；package-private，外部要用反射或同 package 類別才能改，不構成新的邊界；
+  - 專案的 fault injection 慣例是 testmod mixin，這是 `src/main` 目前唯一可變的 static 測試接縫，是新的先例；`HomeRootTickets.acquire(…, Backend)` 已有 package 可見的 backend 接縫，差別只在全域可變。
+  - 若日後要統一回 mixin 慣例，需要另授權新增 `src/testmod/java/dev/quantumchamber/gametest/mixin/M7HomeEntryTicketBackendMixin.java` 與修改 `src/testmod/resources/quantumchamber-test.mixins.json`，並重跑相關殺手。
+- 4(b) spec 沒寫明的三個讀法：S `t4b-report.md` 偏離 8 原寫「controller 判斷，不是使用者裁示」；這三個讀法由 implementer 在實作時採用，並列為報告「留給 controller」第 3 點的審查焦點，本筆依 controller 派工記為 implementer 的讀法。審查判定三個讀法都合理、與 spec 不衝突。不論記成哪一種，都不是使用者裁示。
+  1. RESTART_VERIFY 的票在 RESTART_CLOSED checked 之後繼續供收尾使用：`stillApplies` 只要任一用途仍適用就保留，不另換票；換票會先放掉已載入的 B、重置租期，仍受同一份 200 tick 租期約束。
+  2. RESTART_VERIFY 載入 B 之後端點仍不合法時釋票、WARN、退避：FULL 之後的非 VALID 是決定性的，但 B 可能被管理員修好；T4 在 B 已載入時本來就逐 tick 重核，這裡改成有界退避重核。審查另指出 ERROR 字句的處理提示偏向 chunk 載入與額度，對這個原因不準（併入 M-3）。
+  3. ERROR 記在第一次把退避推到 12000 的那次失敗：字面也能讀成「等滿 12000 之後再失敗」，兩者都恰一則，差別約 12000 tick 才通知管理員。退避計數與門、移除、交接失敗共用，所以 ERROR 可能在其他原因把退避推到上限之後，由第一次票失敗觸發。`close_ticket_never_full_releases_and_backs_off` 已把這個讀法寫死，若改讀法要同步改測試。
+- 4(c) plan 沒列的 `close_ticket_releases_the_root_ticket_first` 與 `e3eea5a`：恰當（見上方「GREEN」）。
+- 審查第 5 節列的本機未驗部分：
+  - Ubuntu：6 個新 GameTest 與 Step 0 兩案在 CI 44362426613 的 Ubuntu `m7-validation` 通過（見上方）；Step 0 relatch 案的變異在 Ubuntu 分支（走 checkpoint 預檢）會不會被殺，仍只有讀碼推論。
+  - ordinary、sealed 兩片與 47 列完整：完整回歸與 CI 都通過。
+  - 真停服：只以反射呼叫 `closeAll(server, true)` 驗證；原生列的停服發生在票釋放之後，沒有「停服時仍持票」的真實路徑證據。
+  - RESTART_VERIFY 的真重啟：只在 GameTest 以反射注入開服集合驗證；原生新列走的是 CLOSE_CONVERGE。
+  - 觀察（審查不列 finding）：`Lease` 保存 `ServerWorld` 參照；B 的 universe 若在租期內被卸載，票會留在舊 world 物件上直到到期，與 A 票同型。
+
+### SelfTest 負控上限的使用者裁示（2026-11-19 11:5x）
+
+- 來由：M7 原生 runner `scripts/verification/m7-home-probe.ps1` 的負控上限 479（`:497` 常數，`:505` 彙總、`:519` 單份比較）。只讀分析 S `m7-selftest-margin-analysis.md` 指出：
+  - 479 在 M6 是實際的負控數（277＋202）；M6 的使用者裁示是不得刪減這 479 個反例（下限）與 SelfTest 900 秒（時間上限），M6 runner 本身沒有負控數上限；
+  - M7 把 479 當上限，是 controller 在 T4 B2b-2 派工簡報（S `task-4b2b2-brief.md:44`）的讀法，不是使用者裁示；之後 runner、B2b2-M1、plan :539 與本 note 都沿用成既定門檻；
+  - 實測 M7 的負控很便宜：47 列單份 384 個在本機只多 4.6 秒，CI 門態彙總 434 個約 7～9 秒；上限檢查在全部負控跑完之後才比較，不保護時間；
+  - 推估（分析標為推論）T5 加原生列後彙總大概率超過 479，到 T7 約 560～656。
+  - plan :539 規定超過 479 交使用者裁示，所以 controller 提問。原文檔的背景段記 controller 已在提問前向使用者說明 479 的來由。
+- AskUserQuestion，題目與選項由 controller 撰寫；S 原文檔 `user-m7-selftest-cap-ruling-20261119.md`。原文檔的背景段是 controller 寫的說明，不是使用者原文。
+  - 題目（header「負控上限」）「M7 原生測試的負控（故意做壞的反例）上限目前是 479，T5 加新的原生鏈後就會超過。實測 400 多個只要幾秒。要怎麼處理？」
+  - 選項：
+    1. 「上限改 1000 個＋時限 120 秒（建議）」：「每次驗證最多 1000 個負控，而且 SelfTest 超過 120 秒就判失敗。覆蓋不降低，還能補上目前沒有負控的幾個判定。改動只有一個常數加計時，會先經獨立審查。」
+    2. 「維持 479，拆成多次驗證」：「不改上限，把驗證按分片拆開，讓每次都不超過 479。覆蓋不變，但要改完整回歸與 CI 的結構，成本較高。」
+    3. 「維持 479，超過時再問」：「先不決定，每次要超過時停下來問你。T5 很可能一開始就會碰到。」
+  - 使用者選「上限改 1000 個＋時限 120 秒（建議）」。
+- controller 的執行說明（不是使用者裁示，S 原文檔同名段）：
+  - 「每次驗證」指 runner 每一次 `-VerifySummary -SelfTest` 或 `-VerifyAggregate -SelfTest` 呼叫；上限 1000 與 120 秒對兩者各自適用。超過個數或時限都以具名錯誤失敗（例如 `M7_HOME_SELFTEST_BUDGET`），不得自動抽樣或略過負控。
+  - 實作排進 T5 Step 0（只改驗證腳本與 README，走 B+C：一席審查、定向驗證、CI）。同一步補上目前沒有負控的判定（T4B 審查 M-5 指出的 `M7_HOME_REOPEN_B_TICKET`、`entryTicketLease`），新增後的負控總數與實測耗時寫進報告。
+  - 這是 M7 原生 runner 的上限；M6 runner 與其他 gate 的時限不變。
+- plan :539 的「超過 479 交使用者裁示」與本檔較早各節的同類待辦（例如「最新：T4 CLOSED（2026-11-18）」節「殘留交 T5 Step 0」第 5 點），已由本裁示處理；那些原文保留為當時的狀態。
+
+### 殘留交 T5 Step 0
+
+以下交 T5 Step 0，是 controller 的決定（S `STATUS.md` 11:5x、08:3x、06:4x 段），不是使用者裁示；其中 SelfTest 上限一項依使用者 11:5x 裁示，fixture 記下 cause 一項另有使用者所選選項說明的依據。
+
+T4B 新增（第一項依 controller 排序先做）：
+
+- SelfTest 負控上限（依上方 11:5x 裁示；審查 M-5，併既有清單第 5 點 B2b2-M1）：把 runner 的上限改為每次呼叫 1000 個並加 120 秒計時，補上 `M7_HOME_REOPEN_B_TICKET`、`entryTicketLease` 的負控，走 B+C，報告寫明新增後的負控總數與實測耗時（controller 執行說明）。T4B 結案時的數字：47 列單份完整 384、family 三份 414、門態五份 434；門態彙總剩 45，每多一列原生多 8 個逐列負控，在原上限 479 下再加 5 列是 474、第 6 列起超過（審查原文寫「約再 5 列原生就超過 479」）。
+- 審查 M-1（spec 邊界）：開服集合中已有 StopReason 的 SEALED(AUTHORITY_UNREADABLE) 仍先走 RESTART_VERIFY；B 不合法時 ROOT_STOP 的 CLOSE 一直不凍結、log 原因不準（`HomeClosure.java:229-242`、`:459-464`）。審查建議 `restartVerifies` 加 `stopReason().isEmpty()`，並補具名 RED。
+- 審查 M-2（測試缺口）：沒有案例在持票狀態下核對「失敗進退避時釋票」（`HomeClosure.java:414-419`）；單點變異預期會存活是讀碼分析，未實跑。審查建議加「B 收尾票 FULL 之後 B 門寫入或收據寫出受控失敗」的案例，斷言失敗那個 tick 結束時與退避期間都沒有票，再對 `backOff` 單點變異實跑。
+- 審查 M-3（品質）：CLOSE_CONVERGE 路徑在票 FULL 之後遇到決定性的非 VALID，持票到期才退避，記的是租期到（`TICKET_EXPIRED`）的 WARN，與實際原因不符；WARN 去重只比上一個鍵，兩種 WARN 交替各記一次；ERROR 提示只提 chunk 與額度。審查建議比照 RESTART_VERIFY 呼叫 `entryTicketFailed`、ERROR 提示補「或 B 端點不合法」；要嚴格到「同原因」的去重會影響 T4 既有行為，審查建議交後續。
+- 審查 M-4（4(a)）：測試接縫 `HomeEntryTickets.backend` 已接受，T5 Step 0 不必改；若要統一回 testmod mixin，所需授權檔見上方「審查」。
+- 審查 M-5（流程）：併入上方「SelfTest 負控上限」一項。
+- 審查 M-6（證據與歷史）：本節「commit」「Step 0」「RED」已寫明；審查建議不改歷史，T5 Step 0 不必處理。
+- 審查 M-7（測試穩健）：`until` 的 `done` 判斷丟例外時不走 hooks 收尾（`M7HomeClosureGameTests.java:1319-1336`），`FakeBackend`、`stopping`、`Startup` 集合、`Budget` 佔用都不會還原，會污染後面的 batch。審查建議把 `done` 包進同一個 guard，或讓還原另掛在不依賴 callback 的收尾。
+- fixture 的 checked 寫入失敗時記下 cause：依使用者 06:3x 所選選項說明原文「測試寫入失敗時要記下原因的修正，排進 T5 Step 0。」做法是 controller 的執行說明（取自調查第 6 節第 3 點）：`DormantOrigin.own`，以及同類在回呼裡直接做 checked 寫入的 fixture，寫入失敗時記一則帶 cause 鏈的 ERROR 再原樣丟出；只改 testmod，不重試、不吞錯、不放寬任何斷言。
+- 本機未驗、列入待驗（審查第 5 節；docs 審查觀察 1；列入是 controller 的決定）：
+  - 真停服：停服釋票只以反射呼叫 `closeAll(server, true)` 驗證，沒有「停服時仍持票」的真實路徑證據；
+  - RESTART_VERIFY 的真重啟：只在 GameTest 以反射注入開服集合驗證；
+  - Step 0 relatch 案的變異（S0-A、S0-B）在 Ubuntu 分支會不會被殺：只有讀碼推論。
+
+既有清單（上方「最新：T4 CLOSED（2026-11-18）」節的「殘留交 T5 Step 0」第 1～10 點，逐條核對，沒有遺漏；編號照舊，plan :539、:548 以這個編號引用）：
+
+1. 連坐缺口兩處（`M2CorridorGameTests.java:1979-2002` 的 `sharedEntry` 外層失敗不收尾、`M4CandidateDoorGameTests.java:333` 一帶的 readback probe 受他案殘留影響）：仍待；兩檔在 `70ed3d9..e3eea5a` 沒有改。
+2. B2b5-M1（M7 JUnit 宣告掃描只認 `@Test void`）：仍待。
+3. B2b5-M2（CI 規模段 step 沒有 `timeout-minutes`，Main 失敗時連帶跳過）：仍待；`build.yml` 在 T4B 只改了原生列四片的註解與彙總比對的列數、phase 數。
+4. `SessionRecoveryState.java:1027` 註解的歸屬：仍待；這個檔在 `70ed3d9..e3eea5a` 沒有改。
+5. B2b2-M1（SelfTest 上限 479 的餘量策略）：使用者已於 11:5x 裁示（見上方「SelfTest 負控上限的使用者裁示」），已與審查 M-5 併為上方「SelfTest 負控上限」一項；實作仍待。
+6. B1 假設 (c)：已依 v1.6 C 改寫（plan :548）。「重開時 B 無人無票」的收尾已由 T4B 的 B 收尾票實作，原生列 `restart-close-unloaded-b` 在完整回歸 COMPLETE；T5 仍要以正式 B 來源票重驗 COLLAPSING／ARMING 的開服返還。
+7. B2a-M3（`restart-enable-before-entry` 的「再操作 B」以真實 B 端操作重跑）：仍待（T5／T6）。
+8. Phase A 審查 M6（選定後重驗 A 時呼叫 `checkRoot` 與 `onRootEvent`）：仍待（T5／T6）。
+9. 呼叫端持有同 SID guard 的限制（T6 的 B 門攔截不得包在同 SID 的 guard 內；`onEntryStopped` 的 LOW／INVALID 正式 mint 路徑沒有 GameTest 驅動與 mutation）：仍待（T5／T6）。
+10. Phase A 審查 M7（每個 Projection 案例都物化 U 而且不卸載，後續測試不得斷言絕對世界數）：仍有效。
+
+T4A 節交 T4B Step 0 的 12 點都已在上方「Step 0」處理（第 12 點的可選加固評估後不做）。
+
+### 計數
+
+- AccessDenied：`e3eea5a` 這個 pin 的單次重跑額度已由 06:3x 裁示的重跑用掉；重跑通過。同一 pin 若再發生，停下回報。調查用的 r1（`V/t4b-m5-inv-ba90ecab…` 的完整 M5 gate，已證實的 AccessDenied）依使用者所選選項說明不計入次數。
+- 完整回歸啟動器歷史 2/3 不變。第一次 FAIL 是 M5 gate 的 runtime 失敗，不是啟動器問題（S `STATUS.md` 02:0x 段）。
+- M5 熔岩偶發：本 task 的兩次完整回歸、調查重現與 CI 都沒有出現這個簽章，同簽章累計仍是 3 次。
+- implementer 回報本輪兩次失敗都是自己剛寫的程式或 script 錯（RED 編譯、runner 的 StrictMode），各一次、已修正，沒有同一驗證工具問題連續失敗。
+
+### plan Task 4B 核取框
+
+判定規則（controller 的派工要求，不是使用者裁示）：完全達成才勾；有偏離，或找不到具名測試、原件證實的子項，就不勾，在該行末註明。審查第 2 節對七項都判 ✅（附 Minor）；下列不勾都來自這條 controller 的從嚴規則，其中 :541 從嚴不勾經 controller 確認（S `STATUS.md` 09:3x、11:5x 段）。7 項中勾 2 項（:531、:533），5 項不勾：
+
+- :535：沒有案例在持票中發生門、移除或交接失敗時核對釋放（M-2，讀測試可證）；「失敗進退避時釋票」與「租期到時釋票」各自單獨拿掉預期會存活，是審查 M-2 與 implementer 的讀碼分析，單點變異未實跑。另外 SERVER_STOPPING 只以反射呼叫 `closeAll` 驗證；開服集合中已有 StopReason 的 SEALED(AUTHORITY_UNREADABLE) 仍先走 RESTART_VERIFY（M-1）。
+- :537：WARN 去重只比上一個鍵，兩種 WARN 交替各記一次，嚴格說不符「同 SID 同原因一則」（M-3）；ERROR 的時點是 implementer 讀法（4(b) 第 3 點）；busy 沒有逐 tick 斷言。
+- :539：「先依 T5 Step 0 第 5 點定 SelfTest 餘量策略」在 T4B 沒有做（M-5；使用者之後於 11:5x 裁示上限，實作排 T5 Step 0）；另有 plan 外新增的 GameTest `close_ticket_releases_the_root_ticket_first`。
+- :541：「退避期間持票」「CLOSE 未 checked 就取票」都是兩處合成的變異；「退避期間持票」有一種實現方式（只拿掉 `backOff` 的釋放）沒有任何案例在持票狀態下驅動到（M-2，讀測試可證）。這個單點變異預期會存活，是讀碼分析，未實跑。
+- :543：沒有用候選 commit，改成五筆分開 commit；完整回歸第一次 FAIL，依使用者 06:3x 裁示重跑才通過。
+
+勾選項的具名證據：
+
+- :531（controller 的決定，比照 T4A :465）：兩案都有具名 RED，GameTest `CLOSE_PENDING_WITHOUT_B_TICKET`（XML `c56b43ea…2e78`）、JUnit `expected: <2> but was: <1>`（XML `d04992c1…e7ee`），兩個 root 都記有 HEAD `6c6051f`（見上方「RED」）；`71d5b90..6c6051f` 沒有 `src/main` 變更，production 的行為與 `70ed3d9` 相同（`71d5b90` 改了 3 個 `src/main` 檔，只限 Javadoc、註解與 M-5 可見性，位元組並不相同）。行末保留的揭露：RED commit `8e12954` 本身不能建置，具名 RED 在 test-only 修正 `6c6051f` 上取得；GameTest RED root 的 thresholds 在重新保持 B 之後才記（失敗訊息本體不受影響）。T4A :465 同型：第一個 root 是診斷 NPE，`fc78e13` 只改訊息順序後才取得具名 RED，當時判定勾選。
+- :533：`SlotAllocator.RootChunk(Identifier, long)`、`CorridorPageManager.reserveRootCoverage(UUID, RegistryKey<World>, Collection<ChunkPos>)`、A 票傳 `server.getOverworld().getRegistryKey()`，審查第 2 節以程式核對；JUnit `M7HomeCoverageTest` 4 案（`sameXZDifferentWorldConsumesCoverage`、`boundsRootSharesAndReferencesWithoutReleasingOthers`、`entryAndRootSameXzDifferentWorldCountSeparately`、`bothOrdersRespectCombinedCoverageLimit`）在 GREEN 與 focused 兩輪都通過；變異 M1「coverage key 拿掉 world」被 `entryAndRootSameXzDifferentWorldCountSeparately` 殺掉。
+
+### 已告知使用者的 controller 讀法
+
+T4A 節「下一步」第 2 點的 spec G 節第 7 點（待套用門的座標核對只擋關門與套膜類目標），以及 spec v1.6 節的 AccessDenied 單次重跑規則涵蓋 T4A、T4B 的讀法，controller 已在 2026-11-18 本 session 的回報中說明（AccessDenied 讀法約 13:1x；G 節第 7 點約 15:5x 與 18:5x）。紀錄位置見 S `STATUS.md` 2026-11-19 12:1x 段，原件是該段列出的 session 對話紀錄。使用者沒有就這兩點回覆；這不是裁示，也不代表同意，使用者之後提出不同意見時照改。
+
+### 下一步
+
+1. 派 T5（含上列 T5 Step 0）。Step 0 第一項是依 11:5x 裁示改 runner 的負控上限與計時，並補上缺的負控；之後依序 T6～T8。這是 controller 的排序，不是使用者裁示。
+2. main 合併、tag、人工代操作、worktree 退役、PR、LICENSE 仍各自另問使用者。
 
 ## 最新：T4A CLOSED（2026-11-18）
 
-下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`，V 指 `.superpowers/verification/`，兩者都 gitignored。本節的事實讀自 S 的 `STATUS.md`（18:5x、18:1x、17:3x、16:3x、15:5x、15:3x、14:1x 各段）、`t4a-v16-report.md`（含 fix1 節）、`t4a-v16-fix1/`、`t4a-v16-review.md`、`t4a-v16-fix1-review.md`、`t4a-v16-accept-check/`、`ci-44259424086/`（含 `run.json`）、`ci-44281662893-run.json`、`ci-44281662893-m7ubuntu/`、`m5-water-control-flake-investigation.md`、`user-m5-water-flake-ruling-20261118.md`，V 的 `run-all-5ff86c0b885e46e691645c7608afe69f`（`console.log`、`summary.json`），以及 git 的唯讀查詢。
+（已被上方 T4B CLOSED 節接續）下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`，V 指 `.superpowers/verification/`，兩者都 gitignored。本節的事實讀自 S 的 `STATUS.md`（18:5x、18:1x、17:3x、16:3x、15:5x、15:3x、14:1x 各段）、`t4a-v16-report.md`（含 fix1 節）、`t4a-v16-fix1/`、`t4a-v16-review.md`、`t4a-v16-fix1-review.md`、`t4a-v16-accept-check/`、`ci-44259424086/`（含 `run.json`）、`ci-44281662893-run.json`、`ci-44281662893-m7ubuntu/`、`m5-water-control-flake-investigation.md`、`user-m5-water-flake-ruling-20261118.md`，V 的 `run-all-5ff86c0b885e46e691645c7608afe69f`（`console.log`、`summary.json`），以及 git 的唯讀查詢。
 
 - **狀態**：T4A CLOSED。
   - code pin：production 的最後一筆是 `c091581`。之後的 fix1 `099252f` 只改 testmod：`git diff --stat c091581..099252f` 只列 `src/testmod/java/dev/quantumchamber/gametest/M7RearmGameTests.java`（+23 行）。`git ls-remote origin` 讀回 `codex/m7-return-home` 是 `099252fb4c3279435a2ca03b5a43296b2e5ccd72`。

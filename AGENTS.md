@@ -121,7 +121,23 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-18 最新：T4A CLOSED，下一步 T4B（含 T4B Step 0）。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T4A CLOSED（2026-11-18）」節。
+**2026-11-19 最新：T4B CLOSED，下一步 T5（含 T5 Step 0；Step 0 第一項依使用者 SelfTest 上限裁示改 runner）。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T4B CLOSED（2026-11-19）」節。
+- code pin：production 最後一筆 `0f04037`；`e3eea5a` 只改 testmod（`M7HomeEntryTicketGameTests.java`）。commit 範圍 `70ed3d9..e3eea5a`（五筆），origin 讀回 `e3eea5a`。
+- 完整回歸：第一次 `run-all-902b2e39…` 在 M5 GameTest FAIL，原判保留。唯一失敗是 M5 既有案例 `prepare_waits_while_another_projection_write_is_unconfirmed`，調查推論失敗點是 fixture 自己的 journal checked 寫入；cause 沒有被記錄，AccessDenied 只是推論；調查找不到 T4B 參與的證據，同案在 `e3eea5a` 重現三次都 PASS。使用者 2026-11-19 06:3x 選「視同 AccessDenied，重跑一次（建議）」；重跑 `run-all-b90f443e…` 自然 `END ALL exit=0`，`m7native=COMPLETE:47`、`m7scale=PASS:11`，採計條件 26 項全 PASS。
+- 審查：一席 spec ✅、quality Approved，C0／I0／M7。production 的測試接縫 `HomeEntryTickets.backend`：審查判定可接受（審查 M-4），controller 採用，記為已接受的偏離。spec 沒寫明的三個讀法：implementer 報告原寫「controller 判斷」，note 記為 implementer 的讀法；經審查判定合理，都不是使用者裁示。
+- CI：`e3eea5a` 的 44362426613 attempt 1 十個 job 全部 success；沒有動用 M5 熔岩偶發的讀法。
+- plan Task 4B 的 7 個核取框勾 2 個（:531 比照 T4A :465、:533），5 個依 controller 的從嚴規則不勾並在行末註明（審查第 2 節七項都判 ✅）。
+- SelfTest 負控上限：使用者 2026-11-19 11:5x 選「上限改 1000 個＋時限 120 秒（建議）」。479 原是 controller 在 T4 B2b-2 派工簡報的讀法，不是使用者裁示。原文與 controller 執行說明見 note「SelfTest 負控上限的使用者裁示」小節。
+- 殘留交 T5 Step 0（controller 的決定）：
+  - 第一項：依上述裁示把 M7 原生 runner 的負控上限改為每次呼叫 1000 個並加 120 秒計時，補上 `M7_HOME_REOPEN_B_TICKET`、`entryTicketLease` 的負控（B+C）；
+  - T4B 審查 M-1～M-3、M-7（M-4、M-6 不必處理，M-5 併入第一項）；
+  - fixture 的 checked 寫入失敗時記下 cause（使用者所選選項說明寫明排進 T5 Step 0）；
+  - 本機未驗的真停服、RESTART_VERIFY 真重啟、Step 0 relatch 變異在 Ubuntu 是否被殺，列入待驗；
+  - 以及 note 既有的 T5 Step 0 清單；清單見 note。
+- 計數：`e3eea5a` 的 AccessDenied 單次額度已用；調查用的 M5 gate（r1）依所選選項說明不計入；完整回歸啟動器歷史 2/3 不變。
+- 下一步：T5（含 Step 0；Step 0 第一項是依 SelfTest 上限裁示改 runner 的上限與計時、補缺的負控）→ T6～T8。這是 controller 的排序，不是使用者裁示。main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-18：T4A CLOSED，下一步 T4B（含 T4B Step 0）。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T4A CLOSED（2026-11-18）」節。
 - code pin：production 最後一筆 `c091581`；fix1 `099252f` 只改 testmod（`M7RearmGameTests.java` +23 行）。commit 範圍 `5ae0a04..099252f`，origin 讀回 `099252f`。
 - 完整回歸：`c091581` 的 `run-all-5ff86c0b…` 自然 `END ALL exit=0`，採計條件 26 項全 PASS。
 - 審查：T4A 一席 spec ✅、quality Approved，C0／I0／M9；fix1 一席 Approved，C0／I0／M3。
