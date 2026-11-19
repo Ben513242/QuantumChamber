@@ -1,8 +1,16 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 最新：交給 Codex 接手（2026-11-19）
+
+- 使用者 2026-11-19 原話：「可以準備收尾交給codex實作」。Claude 停止新的實作派工；交接入口是 [`docs/handoffs/2026-11-19-m7-codex-t5-handoff.md`](../handoffs/2026-11-19-m7-codex-t5-handoff.md)，`AGENTS.md`「目前接手入口」也指向它。
+- T5-0（T5 Step 0，controller 從 T5 拆出的獨立段，controller 排序）：第一批 `b0ea0f8`（SelfTest 每次 1000 個＋120 秒，補 B 收尾票判定負控；新數單份完整 404、family 434、門態 454）與第二批 `c749739`（連坐缺口、fixture 寫入失敗記 cause、T4B 審查 M-2／M-7 的新案、CI 規模段時限）已 commit，**沒有經過獨立審查，也沒有跑完整回歸**；第二批定向只跑一輪。未做：B2b5-M1（要改 `m7-ci-gametest.ps1`，不在授權清單）、第三批 production（T4B 審查 M-1、M-3、`SessionRecoveryState.java:1027` 註解）。細節在交接檔第 3 節與 S `t5-0-report.md`。
+- 之後的工作順序、使用者裁示、門檻與止損，以交接檔為準。
 
 ## 最新：T4B CLOSED（2026-11-19）
+
+（已被上方「交給 Codex 接手」節接續。）
 
 下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`，V 指 `.superpowers/verification/`，兩者都 gitignored。本節的事實讀自 S 的 `STATUS.md`（2026-11-19 的 11:5x、09:3x、08:3x、06:4x、02:2x、02:1x、02:0x、01:4x 各段與 2026-11-18 21:0x 段）、`t4b-report.md`、`t4b-review.md`、`t4b-closeout-docs-review.md`、`t4b-full-m5-fail-investigation.md`、`user-t4b-full-rerun-ruling-20261119.md`、`user-m7-selftest-cap-ruling-20261119.md`、`m7-selftest-margin-analysis.md`、`t4b-accept-check/`、`t4b-step0/mutation/mutation-log.txt`、`ci-44362426613-run.json`、兩個 holder 目錄，V 的 `run-all-902b2e397d67468b80a9e2b6ab61bb1a`、`run-all-b90f443e98784cbbb1c4903cb292d90c` 與 `t4b-m5-inv-ba90ecab264a4e7cb83e5a04d077bc71`，以及 git 與 `gh run view`（含 `--log`）的唯讀查詢。
 

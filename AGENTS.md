@@ -121,7 +121,9 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-19 最新：T4B CLOSED，下一步 T5（含 T5 Step 0；Step 0 第一項依使用者 SelfTest 上限裁示改 runner）。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T4B CLOSED（2026-11-19）」節。
+**2026-11-19 最新：M7 交給 Codex 接手（使用者 2026-11-19 指示「可以準備收尾交給codex實作」）。先讀 [`docs/handoffs/2026-11-19-m7-codex-t5-handoff.md`](docs/handoffs/2026-11-19-m7-codex-t5-handoff.md)。** T1～T4、T4A、T4B 已結案；T5-0（T5 Step 0）未結案：第一批 `b0ea0f8`、第二批 `c749739` 已 commit，未審查、未跑完整回歸，第三批（production）未開始。下一步依交接檔第 3 節完成 T5-0，再進 T5 本體。工作區、裁示、門檻、止損與已知陷阱都以交接檔為準；Claude 之後不再在這條分支實作。
+
+**（歷史）2026-11-19：T4B CLOSED，下一步 T5（含 T5 Step 0；Step 0 第一項依使用者 SelfTest 上限裁示改 runner）。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T4B CLOSED（2026-11-19）」節。
 - code pin：production 最後一筆 `0f04037`；`e3eea5a` 只改 testmod（`M7HomeEntryTicketGameTests.java`）。commit 範圍 `70ed3d9..e3eea5a`（五筆），origin 讀回 `e3eea5a`。
 - 完整回歸：第一次 `run-all-902b2e39…` 在 M5 GameTest FAIL，原判保留。唯一失敗是 M5 既有案例 `prepare_waits_while_another_projection_write_is_unconfirmed`，調查推論失敗點是 fixture 自己的 journal checked 寫入；cause 沒有被記錄，AccessDenied 只是推論；調查找不到 T4B 參與的證據，同案在 `e3eea5a` 重現三次都 PASS。使用者 2026-11-19 06:3x 選「視同 AccessDenied，重跑一次（建議）」；重跑 `run-all-b90f443e…` 自然 `END ALL exit=0`，`m7native=COMPLETE:47`、`m7scale=PASS:11`，採計條件 26 項全 PASS。
 - 審查：一席 spec ✅、quality Approved，C0／I0／M7。production 的測試接縫 `HomeEntryTickets.backend`：審查判定可接受（審查 M-4），controller 採用，記為已接受的偏離。spec 沒寫明的三個讀法：implementer 報告原寫「controller 判斷」，note 記為 implementer 的讀法；經審查判定合理，都不是使用者裁示。
