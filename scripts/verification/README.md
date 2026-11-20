@@ -847,6 +847,7 @@ manifest 在 close 矩陣 39 列之後再接 8 列（B2a 的 5 列、T4 P1 的 `
 - **處理方式**：確認 B 的世界與它的 chunk 能載入（世界存在、磁碟可讀），以及伺服器的 chunk 票額度沒有被其他回程或走廊占滿；之後 owner 會依退避自行重取，不必重啟。
 - **驗證**：GameTest `M7HomeEntryTicketGameTests`（`close_loads_unloaded_b_with_bounded_ticket`、`close_ticket_never_full_releases_and_backs_off`、`close_ticket_budget_exhausted_warns_and_retries`、`close_ticket_released_on_reload_and_stop`、`restart_verify_ticket_loads_b_for_unreadable_seal`；T5 Step 0 加 `close_ticket_released_when_the_door_write_fails_and_backs_off`：持票、已 FULL 時 B 門寫入受控失敗，失敗那個 tick 結束時與退避期間都沒有票），JUnit `M7HomeCoverageTest.entryAndRootSameXzDifferentWorldCountSeparately`，Windows 原生列 `restart-close-unloaded-b`。永遠不 FULL、停服與開服集合以 testmod 反射模擬（換 backend、呼叫票 owner 的 `closeAll`、改本 instance 的開服集合），不是真的 chunk 載入失敗或真停服；真停服的釋放沒有另外的原生列。
 - 門寫入故障案例先在 tick 結束時觀察同 SID 的 exact `CLOSE_CONVERGE` 首票，之後由 fixture 保持 B 載入，讓正式 owner 嘗試寫門。只採計同一輪觀察到的門故障、WARN 與退避，租期到期會以獨立錯因失敗。正式票獨力載入由 `close_loads_unloaded_b_with_bounded_ticket` 與原生 `restart-close-unloaded-b` 驗證。
+- 單輪受限診斷只在上述門案收尾時輸出一筆 `M7_T50_DOOR_DIAG_V1`，附真開門故障前的正式票、租期、前一 tick 樣本與 B 就緒快照。缺失或無法安全觀察的欄位維持未知，原案例判定照舊。
 
 - T5 Step 0 的兩平台控制案 `checked_entry_setup_logs_cause_and_keeps_assertion` 注入 checked flush 失敗，確認 fixture ERROR 只記一則、附實際 cause，原斷言仍失敗。`until_predicate_failure_keeps_projection_hook_cleanup` 在 Projection 釋票時注入例外，確認 hooks 仍清理一次，清理的兩個例外一起附在原判斷式例外上。
 

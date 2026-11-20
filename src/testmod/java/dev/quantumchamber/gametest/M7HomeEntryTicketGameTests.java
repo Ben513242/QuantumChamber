@@ -6,6 +6,8 @@ import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.chamber.ChamberSessions;
 import dev.quantumchamber.collapse.CollapseBackoff;
 import dev.quantumchamber.collapse.HomeEndpointAuthority;
+import dev.quantumchamber.collapse.HomeEntryTickets;
+import dev.quantumchamber.mixin.ServerWorldRecoveryStorageAccessor;
 import dev.quantumchamber.persistence.HomeSessionRecord;
 import dev.quantumchamber.persistence.HomeSessionRecord.Close;
 import dev.quantumchamber.persistence.HomeSessionRecord.CloseReason;
@@ -13,6 +15,7 @@ import dev.quantumchamber.persistence.HomeSessionRecord.DoorGoal;
 import dev.quantumchamber.persistence.HomeSessionRecord.RootReason;
 import dev.quantumchamber.persistence.SessionRecoveryState;
 import dev.quantumchamber.superposition.SuperpositionSessionManager;
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -21,11 +24,14 @@ import java.util.Set;
 import java.util.UUID;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.world.ChunkHolder;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.test.GameTest;
 import net.minecraft.test.GameTestException;
 import net.minecraft.test.TestContext;
 import net.minecraft.util.math.ChunkPos;
+import net.minecraft.world.chunk.ChunkStatus;
+import net.minecraft.world.chunk.WorldChunk;
 
 /**
  * M7 T4B（spec v1.6 C、V14）：回程收尾時替 B 取有界票。HOME 列的 CloseIntent=CLOSE 已 checked、exact live B world 存在，但 B 的 home chunks 沒有載入、B 無人無票時，
@@ -562,6 +568,10 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                 var watch = TickEndWatch.start(server, sid, hooks);
                 var removal = RemovalWatch.start(server, sid, hooks);
                 var chunks = homeChunks(p.frame);
+                var diagnostic = new DoorHandoffDiagnostic(c, p, sid, chunks);
+                hooks.add(diagnostic::emitOnce);
+                watch.diagnostic = diagnostic;
+                fault.observeFirstHit(() -> diagnostic.atDoorFault(watch));
                 int[] assistedAt = {-1};
                 int latchedAt = server.getTicks();
                 p.committed(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
@@ -573,6 +583,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                             && firstExactCloseLeaseIsHeld(p, sid, watch, chunks)) {
                         hooks.add(M7HomeClosureGameTests.holdChunks(p.b, p.frame));
                         assistedAt[0] = server.getTicks();
+                        diagnostic.afterAssist(watch);
                     }
                     return false;
                 }, guard(p, hooks, () -> {
@@ -623,6 +634,168 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
 
     private static int doorWarns(LogCapture capture, UUID sid) {
         return capture.matching(org.apache.logging.log4j.Level.WARN, "B 門尚未改為結案目標", sid.toString()).size();
+    }
+
+    /** 一次性收集門案的診斷資料。只保存固定數量的時點與當時的值，原斷言不讀取這裡。 */
+    private static final class DoorHandoffDiagnostic {
+        private static final String MARKER = "M7_T50_DOOR_DIAG_V1";
+        private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod");
+        private record Clock(int serverTick, long gameTime, long caseTick) {}
+        private record LeaseValue(boolean present, Boolean closing, Integer identity, Boolean sameAsFirst, Boolean sameFixtureWorld,
+                                  Long acquiredTick, Long deadline, String purpose, String sid, String world, String entry, Integer refs) {}
+        private record ChunkReady(String chunk, boolean block, boolean entities) {}
+        private record Ready(boolean blocks, boolean entities, Boolean checkpoint, String checkpointUnknown, List<ChunkReady> chunks) {}
+        private record Snapshot(Clock clock, LeaseValue live, Boolean firstLeaseClosing, Ready ready) {}
+        private record EndEvidence(boolean sampleExists, Boolean held, Snapshot snapshot) {}
+
+        private final TestContext context;
+        private final MinecraftServer server;
+        private final ServerWorld world;
+        private final UUID sid;
+        private final List<ChunkPos> chunks;
+        private final Map<String, Object> data = new LinkedHashMap<>();
+        private final List<String> errors = new ArrayList<>(4);
+        private int errorCount;
+        private boolean emitted;
+        private Snapshot lastEnd;
+        private Integer faultTick;
+
+        DoorHandoffDiagnostic(TestContext context, M7HomeClosureGameTests.Projection projection, UUID sid, Set<ChunkPos> chunks) {
+            this.context = context;
+            server = projection.f.server;
+            world = projection.b;
+            this.sid = sid;
+            this.chunks = List.copyOf(chunks);
+        }
+
+        void afterAssist(TickEndWatch watch) {
+            capture("assist", () -> {
+                var snapshot = snapshot(EntryTickets.lease(server, sid), watch.firstLease());
+                data.put("assisted", snapshot);
+                rememberReady("assist", snapshot);
+            });
+        }
+
+        void atDoorFault(TickEndWatch watch) {
+            capture("door-fault", () -> {
+                var snapshot = snapshot(EntryTickets.lease(server, sid), watch.firstLease());
+                faultTick = snapshot.clock().serverTick();
+                data.put("doorFault", snapshot);
+                savePreviousEnd("doorFaultPreviousEnd", faultTick, watch);
+                rememberReady("door-fault", snapshot);
+            });
+        }
+
+        void atEnd(TickEndWatch watch) {
+            if (data.containsKey("failureEnd")) return;
+            capture("end", () -> {
+                var sample = watch.samples.getLast();
+                var first = watch.firstLease();
+                var snapshot = snapshot(sample.lease(), first);
+                if (sample.lease() != null && sample.lease() == first) data.putIfAbsent("firstLeaseEnd", snapshot);
+                if (first != null && sample.lease() == null) data.putIfAbsent("firstEndWithoutLease", snapshot);
+                rememberReady("end", snapshot);
+                if (faultTick != null && sample.tick() == faultTick) data.put("doorFaultEnd", snapshot);
+                if (sample.delay() > 0) {
+                    savePreviousEnd("failurePreviousEnd", sample.tick(), watch);
+                    data.put("failureEnd", snapshot);
+                    data.put("failureDelay", sample.delay());
+                    data.put("retryAt", sample.retryAt());
+                }
+                lastEnd = snapshot;
+            });
+        }
+
+        private void savePreviousEnd(String key, int tick, TickEndWatch watch) {
+            var sample = watch.at(tick - 1);
+            var snapshot = lastEnd != null && lastEnd.clock().serverTick() == tick - 1 ? lastEnd : null;
+            data.put(key, new EndEvidence(sample != null, sample == null ? null : sample.lease() != null, snapshot));
+        }
+
+        private void rememberReady(String phase, Snapshot snapshot) {
+            var ready = snapshot.ready();
+            if (ready == null) return;
+            var moment = Map.of("phase", phase, "clock", snapshot.clock());
+            if (ready.blocks()) data.putIfAbsent("firstBlocksReady", moment);
+            if (ready.entities()) data.putIfAbsent("firstEntitiesReady", moment);
+            if (Boolean.TRUE.equals(ready.checkpoint())) data.putIfAbsent("firstCheckpointReady", moment);
+        }
+
+        private Snapshot snapshot(Object live, Object first) {
+            var clock = new Clock(server.getTicks(), server.getOverworld().getTime(), context.getTick());
+            var lease = read("live-lease", () -> leaseValue(live, first));
+            var closing = first == null ? null : read("first-lease-closing", () -> (Boolean) M4CandidateTestAccess.get(first, "closing"));
+            return new Snapshot(clock, lease, closing, read("checkpoint-readiness", this::readReady));
+        }
+
+        private LeaseValue leaseValue(Object lease, Object first) {
+            if (lease == null) return new LeaseValue(false, null, null, null, null, null, null, null, null, null, null, null);
+            long deadline = (long) M4CandidateTestAccess.get(lease, "deadline");
+            var leaseWorld = (ServerWorld) M4CandidateTestAccess.get(lease, "world");
+            return new LeaseValue(true, (Boolean) M4CandidateTestAccess.get(lease, "closing"), System.identityHashCode(lease), lease == first, leaseWorld == world,
+                    deadline - HomeEntryTickets.LEASE_TICKS, deadline, M4CandidateTestAccess.get(lease, "purpose").toString(),
+                    M4CandidateTestAccess.get(lease, "sid").toString(), leaseWorld.getRegistryKey().getValue().toString(),
+                    M4CandidateTestAccess.get(lease, "entry").toString(), ((Set<?>) M4CandidateTestAccess.get(lease, "chunks")).size());
+        }
+
+        private Ready readReady() {
+            // 讀 1.21 getWorldChunk 的 cache 與 FULL holder，避開該方法本身的 profiler 與 cache 寫入。
+            var manager = world.getChunkManager();
+            var positions = (long[]) M4CandidateTestAccess.get(manager, "chunkPosCache");
+            var statuses = (Object[]) M4CandidateTestAccess.get(manager, "chunkStatusCache");
+            var cache = (Object[]) M4CandidateTestAccess.get(manager, "chunkCache");
+            var loading = M4CandidateTestAccess.get(manager, "chunkLoadingManager");
+            var holders = (Long2ObjectMap<?>) M4CandidateTestAccess.get(loading, "chunkHolders");
+            var entities = ((ServerWorldRecoveryStorageAccessor) world).quantumchamber$entityManager();
+            var observations = new ArrayList<ChunkReady>(chunks.size());
+            for (var pos : chunks) {
+                long key = pos.toLong();
+                boolean block = worldChunkIsReady(key, positions, statuses, cache, holders);
+                observations.add(new ChunkReady(pos.x + "," + pos.z, block, entities.isLoaded(key)));
+            }
+            boolean blocksReady = observations.stream().allMatch(ChunkReady::block);
+            boolean entitiesReady = observations.stream().allMatch(ChunkReady::entities);
+            // ready 的 fault mixin 會計數，探針不能呼叫它。若該 hook 有效範圍未明，標示 unknown。
+            boolean checkpointHookInstalled = M5TestHooks.ENTITY_STORAGE_HOLD.get() != null;
+            return new Ready(blocksReady, entitiesReady, checkpointHookInstalled ? null : !chunks.isEmpty() && blocksReady && entitiesReady,
+                    checkpointHookInstalled ? "entity-storage-hold-installed" : null, List.copyOf(observations));
+        }
+
+        private static boolean worldChunkIsReady(long key, long[] positions, Object[] statuses, Object[] cache, Long2ObjectMap<?> holders) {
+            for (int i = 0; i < positions.length; i++) {
+                if (positions[i] == key && statuses[i] == ChunkStatus.FULL) return cache[i] instanceof WorldChunk;
+            }
+            return holders.get(key) instanceof ChunkHolder holder && holder.getOrNull(ChunkStatus.FULL) instanceof WorldChunk;
+        }
+
+        private <T> T read(String location, java.util.function.Supplier<T> read) {
+            try { return read.get(); }
+            catch (RuntimeException | LinkageError failure) { diagnosticError(location, failure); return null; }
+        }
+
+        private void capture(String location, Runnable capture) {
+            try { capture.run(); }
+            catch (RuntimeException | LinkageError failure) { diagnosticError(location, failure); }
+        }
+
+        private void diagnosticError(String location, Throwable failure) {
+            errorCount++;
+            if (errors.size() < 4) errors.add(location + ":" + failure.getClass().getName());
+        }
+
+        void emitOnce() {
+            if (emitted) return;
+            emitted = true;
+            data.put("sid", sid.toString());
+            data.put("status", errorCount == 0 ? "captured" : "diagnostic-error");
+            data.put("diagnosticErrorCount", errorCount);
+            data.put("diagnosticErrors", List.copyOf(errors));
+            String payload;
+            try { payload = new com.google.gson.GsonBuilder().serializeNulls().create().toJson(data); }
+            catch (RuntimeException | LinkageError failure) { payload = "{\"status\":\"diagnostic-error\",\"sid\":\"" + sid + "\",\"phase\":\"serialize\"}"; }
+            try { LOG.info("{} {}", MARKER, payload); }
+            catch (RuntimeException | LinkageError ignored) { /* 日誌失敗保持原測試判定，原件缺 marker 即無法採計。 */ }
+        }
     }
 
     /** fixture 助載前，核 tick 結束時的首票仍是這個 SID 為 exact B 取得的正式票。 */
@@ -939,6 +1112,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         private final MinecraftServer server;
         private final UUID sid;
         private final List<Sample> samples = new java.util.concurrent.CopyOnWriteArrayList<>();
+        private DoorHandoffDiagnostic diagnostic;
 
         private TickEndWatch(MinecraftServer server, UUID sid) { this.server = server; this.sid = sid; }
 
@@ -959,6 +1133,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             var backoff = EntryTickets.backoff(server, sid) instanceof dev.quantumchamber.collapse.CollapseBackoff value ? value : null;
             samples.add(new Sample(server.getTicks(), EntryTickets.lease(server, sid), backoff == null ? 0 : backoff.delayTicks(),
                     backoff == null ? 0 : backoff.retryAtTick()));
+            if (diagnostic != null) diagnostic.atEnd(this);
         }
 
         private Sample at(int tick) { return samples.stream().filter(sample -> sample.tick() == tick).findFirst().orElse(null); }

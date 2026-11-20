@@ -62,6 +62,7 @@ public final class DoorWriteFault {
         if (CURRENT.get()==null && opens!=null && opens.world==world && opens.positions.contains(pos)
                 && state.isOf(ModBlocks.QUANTUM_BULKHEAD) && state.get(QuantumBulkheadBlock.OPEN)) {
             opens.failures++;
+            if (opens.failures == 1 && opens.firstHitObserver != null) opens.firstHitObserver.run();
             return false;
         }
         var plan = CURRENT.get();
@@ -87,7 +88,10 @@ public final class DoorWriteFault {
     }
     public static final class OpenFailure implements AutoCloseable {
         private final ServerWorld world; private final Set<BlockPos> positions; private int failures;
+        private Runnable firstHitObserver;
         private OpenFailure(ServerWorld world,Set<BlockPos> positions) { this.world=world; this.positions=positions; }
+        /** 只供本次診斷在原故障命中點取樣，回呼自行隔離觀測例外。 */
+        void observeFirstHit(Runnable observer) { firstHitObserver = observer; }
         /** 被擋下的開門寫入次數（每格每次一筆）。 */
         public int failures() { return failures; }
         @Override public void close() { if (openFailure==this) openFailure=null; }

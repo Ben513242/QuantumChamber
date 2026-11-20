@@ -2,7 +2,36 @@
 
 本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
+## 最新：T5-0 D1受限診斷授權（2026-11-20）
+
+- D1觀測實作ready，未runtime：僅兩testmod檔與README一句（M7HomeEntryTicketGameTests +175/0、DoorWriteFault +4/0、README +1/0），原Boolean witness/斷言、observer phase、故障匹配/hit計數/回false、助載、票、期限不變。額外DoorWriteFault檔由controller核為真OPEN故障命中瞬間的必要scope-local observer，其他caller無observer仍原路徑，非新user玩法裁示。新報告S/t50-diagnostic-once-report.md SHA A7A69126E23BED1E26C2E900A8067CA18540F0F8104EAE38665143351585D8F0，來源hash分別F4854EF1EB7C4085081A8C5E64BBAEF582CBF778F7CF1CD49060956704FBF562、A6379ABC59DC9C48112AE2ABFBD18CF239B8D17AAEF76AA595E0CF311E587EED、6A02E7360B2F0539F1107FF6B291D7B59676A7805FA813B9A578F455699619AC。
+- 編譯原件S/c-t50-d1-compile-8dba38ce，compileTestmodJava --rerun-tasks --console=plain/BUILD SUCCESSFUL、Gradle及outer0，log SHA88296B6B96DAFCC4B52E975AF9341D203FEC0E64DA47F9ADB80FF8CC413FD23A。verified.json原sourceUnchangedDuringCompile=false保留，因helper變數matches被PowerShell自動Matches覆寫；獨立只讀source-readback.json SH A956B6F9A420F0FDE67208C9BCDA711DDC35DB8EA5C579C01EECDBD2359676EC9之allSame=true，root逐檔讀回確三份前後hash相同，沒有重編/改判原件。列D1靜態記錄器事件1，不算Minecraft診斷已執行。
+- 讀取邊界交原席核：避開getWorldChunk的cache寫入與ready test hook的hits副作用；只讀現有cache/holder/future狀態，hook存在則effective ready未知。診斷資料獨立、primitive/string快照、scope終局emitOnce；沒有新PASS判定。原席先審C/I0，才准報告所列一次既有targeted driver之單門batch，其他門檻不加跑；目前Win/新CI使用數0。
+
+使用者透過本chat選項回覆明確授權一輪診斷。題目原文：
+
+> 同門夾具已按保守計數達 3/3 止損。是否只授權補活票／租期／ready 與樣本觀測，原席審查後跑一次 Windows 定向＋新 SHA 的既有 CI，完成即停？不改 production、行為、斷言或時限，舊 CI 不 rerun。
+
+所選選項原文：
+
+> 允許一次受限診斷（建議）
+
+- 原文副本S/user-t50-diagnostic-authorization-20261120.md。這只開D1觀測窗口，原3/3與其他失敗計數不重置，不授權正式修正或T5～T8；即使本輪偶然通過，也不宣告修復或T5-0結案。
+- 起跑實核：HEAD／遠端19e9，source仍F8E22788…00E8A9、production HomeClosure仍5EBDE…386AD，三份狀態文件dirty保留。舊CI44680282020 attempt1實際completed/failure，10jobs=9success/UbuntuM7唯一failure，終局原件S/ci-44680282020-19e9/terminal-run.json SHA D437F89FC989AF832D99D035A7B92465DA00692DE773D51170686ECA658553BC，沒有rerun；先前in_progress快照保為歷史。
+- controller執行細節（非使用者原文）：沿既有門故障callback與END採樣收有界記憶體事件、終局一次輸出，診斷欄位獨立於Boolean PASS-witness，不改採樣語義/故障匹配/排程/助載/票。只讀狀態，不調用會載入、consume expiry、save或修改owner的getter；缺值記unknown，不用觀測改變原判定。先編譯靜態、原席核C/I0，再一次Windows單門案例，依新SHA既有全套CI收雙平台資料。既有assert的PASS/FAIL各保原判；若觀測有效但原assert失敗，仍可依此次明確授權收CI資料，不補修、不重跑。診斷自身新工具錯誤使資料無效時立即停報。
+- 只推本輪一個診斷候選觸發一次新CI，結果同步後保留工作區狀態更新，不為結果文件另push啟第二CI。完整本機full、mutation、Scale、額外Main定向、Ubuntu程序管理與workflow/inventory變更都不排入D1。新報告S/t50-diagnostic-once-report.md；brief S/t50-diagnostic-once-brief.md；完成CI原件判讀後立即停回報，不繼續一般實作。
+
 ## 最新：Codex 接手 T5-0（2026-11-20，進行中）
+
+- **止損交回（2026-11-20）：T5-0仍OPEN，停止改碼／新驗證／push，等使用者裁示。** 新CI44680282020 attempt1/head19e9的Ubuntu Main同門case第三次非預期FAIL，WindowsM7jobsuccess。原Ubuntu zip1,867,064 bytes SHA B2CD402F73583F2C8DC6B41125ED0A6DB8EC1552C0A9AFBA5156BA3B447C0530與metadata相符；原件 `S/ci-44680282020-19e9/ubuntu-main-failure-9070c86327e44e549a49e33e7c0404b9/raw/gametest.xml`，SHA5DEB1DC35BA1C9EBBFF03B6E9A2D6BAB2F35B93A186A936D128D304AC5C499D2，53案1FAIL。門fault/WARN/nexttick/exact票後助載/200退避/失敗END與整段無票均真，唯一前一END持票false、leaseTicks空。前一END無樣本也會false，缺門OPEN hook當下活票/租期/deadline與逐tick readiness，無法判合法同tick或已到期，更不能宣稱production defect。來源支持較像首票先到期、B blocks因fixture仍可讀、checkpoint/entities稍後ready而無票進門故障，但僅有條件推論。
+- 同門工具保守計數3/3：m7-dev1門已開、6db CI租期到期被誤作門fault、19e9 CI持票前置未證，三原因皆保原判；這是controller先前已公開的同fixture追蹤，不冒稱三輪同底層根因。共用冷載維持2/3、不把推論再加，oracle4ee1、fullLauncher2/3、特殊fixture及AccessDenied額度不重置。只讀止損報告 `S/t5-0-ci-19e9-stop-analysis.md` SHA080D78C77BAEBD3D0DCC937E51F4E72961638D2A275737F048DE47FC57FC3340；待裁示的單輪補觀測方案在 `S/t5-0-stop-next-step-proposal.md`，尚未授權/未實作。當前CI停點快照 `S/ci-44680282020-19e9/stop-snapshot-1795153373751.json` 為in_progress、7success/UbuntuM7failure/Windows-native與m6-native仍跑，非run終局；現有CI不cancel、不rerun，下一接手先讀終局。原6db full/26採計、19e9本機focused/mutation與原review仍各自成立，但不足結案。
+- 交回Git：HEAD／遠端feature19e9，main2255027/m6peeled535未動；source/README/時限/資料格式未再變，AGENTS／本note／handoff三份tracked狀態文件有未提交更新，不為止損文件push而另觸發CI。ignored新版結案草稿 `S/t5-0-closeout-docs-draft-fix2.md` SHAC51DE0F0C0CC948C64D57CCE74EFAAA2DF84C1F9B5EC5FEBBB1AA0830B097295保留待填，禁止照稿宣稱CLOSED；T5本體至T8及人工smoke/main/tag/退役都未啟動。
+
+- 原6db CI實際終局：44674890854 attempt1、head6db、completed/failure、10jobs=9success/1failure，唯一Windows M7 job/Main步驟。`S/ci-44674890854-6db/terminal-run.json` SHA F67FFC2A1103320F704B1FF32F74515F4C7FE95CC4CC189553F91EF49CFADBE7，所有原件與Fail保、不rerun。原run完成後，root依既有push授權正常推fix2候選 `19e9aac8abff65123b0acc2d8e6306ba4b71b486` 並ls-remote讀回（`S/push-19e9-readback.txt`），main2255027/m6peeled535不變。新CI44680282020 created05:19:38Z、push/head19e9目前in_progress；首次查詢尚空陣列的`S/ci-19e9-first.json`保留，實際run發現快照`S/ci-19e9-discovery-1795152079732.json`。這是實質測試修正的新pin首次CI，不是舊run rerun；仍未closed，不將6db full冒成19e9新full，C0/I0/M1、2/3止損與未驗限制保留。
+
+- fix2原席窄複審已通過：`6db3ce6..19e9aac`，spec/quality通過、C0/I0/M1；新檔 `S/t5-0-ci-fix2-review.md` SHA E9E4A33C3AF09AB37AD8D57A75AB7E6474C055579A7BF5972F21EAC8EADFC609，原79DA不改。唯一Minor：fixture持續保持B可用後，RemovalWatch僅記曾經移除，未記首次checked移除server tick，故不能單靠最後查詢排除未來owner在retryAt前提早收尾；本輪/backoff後/close仍1tick、未觀察到production提早。本輪門故障分類/真釋票mutation目的成立，root列殘留交T8整分支審查，不為Minor重開驗證輪或改時限。原CI尚未整體終局（Windows-native已進M6）、不rerun，源候選19e9待其終局才push新pin首次CI，Task5本體不啟。
+
+- fix2定向終局：乾淨test候選 `19e9aac8abff65123b0acc2d8e6306ba4b71b486`，窄門故障＋budget2/2 GREEN（XML902E74790EFE573978778DC6E254AA4698C66F814428CBCE0BD710C23CE0A416）；唯一backOff釋票單點變異恰一target FAIL，門fault/WARN/下一tick/正式票後助載/先持票/退避200皆真、只有同tick與整段無票false（XML51B9E4DB3668DF599E70F7BAE20381945B16AC5E2417279CB6FEDFD558D16178），before/restored/即時HomeClosure皆5EBDE…386AD、exact=true，沒有非預期。一次正式Main53JUnit/57GT、zero failure/error/skip、VerifyOnly+SelfTest15與outer皆0；原件 `S/c-t50-f2-covering-66c6fd58`，XML2111D0210AAB4A57AF6B66CB647734F6A3837D08591908F011C55982D0AF1415、inputs1532BD6E42183C5F240DE5EB255DF67B429EAE9C5D7850AC0E64FB64B20189A3，root已核。新報告 `S/t5-0-ci-fix2-report.md` 最終SHA86A1A76B3ECF29A6A5FB503504FC4B97D720EEB3329C0F847D37B1C13C31B884，原191379與79DA報告不改。未新增local full/Scale/native/Ubuntu，清楚採純測試豁免，不把6db full寫成19e9。原席窄審6db..19e9在途，候選尚未push，原run等最後Windows-native終局，舊FAIL與計數照留。
 
 - fix2靜態與編譯：只改 `M7HomeEntryTicketGameTests.java`、verification README。共用既有budget的exact首票identity predicate；門案在首正式CLOSE票經END實際可見、sameSID/exactB/正確refs後才hold fixture chunks；門fault及同SID WARN、下一tick backoff共同成立才驗退避，expiry/其他原因具名FAIL。保全部舊斷言/期限，補真正收據與checked移除核對，類內10GT宣告及inventory不變，獨立cold路徑不變。`S/c-t50-f2-compile-7ff76bfa` 在6db＋明列5dirty下compileTestmodJava --rerun-tasks成功/exit0，log SHA92C415B24ACB3B8A456C48149218BD5182AEAF988ADAB4D3D0AF22AFD7D73E35，前後source SHA F8E227885BB9B517B2AFE21EC1F2D39AD9D9B08B96802625EBC038BEF600E8A9。尚未runtime，不把編譯當GREEN；production HomeClosure仍5EBDE…386AD。root先固定新候選再准窄GREEN/單點mutation/一次Main與原席審查，原CI不rerun。
 
