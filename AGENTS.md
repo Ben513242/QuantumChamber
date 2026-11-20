@@ -121,6 +121,16 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-20 T5-0 fix2候選編譯通過，待新pin定向與原席審查。** 僅M7HomeEntryTicketGameTests與README改動，inventory/production不變；source rawSHA F8E227885BB9B517B2AFE21EC1F2D39AD9D9B08B96802625EBC038BEF600E8A9，HomeClosure仍5EBDE4E8…386AD。編譯原件 `S/c-t50-f2-compile-7ff76bfa`，compileTestmodJava實跑/exit0，未啟runtime。root固定候選後才跑窄GREEN、既有backOff一點變異及逐位元還原、一次M7Main/VerifySelfTest；原席C/I0後才新pin首次CI。原CI44674890854 Windows Main failure仍保留、整run尚待最後job；不rerun、不啟T5。本門案例/共用冷載2/3保守計數不重置，下一相關非預期即停報。
+
+**2026-11-20 T5-0 CI test-only fix2已准，先改夾具、尚未執行新驗證。** 唯讀判因 `S/t5-0-ci-6db-investigation.md` SHA747964CA7285EEB374E2327B9A70196E6AD5758A2AB85F99A4A88E86DCB32702：57案僅門寫入故障案FAIL，實際是200tick票到期被任意backoff predicate誤作門故障；正式釋票/退避witness全真，底層載入慢因未知。root保守記本門案例2/3、共用冷載2/3（重疊事件不雙加），再有相關非預期即第三停報。root技術決定非user新裁示：僅正式同SID/exactB/CLOSE票END可見後fixture助載，故障/WARN與退避同時核，保所有原斷言/期限及獨立cold-GT/native；只test修改，沿明示豁免不重跑本機full，做一次精確focused與一個既有backOff直接變異證明，原席C/I0後新test pin首次CI。原6db CI不rerun，待其終局後才push新pin；T5本體不啟。
+
+**2026-11-20 T5-0 CI Windows Main step已failure，停止結案推進，仍OPEN。** 同pin CI44674890854 attempt1的Windows M7 job136084261534，步驟「執行 M7 獨立 GameTest」04:39:57Z結束為failure；job仍跑Scale診斷、整run仍in_progress。原件快照 `S/ci-44674890854-6db/poll-1795149630071.json`。原因尚未取得log/artifact，不能歸已知偶發；CLI整run未完成不提供logs、job原生日誌目前BlobNotFound，等上傳/終局再唯讀判因。完整本機PASS與26採計保原判，CI不rerun、不啟T5、不提前提交結案判定。
+
+**2026-11-20 T5-0 full pin已push，CI執行中，仍OPEN。** `6db3ce681bb9a960df7c34a126444c3c843795bd` 已正常push並ls-remote讀回；CI `44674890854`（push、同SHA、目前in_progress）尚未結案。main仍2255027、m6 peeled53573fc。採計結果文件在工作區同步、未另commit換pin；同SHA CI終局全綠後才提交結案docs，再依序T5本體。只有GradleDaemon仍在，沒有本趟存活server owner。以下full證據與原FAIL/殘留照留。
+
+**2026-11-20 T5-0 完整回歸與採計通過，待同 pin CI。** clean HEAD `6db3ce681bb9a960df7c34a126444c3c843795bd` 在 `V/run-all-bc6ed3352e204d2d87167eb1b2fecbfa` 自然 `END ALL exit=0`，holder outer0。26 採計全過、錯舊46/92/376負控拒5項（`S/c-t50-accept-8dd3f3a05704471a9778ead6de9c596f`）。M7 Main53/57、Scale11、native47列94phase/404負控2.2秒；M6 native9鏈27phase/479負控，recovery25、M5collapse69。完整JUnit1199失敗/錯誤0，兩個既定NonWindows類在Windows跳過；M7集合零skip。Full summary SHA `3B8EDB79B5C363C41C8646E148D7D1CC1FCF62E6E62DCC3636179065B9B43780`。依本輪full→push同SHA CI→結案docs順序，本採計狀態先同步工作區，保持HEAD不變推同pin；CI終局後才提交結案docs。T5-0尚未closed，T5本體未啟。
+
 **2026-11-20 T5-0 原席 fix1 複審 C0／I0／M0，進完整回歸。** I-1／I-2／M-1／M-2 全數 ADDRESSED，原審查檔保首審並追加複審（`S/t5-0-codex-review.md` SHA `79DA83C672C7E0D48720AE782DE024E6EBD2B2DA46D139D0619836A7782C76CB`）。來源候選 `6849c843aa44a333481bed2d5282dacdb66ed45b`，production 仍 clean19d6 的 bytes。下一步乾淨 HEAD 以既有 UTF-8 holder 跑 fresh 完整 run-all，逐項採計後才 push／同 SHA required CI；尚未結案或啟 T5 本體。以下較早狀態為歷史過程。
 
 **2026-11-20 T5-0 fix1 定向完成，待原席窄複審。** I-1／I-2 具名控制 GREEN；本輪只改 testmod／腳本／README。`S/c-t50-f1-covering-e26a682d` 在 HEAD df017d2＋明列七份 dirty 下 Main 53 JUnit／57 GameTest、VerifyOnly+SelfTest 15 全部合預期，root 已核 XML `469A07D2275965E0BE16D7CFC6D43502D25860EB5E1E39AA081177E54EB81C4B` 與 inputs 雜湊、live/verify 實際 PASS 行。報告現 SHA `191379E71A3141D1774B3C29FE8057C92F6F6FFA657E30E6F891127F1B1863AB`。production HomeClosure bytes 與兩 focused 的 clean19d6 一致；首輪 oracle FAIL 保原判、工具簽章1。下一步原席複審 df017d2 之後修正，C/I0 才 full，T5 本體尚未開始。以下本日較早段為過程記錄。

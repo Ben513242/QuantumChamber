@@ -219,14 +219,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                     var chunks = homeChunks(p.frame);
                     M7HomeClosureGameTests.until(c, label + "/close", 400, () -> {
                         if (assistedAt[0] >= 0) return removal.removedSeen();
-                        var lease = EntryTickets.lease(server, sid);
                         int firstLease = watch.firstLeaseTick();
-                        if (lease == null || lease != watch.firstLease() || firstLease < retryAt || !watch.noLeaseBetween(rejectedAt, retryAt - 1)
-                                || !EntryTickets.describe(server, sid).equals("CLOSE_CONVERGE refs=" + chunks.size())
-                                || chunks.size() > 4 || !sid.equals(M4CandidateTestAccess.get(lease, "sid"))
-                                || !p.entry.equals(M4CandidateTestAccess.get(lease, "entry"))
-                                || p.b != M4CandidateTestAccess.get(lease, "world")
-                                || !chunks.equals(M4CandidateTestAccess.get(lease, "chunks"))) return false;
+                        if (firstLease < retryAt || !watch.noLeaseBetween(rejectedAt, retryAt - 1)
+                                || !firstExactCloseLeaseIsHeld(p, sid, watch, chunks)) return false;
                         assistedAt[0] = server.getTicks();
                         hooks.add(M7HomeClosureGameTests.holdChunks(p.b, p.frame));
                         return false;
@@ -542,10 +537,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
     }
 
     /**
-     * T5 Step 0（T4B 審查 M-2）：持有 B 收尾票（已 FULL）時收尾失敗進退避，退避的那一刻就要釋放票。CLOSE 已 checked、B 未載入時 owner 取 CLOSE_CONVERGE 票載入 B；
-     * B 門改為結案目標（OPEN）的寫入受控失敗（{@link DoorWriteFault#failOpens}：這座 B 門的開門寫入一律回 false，關門照常），owner 記一則「B 門尚未改為結案目標」WARN、
-     * 退避 200 tick。每個 tick 結束時（回程終局 owner 的推進之後，{@link TickEndWatch}）核對：失敗前一個 tick 結束時仍持票、開門寫入確實被擋（只有 B 已 FULL、
-     * 端點合法時 owner 才會改門）；失敗那個 tick 結束時與整個退避期間（到 retryAt 之前）都沒有票。之後解除故障，退避到期重試、收尾完成。
+     * T5 Step 0（T4B 審查 M-2）：CLOSE 已 checked、B 未載入時，先觀察 owner 的第一份 exact CLOSE_CONVERGE 活票，才由 fixture 提供 B 載入前提。
+     * B 門改為 OPEN 的寫入受 {@link DoorWriteFault#failOpens} 阻擋。只有命中實際寫入、同 SID 的門 WARN 和該 tick 的退避樣本，才進行門失敗驗證。
+     * 核失敗前一個 tick 持票、失敗當下及整個 200 tick 退避期間無票。解除故障後，由 owner 等退避到期再收尾。
      * 用來殺「{@code backOff} 不釋票」的單點變異（只拿掉 {@code backOff} 的釋放時，票要到 200 tick 租期才由票 owner 釋放）。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_entry_ticket_handoff_fail", tickLimit = 2000)
@@ -566,14 +560,37 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                 var fault = DoorWriteFault.failOpens(p.b, p.frame);
                 hooks.add(fault::close);
                 var watch = TickEndWatch.start(server, sid, hooks);
+                var removal = RemovalWatch.start(server, sid, hooks);
+                var chunks = homeChunks(p.frame);
+                int[] assistedAt = {-1};
+                int latchedAt = server.getTicks();
                 p.committed(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
                         server.getOverworld().getTime())), "原艙停止原因已 checked latch");
-                M7HomeClosureGameTests.until(c, label + "/door_failure", 400, () -> watch.failureTick() >= 0, guard(p, hooks, () -> {
+                M7HomeClosureGameTests.until(c, label + "/door_failure", 400, () -> {
+                    if (watch.failureTick() >= 0) return true;
+                    int firstLeaseTick = watch.firstLeaseTick();
+                    if (assistedAt[0] < 0 && firstLeaseTick >= latchedAt && firstLeaseTick < server.getTicks()
+                            && firstExactCloseLeaseIsHeld(p, sid, watch, chunks)) {
+                        hooks.add(M7HomeClosureGameTests.holdChunks(p.b, p.frame));
+                        assistedAt[0] = server.getTicks();
+                    }
+                    return false;
+                }, guard(p, hooks, () -> {
                     fault.close();
                     int failureTick = watch.failureTick();
                     long retryAt = watch.retryAtOf(failureTick);
                     witness.put("doorWriteFaultHit", fault.failures() >= 1);
                     witness.put("oneDoorWarn", doorWarns(capture, sid) == 1);
+                    witness.put("observedAtTheNextTick", server.getTicks() == failureTick + 1);
+                    witness.put("fixtureAssistedAfterTheExactLease", assistedAt[0] > watch.firstLeaseTick() && assistedAt[0] <= failureTick);
+                    int expiryWarnCount = expiryWarns(capture, sid);
+                    if (witness.containsValue(false) || expiryWarnCount != 0) {
+                        var reason = expiryWarnCount != 0 ? "HANDOFF_FAIL_ENTRY_TICKET_EXPIRED" : "HANDOFF_FAIL_OTHER_BACKOFF";
+                        var warnings = capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).stream().map(LogCapture.Entry::message).toList();
+                        fail(p, hooks, reason + "：未證明在持票時因門寫入失敗而退避：" + witness + " firstLease=" + watch.firstLeaseTick()
+                                + " assistedAt=" + assistedAt[0] + " failureTick=" + failureTick + " warns=" + warnings);
+                        return;
+                    }
                     witness.put("backedOff200", watch.delayOf(failureTick) == 200 && retryAt == failureTick + 200L);
                     witness.put("leaseHeldBeforeTheFailure", watch.leaseAt(failureTick - 1));
                     witness.put("noTicketAtTheFailureTickEnd", !watch.leaseAt(failureTick));
@@ -584,22 +601,38 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                                     + " leaseTicks=" + watch.leaseTicks(failureTick - 1, retryAt));
                             return;
                         }
-                        M7HomeClosureGameTests.until(c, label + "/close", CLOSE_TICKS, () -> !journal.allSessions().containsKey(sid)
-                                && !journal.allFlushedSessions().containsKey(sid), guard(p, hooks, () -> {
-                            witness.put("closedAfterTheRetry", "OPEN/NONE".equals(p.doorSummary()) && !gate().globalChamberBusy(server, p.chamber));
-                            witness.put("noTicketAfterTheClose", EntryTickets.lease(server, sid) == null);
-                            witness.put("stillOneDoorWarn", doorWarns(capture, sid) == 1);
-                            finish(c, p, hooks, witness, "B 門寫入失敗進退避時釋放 B 收尾票：" + witness + " failureTick=" + failureTick + " retryAt=" + retryAt);
+                        M7HomeClosureGameTests.until(c, label + "/close", CLOSE_TICKS, removal::removedSeen, guard(p, hooks, () -> {
+                            try {
+                                witness.put("checkedRemoval", !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid));
+                                witness.put("closedAfterTheRetry", "OPEN/NONE".equals(p.doorSummary()) && !gate().globalChamberBusy(server, p.chamber));
+                                witness.put("noTicketAfterTheClose", !removal.leaseAfterRemoval() && EntryTickets.lease(server, sid) == null);
+                                witness.put("stillOneDoorWarn", doorWarns(capture, sid) == 1);
+                                var receipt = p.receipts().lookup(sid).orElseThrow();
+                                witness.put("receiptMatchesTheClose", receipt.sessionUuid().equals(sid) && receipt.entryEndpoint().equals(p.entry)
+                                        && receipt.home().closeIntent() instanceof Close close && close.reason() == CloseReason.ROOT_DISABLED && close.doorGoal() == DoorGoal.OPEN);
+                                finish(c, p, hooks, witness, "B 門寫入失敗進退避時釋放 B 收尾票：" + witness + " failureTick=" + failureTick + " retryAt=" + retryAt);
+                            } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
                         }), () -> pendingWithoutTicket(c, p, hooks, sid, label, "HANDOFF_FAIL_RETRY_NOT_CLOSED：解除故障、退避到期之後沒有收尾：" + witness));
                     }), () -> fail(p, hooks, "HANDOFF_FAIL_BACKOFF_WAIT：260 tick 內沒有到 retryAt：" + witness));
                 }), () -> fail(p, hooks, "HANDOFF_FAIL_NO_FAILURE：400 tick 內沒有因 B 門寫入失敗而退避：row=" + describe(journal, sid) + " lease="
-                        + EntryTickets.describe(server, sid) + " openFailures=" + fault.failures() + " doorWarns=" + doorWarns(capture, sid)));
+                        + EntryTickets.describe(server, sid) + " openFailures=" + fault.failures() + " doorWarns=" + doorWarns(capture, sid)
+                        + " firstLease=" + watch.firstLeaseTick() + " assistedAt=" + assistedAt[0]));
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
 
     private static int doorWarns(LogCapture capture, UUID sid) {
         return capture.matching(org.apache.logging.log4j.Level.WARN, "B 門尚未改為結案目標", sid.toString()).size();
+    }
+
+    /** fixture 助載前，核 tick 結束時的首票仍是這個 SID 為 exact B 取得的正式票。 */
+    private static boolean firstExactCloseLeaseIsHeld(M7HomeClosureGameTests.Projection p, UUID sid, TickEndWatch watch, Set<ChunkPos> chunks) {
+        var server = p.f.server;
+        var lease = EntryTickets.lease(server, sid);
+        return lease != null && lease == watch.firstLease() && chunks.size() <= 4
+                && EntryTickets.describe(server, sid).equals("CLOSE_CONVERGE refs=" + chunks.size())
+                && sid.equals(M4CandidateTestAccess.get(lease, "sid")) && p.entry.equals(M4CandidateTestAccess.get(lease, "entry"))
+                && p.b == M4CandidateTestAccess.get(lease, "world") && chunks.equals(M4CandidateTestAccess.get(lease, "chunks"));
     }
 
     /** 原艙票 owner（{@code HomeRootTickets}）是否仍有本 SID 的 lease（反射讀 private 欄位，只讀）。 */
