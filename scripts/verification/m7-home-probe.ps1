@@ -427,7 +427,7 @@ function Assert-M7Aggregate($members) {
 }
 function Copy-M7Json($value) { return $value | ConvertTo-Json -Depth 40 | ConvertFrom-Json -DateKind String }
 # SelfTest 預算（使用者 2026-11-19 11:5x 裁示）：每一次 -VerifySummary -SelfTest 或 -VerifyAggregate -SelfTest 呼叫各自最多 1000 個負控、SelfTest 計時 120 秒。
-# 每做完一個負控就核一次，超過就以具名錯誤停下（不抽樣、不略過剩下的負控）；SelfTest 結束（含最後的原件重驗）再核一次。
+# 開始每個負控之前核對下一個計數，做完後檢查耗時；超過就以具名錯誤停下。SelfTest 結束（含最後的原件重驗）再核一次。
 $selfTestBudget=1000
 $selfTestSeconds=120
 function Assert-M7SelfTestBudget([int]$Count,[double]$Seconds) {
@@ -437,6 +437,7 @@ function Assert-M7SelfTestBudget([int]$Count,[double]$Seconds) {
 function Get-M7SelfTestSeconds { if($null -eq $script:m7SelfTestClock){return 0.0}; return $script:m7SelfTestClock.Elapsed.TotalSeconds }
 # 負控必須以預期的具名錯因被拒（不是任意例外）；每個負控計一次並核預算。
 function Test-M7Rejected([scriptblock]$Check,[string]$Case,[string]$Code) {
+    Assert-M7SelfTestBudget ($script:m7Checks+1) 0
     $reason=''
     try {& $Check} catch {$reason=$_.Exception.Message}
     if($reason -cnotmatch ('^'+[regex]::Escape($Code)+'(：|$)')){throw "M7_HOME_SELFTEST_MISSED：$Case 預期 $Code，實際（$reason）"}

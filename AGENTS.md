@@ -121,6 +121,13 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-20 T5-0 fix1 定向完成，待原席窄複審。** I-1／I-2 具名控制 GREEN；本輪只改 testmod／腳本／README。`S/c-t50-f1-covering-e26a682d` 在 HEAD df017d2＋明列七份 dirty 下 Main 53 JUnit／57 GameTest、VerifyOnly+SelfTest 15 全部合預期，root 已核 XML `469A07D2275965E0BE16D7CFC6D43502D25860EB5E1E39AA081177E54EB81C4B` 與 inputs 雜湊、live/verify 實際 PASS 行。報告現 SHA `191379E71A3141D1774B3C29FE8057C92F6F6FFA657E30E6F891127F1B1863AB`。production HomeClosure bytes 與兩 focused 的 clean19d6 一致；首輪 oracle FAIL 保原判、工具簽章1。下一步原席複審 df017d2 之後修正，C/I0 才 full，T5 本體尚未開始。以下本日較早段為過程記錄。
+
+**2026-11-20 T5-0 首審 C0／I2／M2，fix round 1 在途。** 首審完整範圍 `c533193..df017d2`，報告 `S/t5-0-codex-review.md`（SHA-256 `985FA51FDBACA2DE76D8907EC9CABEBC910FD35BA7F153B4FF3EB369F82A6FEA`）。I-1 新／抽出 M7 fixture checked 提交未保 cause；I-2 predicate cleanup 的 close 拋錯會跳過 hooks。原 implementer 修 testmod；同輪補 M-1 負控執行前核 1000 上限、M-2 README family 耗時。production 不變，既有 RED／mutation／兩 focused 證據保留；修正定向與同席窄複審 C/I0 前不啟 full。兩輪整改 Important 未下降及工具第三次失敗止損照 user 規則，不重置。
+- fix1 控制終局（作者回報，root 待核原件）：`S/c-t50-f1-red-8c11eada` 的 I-1／I-2 恰兩具名 RED，無 LEFTOVER；上限控制 `S/c-t50-f1-budget-red-da62cdc6` 預期 RED，第 1001 次有副作用；`S/c-t50-f1-budget-green-39bcfaee` GREEN，第 1000 次可進、第 1001 次 BUDGET 拒絕且不再執行 Check。testmod GREEN／covering 尚待，不能當整輪通過。
+- root 已核上述 RED／邊界原件。fix1 首次 GREEN `S/c-t50-f1-green-4ee63593` 非預期 FAIL 保留：I-2 PASS，I-1 收到一筆正確 ERROR，但新 assertion 錯期待簡名 IOException；正式 formatter 用 java.io.IOException。raw cause 兩層與原 assert／restore／一次寫出均保留。root 准只修 oracle 的精確全名並拆 witness，新 nonce 再驗；本新工具簽章 1，covering 未執行，無 production 變更或原 CI rerun。
+- 作者回報校正後 `S/c-t50-f1-green-oracle-e61e408c` exact 2/2 PASS、exit 0（XML `D35E9966A1FB29D3B0C66DDAC1B24ED0810723302802313114B7C658939A2528`）；一輪 Main covering／VerifyOnly+SelfTest 在途，尚待 root 原件核對與原席窄複審。
+
 **2026-11-20 T5-0 定向已完成，待獨立審查與完整回歸。** clean code pin `19d6e3b51bf255010568d7a8a6d900d9ff4f76bc`：Windows Main 兩輪各 JUnit 53／GameTest 55、Scale 11、第二批 default 5／M5 2 第二輪均 PASS；Main／Scale VerifyOnly+SelfTest 為 15／13 例。原件 `S/c-t50-focus-1-83d2c8a9`、`S/c-t50-focus-2-87a29bf0`；作者報告 `S/t5-0-codex-report.md` SHA-256 `4F2557B06DD72D9485609C615666129B7CB6D198E9867CCE4CC124D57DAAD676`，root 已讀回 inputs／XML／摘要。下一步一席獨審完整 `c533193..候選`；尚未 full／push／新 CI，T5-0 仍 OPEN。以下本日較早階段記錄依時間接續，不把「待 focused」誤讀為目前狀態。
 
 **2026-11-20 現行：Codex 依真 user 新指示接手，先完成 T5-0；T5 本體尚未開始。** 入口仍是 docs/handoffs/2026-11-19-m7-codex-t5-handoff.md，第10節追加本輪紀錄。接手HEAD8f3c977已核clean；該SHA的CI44480505340 attempt1 completed/failure、9success/1failure，Windows M7 53案唯一BUDGET_RETRY_NOT_CLOSED，不符合M5熔岩例外、不rerun。原件及唯讀分析在S的ci-44480505340-codex-0befa5f8a4734cff83d2016383ae9418與t5-0-codex-ci-analysis.md；正式票200tick未ready後owner合法進400退避，底層載入延誤原因未證。

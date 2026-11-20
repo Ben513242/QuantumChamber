@@ -203,8 +203,8 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                 var watch = TickEndWatch.start(server, sid, hooks);
                 var removal = RemovalWatch.start(server, sid, hooks);
                 witness.put("budgetFull", fill.size() >= 1 && !Budget.free(server));
-                c.assertTrue(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
-                        server.getOverworld().getTime())).committed(), "原艙停止原因已 checked latch");
+                p.committed(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
+                        server.getOverworld().getTime())), "原艙停止原因已 checked latch");
                 M7HomeClosureGameTests.until(c, label + "/warn", 40, () -> unavailableWarns(capture, sid) == 1, guard(p, hooks, () -> {
                     int rejectedAt = watch.failureTick();
                     long retryAt = watch.retryAtOf(rejectedAt);
@@ -323,7 +323,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             var journal = SessionRecoveryState.get(server);
             whenBUnloaded(c, p, label, hooks, () -> {
                 var sid = UUID.randomUUID();
-                sealedAfterReady(c, p, sid, 35);
+                sealedAfterReady(p, p.dormant(sid, 35));
                 var instance = Startup.add(server, sid, hooks);
                 var witness = new LinkedHashMap<String, Boolean>();
                 var seen = new ArrayList<String>();
@@ -360,10 +360,10 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             var fake = FakeBackend.install(hooks);
             whenBUnloaded(c, p, label, hooks, () -> {
                 var sid = UUID.randomUUID();
-                var sealed = sealedAfterReady(c, p, sid, 35);
+                var sealed = sealedAfterReady(p, p.dormant(sid, 35));
                 Startup.add(server, sid, hooks);
-                c.assertTrue(journal.commitHomeRollForward(server, sealed,
-                        M7HomeClosureGameTests.withStop(sealed, RootReason.ROOT_DISABLED, server.getOverworld().getTime())).committed(), "原艙停止原因已 checked latch");
+                p.committed(journal.commitHomeRollForward(server, sealed,
+                        M7HomeClosureGameTests.withStop(sealed, RootReason.ROOT_DISABLED, server.getOverworld().getTime())), "原艙停止原因已 checked latch");
                 M7HomeClosureGameTests.until(c, label + "/first_lease", 40, () -> EntryTickets.lease(server, sid) != null, guard(p, hooks, () -> {
                     var witness = new LinkedHashMap<String, Boolean>();
                     var lease = EntryTickets.describe(server, sid);
@@ -402,8 +402,8 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                 var sid = UUID.randomUUID();
                 var dormant = p.dormant(sid, 33);
                 var watch = TickEndWatch.start(server, sid, hooks);
-                c.assertTrue(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
-                        server.getOverworld().getTime())).committed(), "原艙停止原因已 checked latch");
+                p.committed(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
+                        server.getOverworld().getTime())), "原艙停止原因已 checked latch");
                 M7HomeClosureGameTests.until(c, label + "/lease", 40, () -> EntryTickets.lease(server, sid) != null, guard(p, hooks, () -> {
                     c.assertTrue(EntryTickets.describe(server, sid).equals("CLOSE_CONVERGE refs=" + homeChunks(p.frame).size()), "同 SID 的正式 CLOSE_CONVERGE 票");
                     hooks.add(M7HomeClosureGameTests.holdChunks(p.b, p.frame));
@@ -435,25 +435,65 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
 
+    /** 共用 setup 的 checked 寫入真的失敗時，診斷保留 cause，原斷言仍失敗。 */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_entry_ticket_checked_cause", tickLimit = 800)
+    public void checked_entry_setup_logs_cause_and_keeps_assertion(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new M7HomeClosureGameTests.Projection(c, hooks);
+        try {
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            M7HomeClosureGameTests.until(c, "checked_entry_setup/entry_ready", 380,
+                    () -> dev.quantumchamber.persistence.ChunkSaveCheckpoint.ready(p.b, homeChunks(p.frame)), guard(p, hooks, () -> {
+                        var sid = UUID.randomUUID();
+                        var dormant = p.dormant(sid, 35);
+                        var capture = new LogCapture("quantumchamber-testmod");
+                        hooks.add(capture::close);
+                        var cause = new java.io.IOException("M7_T50_FIXTURE_CONTROL_CAUSE");
+                        var fault = new IllegalStateException("M7_T50_FIXTURE_CONTROL_FLUSH", cause);
+                        int[] flushes = {0};
+                        boolean[] armed = {true};
+                        M5GameTestSupport.installFlushProbe(c, state -> {
+                            if (armed[0]) { flushes[0]++; throw fault; }
+                        }, hooks);
+                        GameTestException assertion = null;
+                        try { sealedAfterReady(p, dormant); }
+                        catch (GameTestException failure) { assertion = failure; }
+                        finally { armed[0] = false; }
+                        var errors = capture.matching(org.apache.logging.log4j.Level.ERROR, "TESTMOD_FIXTURE_WRITE_FAILED");
+                        var witness = new LinkedHashMap<String, Boolean>();
+                        witness.put("checkedWriteWasAttemptedOnce", flushes[0] == 1);
+                        witness.put("originalAssertionFailed", assertion != null && assertion.getMessage().contains("checked COLLAPSING"));
+                        witness.put("originalRowRestored", dormant.equals(journal.allSessions().get(sid)) && dormant.equals(journal.allFlushedSessions().get(sid)));
+                        witness.put("oneFixtureError", errors.size() == 1);
+                        var error = errors.size() == 1 ? errors.getFirst() : null;
+                        witness.put("originalThrowableAndCauseKept", error != null && error.thrown() == fault && error.thrown().getCause() == cause);
+                        witness.put("exactFixtureErrorMessage", error != null && error.message().equals("TESTMOD_FIXTURE_WRITE_FAILED fixture=M7 Projection checked COLLAPSING（RESTORED）"
+                                + " cause=java.lang.IllegalStateException: M7_T50_FIXTURE_CONTROL_FLUSH <- java.io.IOException: M7_T50_FIXTURE_CONTROL_CAUSE"));
+                        finish(c, p, hooks, witness, "CHECKED_ENTRY_SETUP_CAUSE：" + witness + " fixtureErrors=" + errors.size());
+                    }), () -> fail(p, hooks, "CHECKED_ENTRY_SETUP_ENV_NOT_READY"));
+        } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
+    }
+
     /** 以正式 journal 入口建立開過通道的可恢復封存列。 */
-    private static HomeSessionRecord sealedAfterReady(TestContext c, M7HomeClosureGameTests.Projection p, UUID sid, int slot) {
+    private static HomeSessionRecord sealedAfterReady(M7HomeClosureGameTests.Projection p, HomeSessionRecord dormant) {
         var server = p.f.server;
         var journal = SessionRecoveryState.get(server);
-        var dormant = p.dormant(sid, slot);
+        var sid = dormant.sessionUuid();
         var h = dormant.home();
         long time = server.getOverworld().getTime();
         var collapse = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.COLLAPSING,
                 new HomeSessionRecord.Home(h.selection(), time, -1, -1, List.of(), List.of(), java.util.Optional.empty(), -1, new HomeSessionRecord.None(),
                         java.util.Optional.empty()));
-        c.assertTrue(journal.commitHomeRestore(server, dormant, collapse).committed(), "checked COLLAPSING");
+        p.committed(journal.commitHomeRestore(server, dormant, collapse), "checked COLLAPSING");
         var ready = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.PASSAGE_READY,
                 new HomeSessionRecord.Home(h.selection(), time, time, time + 1200, List.of(), List.of(), java.util.Optional.empty(), -1, new HomeSessionRecord.None(),
                         java.util.Optional.empty()));
-        c.assertTrue(journal.commitHomeRestore(server, collapse, ready).committed(), "checked READY");
+        p.committed(journal.commitHomeRestore(server, collapse, ready), "checked READY");
         var sealed = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.SEALED,
                 new HomeSessionRecord.Home(h.selection(), time, time, time + 1200, List.of(), List.of(), java.util.Optional.empty(), -1, new HomeSessionRecord.None(),
                         java.util.Optional.of(HomeSessionRecord.Seal.AUTHORITY_UNREADABLE)));
-        c.assertTrue(journal.commitHomeRollForward(server, ready, sealed).committed(), "checked SEALED(AUTHORITY_UNREADABLE)，曾 READY");
+        p.committed(journal.commitHomeRollForward(server, ready, sealed), "checked SEALED(AUTHORITY_UNREADABLE)，曾 READY");
         return sealed;
     }
 
@@ -526,8 +566,8 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                 var fault = DoorWriteFault.failOpens(p.b, p.frame);
                 hooks.add(fault::close);
                 var watch = TickEndWatch.start(server, sid, hooks);
-                c.assertTrue(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
-                        server.getOverworld().getTime())).committed(), "原艙停止原因已 checked latch");
+                p.committed(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
+                        server.getOverworld().getTime())), "原艙停止原因已 checked latch");
                 M7HomeClosureGameTests.until(c, label + "/door_failure", 400, () -> watch.failureTick() >= 0, guard(p, hooks, () -> {
                     fault.close();
                     int failureTick = watch.failureTick();

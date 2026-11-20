@@ -1396,6 +1396,46 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         c.complete();
     }
 
+    /** 以 Projection 正式登記的組合收尾，驗證移除 fixture 票丟出時，hooks 仍執行且原判斷式例外保留。 */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_until_projection_cleanup", tickLimit = 100)
+    public void until_predicate_failure_keeps_projection_hook_cleanup(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var projection = new Projection(c, hooks);
+        var assertion = new GameTestException("M7_T50_PROJECTION_PREDICATE_FAULT");
+        var closeFault = new IllegalStateException("M7_T50_PROJECTION_CLOSE_FAULT");
+        var hookFault = new IllegalStateException("M7_T50_PROJECTION_HOOK_FAULT");
+        var witness = new LinkedHashMap<String, Boolean>();
+        int[] closeCalls = {0};
+        int[] hookCalls = {0};
+        var release = (Runnable) M4CandidateTestAccess.get(projection, "release");
+        try {
+            M4CandidateTestAccess.set(projection, "release", (Runnable) () -> {
+                closeCalls[0]++;
+                release.run();
+                throw closeFault;
+            });
+            hooks.add(() -> hookCalls[0]++);
+            hooks.add(() -> { throw hookFault; });
+            GameTestException primary = null;
+            try {
+                until(c, "until_projection_cleanup", 5, () -> { throw assertion; },
+                        () -> { throw new GameTestException("UNEXPECTED_THEN"); },
+                        () -> { throw new GameTestException("UNEXPECTED_TIMEOUT"); });
+            } catch (GameTestException failure) { primary = failure; }
+            var suppressed = primary == null ? List.<Throwable>of() : List.of(primary.getSuppressed());
+            witness.put("originalPredicateFailureKept", primary == assertion);
+            witness.put("fixtureCloseRanOnce", closeCalls[0] == 1);
+            witness.put("hookStillRanOnce", hookCalls[0] == 1);
+            witness.put("bothCleanupFailuresSuppressed", suppressed.size() == 2 && suppressed.contains(closeFault) && suppressed.contains(hookFault));
+            witness.put("registrationCleared", !PREDICATE_FAILURE_CLEANUP.containsKey(c));
+        } finally {
+            try { projection.close(); }
+            finally { hooks.releaseAfter(assertion); }
+        }
+        if (witness.containsValue(false)) throw new GameTestException("UNTIL_PROJECTION_CLEANUP：" + witness);
+        c.complete();
+    }
+
     private static void untilStep(TestContext c, String label, int bound, int remaining, BooleanSupplier done, Runnable then, Runnable timeout) {
         boolean reached;
         try { reached = done.getAsBoolean(); }
@@ -1437,8 +1477,11 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
         Projection(TestContext c, M2CorridorGameTests.TestHooks hooks) {
             this.c = c;
             f = new M2CorridorGameTests.NativeEntry(c, 1);
-            // 判斷式丟出時比照回呼的 guard（M7HomeEntryTicketGameTests.guard）：收掉 fixture、釋放 hooks（兩者都冪等）。
-            predicateCleanup = onPredicateFailure(c, failure -> { close(); hooks.releaseAfter(failure); });
+            // 兩步都要執行。close 的失敗由外層收尾加入 suppressed，hooks 自己保留失敗，主因仍是判斷式。
+            predicateCleanup = onPredicateFailure(c, failure -> {
+                try { close(); }
+                finally { hooks.releaseAfter(failure); }
+            });
             try {
                 requireCandidateStores(f.server);
                 var a = f.controller();
@@ -1476,7 +1519,7 @@ public final class M7HomeClosureGameTests implements FabricGameTest {
          * fixture 的 checked 寫入（T5 Step 0）：沒有 committed 時先記一則帶 cause 鏈的 ERROR（{@link M5GameTestSupport#logFixtureCommitFailure}），
          * 再照原本的斷言失敗；不重試、不放寬斷言。
          */
-        private void committed(SessionRecoveryState.CommitResult result, String message) {
+        void committed(SessionRecoveryState.CommitResult result, String message) {
             if (!result.committed()) M5GameTestSupport.logFixtureCommitFailure("M7 Projection " + message, result);
             c.assertTrue(result.committed(), message);
         }
