@@ -1,7 +1,11 @@
 package dev.quantumchamber.gametest;
 
 import dev.quantumchamber.chamber.ChamberFrame;
+import dev.quantumchamber.chamber.ChamberControllerBlockEntity;
+import dev.quantumchamber.chamber.ChamberInstanceKind;
 import dev.quantumchamber.chamber.ChamberSessions;
+import dev.quantumchamber.collapse.CollapseBackoff;
+import dev.quantumchamber.collapse.HomeEndpointAuthority;
 import dev.quantumchamber.persistence.HomeSessionRecord;
 import dev.quantumchamber.persistence.HomeSessionRecord.Close;
 import dev.quantumchamber.persistence.HomeSessionRecord.CloseReason;
@@ -179,8 +183,8 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
     }
 
     /**
-     * spec v1.6 C、V14：A 票＋B 收尾票合計 64 份已滿（以 64 份測試 reservation 佔滿）時取不到票：記一則 WARN、退避 200 tick、期間不持票、不重試；釋放佔用之後，退避到期才重取，
-     * 重取的票載入 B、收尾完成，WARN 仍是一則。
+     * spec v1.6 C、V14：A 票＋B 收尾票額度滿時取不到票，記一則 WARN、退避 200 tick；釋放佔用後仍須等到退避期滿才重取。
+     * 核對同 SID 正式重取之後才用 fixture 提供 exact B 的載入前提，並由 owner checked 結案。原生票獨力載入由另外的 cold B 案與原生重啟列驗證。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_entry_ticket_budget", tickLimit = 2000)
     public void close_ticket_budget_exhausted_warns_and_retries(TestContext c) {
@@ -196,29 +200,54 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                 var sid = UUID.randomUUID();
                 var dormant = p.dormant(sid, 37);
                 var witness = new LinkedHashMap<String, Boolean>();
+                var watch = TickEndWatch.start(server, sid, hooks);
+                var removal = RemovalWatch.start(server, sid, hooks);
                 witness.put("budgetFull", fill.size() >= 1 && !Budget.free(server));
                 c.assertTrue(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
                         server.getOverworld().getTime())).committed(), "原艙停止原因已 checked latch");
                 M7HomeClosureGameTests.until(c, label + "/warn", 40, () -> unavailableWarns(capture, sid) == 1, guard(p, hooks, () -> {
-                    var backoff = EntryTickets.backoff(server, sid);
-                    long retryAt = backoff == null ? -1 : (long) M4CandidateTestAccess.get(backoff, "retryAtTick");
-                    witness.put("backedOff200", backoff != null && (int) M4CandidateTestAccess.get(backoff, "delayTicks") == 200);
+                    int rejectedAt = watch.failureTick();
+                    long retryAt = watch.retryAtOf(rejectedAt);
+                    witness.put("backedOff200", rejectedAt >= 0 && watch.delayOf(rejectedAt) == 200 && retryAt == rejectedAt + 200L);
                     witness.put("noTicketWhileTheBudgetIsFull", EntryTickets.lease(server, sid) == null);
                     Budget.release(server, fill);
-                    var early = new ArrayList<Integer>();
-                    int[] firstLease = {-1};
+                    if (witness.containsValue(false)) {
+                        pendingBudgetClose(c, p, hooks, sid, label, "BUDGET_RETRY_PRECONDITION：" + witness);
+                        return;
+                    }
+                    int[] assistedAt = {-1};
+                    var chunks = homeChunks(p.frame);
                     M7HomeClosureGameTests.until(c, label + "/close", 400, () -> {
-                        if (EntryTickets.lease(server, sid) != null && firstLease[0] < 0) firstLease[0] = server.getTicks();
-                        if (EntryTickets.lease(server, sid) != null && server.getTicks() < retryAt) early.add(server.getTicks());
-                        return !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid);
+                        if (assistedAt[0] >= 0) return removal.removedSeen();
+                        var lease = EntryTickets.lease(server, sid);
+                        int firstLease = watch.firstLeaseTick();
+                        if (lease == null || lease != watch.firstLease() || firstLease < retryAt || !watch.noLeaseBetween(rejectedAt, retryAt - 1)
+                                || !EntryTickets.describe(server, sid).equals("CLOSE_CONVERGE refs=" + chunks.size())
+                                || chunks.size() > 4 || !sid.equals(M4CandidateTestAccess.get(lease, "sid"))
+                                || !p.entry.equals(M4CandidateTestAccess.get(lease, "entry"))
+                                || p.b != M4CandidateTestAccess.get(lease, "world")
+                                || !chunks.equals(M4CandidateTestAccess.get(lease, "chunks"))) return false;
+                        assistedAt[0] = server.getTicks();
+                        hooks.add(M7HomeClosureGameTests.holdChunks(p.b, p.frame));
+                        return false;
                     }, guard(p, hooks, () -> {
-                        witness.put("retriedOnlyAfterTheBackoff", early.isEmpty() && firstLease[0] >= retryAt);
-                        witness.put("closedAfterTheRetry", "OPEN/NONE".equals(p.doorSummary()) && !gate().globalChamberBusy(server, p.chamber));
-                        witness.put("noTicketAfterTheClose", EntryTickets.lease(server, sid) == null);
-                        witness.put("stillOneWarn", unavailableWarns(capture, sid) == 1);
-                        finish(c, p, hooks, witness, "B 收尾票額度已滿：" + witness + " retryAt=" + retryAt + " firstLease=" + firstLease[0] + " early=" + early);
-                    }), () -> pendingWithoutTicket(c, p, hooks, sid, label, "BUDGET_RETRY_NOT_CLOSED：釋放佔用、退避到期之後沒有收尾：" + witness));
-                }), () -> fail(p, hooks, "BUDGET_NO_WARN：額度已滿時沒有恰一則取不到票的 WARN：" + describe(journal, sid) + " lease=" + EntryTickets.describe(server, sid)));
+                        try {
+                            int firstLease = watch.firstLeaseTick();
+                            witness.put("retriedOnlyAfterTheBackoff", firstLease >= retryAt && watch.noLeaseBetween(rejectedAt, retryAt - 1));
+                            witness.put("fixtureAssistedAfterTheExactLease", assistedAt[0] > firstLease);
+                            witness.put("checkedRemoval", !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid));
+                            witness.put("closedAfterTheRetry", "OPEN/NONE".equals(p.doorSummary()) && !gate().globalChamberBusy(server, p.chamber));
+                            witness.put("noTicketAfterTheClose", !removal.leaseAfterRemoval() && EntryTickets.lease(server, sid) == null);
+                            witness.put("stillOneWarn", unavailableWarns(capture, sid) == 1 && ticketWarns(capture, sid) == 1);
+                            var receipt = p.receipts().lookup(sid).orElseThrow();
+                            witness.put("receiptMatchesTheClose", receipt.sessionUuid().equals(sid) && receipt.entryEndpoint().equals(p.entry)
+                                    && receipt.home().closeIntent() instanceof Close close && close.reason() == CloseReason.ROOT_DISABLED && close.doorGoal() == DoorGoal.OPEN);
+                            finish(c, p, hooks, witness, "B 收尾票額度已滿：" + witness + " retryAt=" + retryAt + " firstLease=" + firstLease + " assistedAt=" + assistedAt[0]);
+                        } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                    }), () -> pendingBudgetClose(c, p, hooks, sid, label, "BUDGET_RETRY_NOT_CLOSED：未見合時重取或正式收尾：" + witness
+                            + " retryAt=" + retryAt + " firstLease=" + watch.firstLeaseTick() + " assistedAt=" + assistedAt[0]));
+                }), () -> pendingBudgetClose(c, p, hooks, sid, label, "BUDGET_NO_WARN：額度已滿時沒有恰一則取不到票的 WARN："
+                        + describe(journal, sid) + " lease=" + EntryTickets.describe(server, sid)));
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
     }
@@ -294,21 +323,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             var journal = SessionRecoveryState.get(server);
             whenBUnloaded(c, p, label, hooks, () -> {
                 var sid = UUID.randomUUID();
-                var dormant = p.dormant(sid, 35);
-                var h = dormant.home();
-                long time = server.getOverworld().getTime();
-                var collapse = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.COLLAPSING,
-                        new HomeSessionRecord.Home(h.selection(), time, -1, -1, List.of(), List.of(), java.util.Optional.empty(), -1, new HomeSessionRecord.None(),
-                                java.util.Optional.empty()));
-                c.assertTrue(journal.commitHomeRestore(server, dormant, collapse).committed(), "checked COLLAPSING");
-                var ready = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.PASSAGE_READY,
-                        new HomeSessionRecord.Home(h.selection(), time, time, time + 1200, List.of(), List.of(), java.util.Optional.empty(), -1, new HomeSessionRecord.None(),
-                                java.util.Optional.empty()));
-                c.assertTrue(journal.commitHomeRestore(server, collapse, ready).committed(), "checked READY");
-                var sealed = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.SEALED,
-                        new HomeSessionRecord.Home(h.selection(), time, time, time + 1200, List.of(), List.of(), java.util.Optional.empty(), -1, new HomeSessionRecord.None(),
-                                java.util.Optional.of(HomeSessionRecord.Seal.AUTHORITY_UNREADABLE)));
-                c.assertTrue(journal.commitHomeRollForward(server, ready, sealed).committed(), "checked SEALED(AUTHORITY_UNREADABLE)，曾 READY");
+                sealedAfterReady(c, p, sid, 35);
                 var instance = Startup.add(server, sid, hooks);
                 var witness = new LinkedHashMap<String, Boolean>();
                 var seen = new ArrayList<String>();
@@ -331,6 +346,115 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                         + describe(journal, sid) + " 票=" + seen));
             });
         } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /** 已 latch 原艙停止的開服封存，先 checked 凍結原原因，再取 CLOSE_CONVERGE；B 還未載入時就能判定取票用途。 */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_entry_ticket_restart_root_stop", tickLimit = 1600)
+    public void restart_seal_with_root_stop_freezes_close_before_loading_b(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new M7HomeClosureGameTests.Projection(c, hooks);
+        var label = "restart_seal_with_root_stop_freezes_close_before_loading_b";
+        try {
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            var fake = FakeBackend.install(hooks);
+            whenBUnloaded(c, p, label, hooks, () -> {
+                var sid = UUID.randomUUID();
+                var sealed = sealedAfterReady(c, p, sid, 35);
+                Startup.add(server, sid, hooks);
+                c.assertTrue(journal.commitHomeRollForward(server, sealed,
+                        M7HomeClosureGameTests.withStop(sealed, RootReason.ROOT_DISABLED, server.getOverworld().getTime())).committed(), "原艙停止原因已 checked latch");
+                M7HomeClosureGameTests.until(c, label + "/first_lease", 40, () -> EntryTickets.lease(server, sid) != null, guard(p, hooks, () -> {
+                    var witness = new LinkedHashMap<String, Boolean>();
+                    var lease = EntryTickets.describe(server, sid);
+                    var frozen = journal.allFlushedSessions().get(sid);
+                    witness.put("bStillUnloaded", !anyLoaded(p.b, homeChunks(p.frame)));
+                    witness.put("rootReasonAlreadyFrozen", frozen instanceof HomeSessionRecord row && row.equals(journal.allSessions().get(sid))
+                            && row.home().closeIntent() instanceof Close close && close.reason() == CloseReason.ROOT_DISABLED && close.doorGoal() == DoorGoal.OPEN);
+                    witness.put("firstLeaseIsCloseConverge", lease.equals("CLOSE_CONVERGE refs=" + homeChunks(p.frame).size()));
+                    fake.restore();
+                    hooks.add(M7HomeClosureGameTests.holdChunks(p.b, p.frame));
+                    M7HomeClosureGameTests.until(c, label + "/close", CLOSE_TICKS,
+                            () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), guard(p, hooks, () -> {
+                                try {
+                                    var receipt = p.receipts().lookup(sid).orElseThrow();
+                                    witness.put("receiptKeepsTheRootReason", receipt.home().closeIntent() instanceof Close close && close.reason() == CloseReason.ROOT_DISABLED);
+                                    witness.put("ticketReleased", EntryTickets.lease(server, sid) == null);
+                                    finish(c, p, hooks, witness, "RESTART_ROOT_STOP_WRONG_TICKET：" + witness + " 首票=" + lease);
+                                } catch (java.io.IOException failure) { throw new GameTestException("收據讀取失敗：" + failure); }
+                            }), () -> pendingWithoutTicket(c, p, hooks, sid, label, "RESTART_ROOT_STOP_CLEANUP：" + witness + " 首票=" + lease));
+                }), () -> pendingWithoutTicket(c, p, hooks, sid, label, "RESTART_ROOT_STOP_NO_TICKET：" + describe(journal, sid)));
+            });
+        } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /** 確認有效 B 收尾票後，以 fixture 載入 exact B 並使控制器失效。決定性錯誤出現的同一 tick 必須記正確 WARN、釋票並退避。 */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_entry_ticket_invalid", tickLimit = 1600)
+    public void close_ticket_releases_at_full_with_invalid_entry(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var p = new M7HomeClosureGameTests.Projection(c, hooks);
+        var label = "close_ticket_releases_at_full_with_invalid_entry";
+        try {
+            var server = p.f.server;
+            var journal = SessionRecoveryState.get(server);
+            var capture = M5GameTestSupport.captureLogs(hooks);
+            whenBUnloaded(c, p, label, hooks, () -> {
+                var sid = UUID.randomUUID();
+                var dormant = p.dormant(sid, 33);
+                var watch = TickEndWatch.start(server, sid, hooks);
+                c.assertTrue(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
+                        server.getOverworld().getTime())).committed(), "原艙停止原因已 checked latch");
+                M7HomeClosureGameTests.until(c, label + "/lease", 40, () -> EntryTickets.lease(server, sid) != null, guard(p, hooks, () -> {
+                    c.assertTrue(EntryTickets.describe(server, sid).equals("CLOSE_CONVERGE refs=" + homeChunks(p.frame).size()), "同 SID 的正式 CLOSE_CONVERGE 票");
+                    hooks.add(M7HomeClosureGameTests.holdChunks(p.b, p.frame));
+                    var controller = (ChamberControllerBlockEntity) p.b.getBlockEntity(p.frame.controllerPos());
+                    c.assertTrue(controller != null && controller.instanceKind() == ChamberInstanceKind.PROJECTION, "B 原為 exact 投影");
+                    controller.setInstanceKind(ChamberInstanceKind.ORIGIN);
+                    hooks.add(() -> controller.setInstanceKind(ChamberInstanceKind.PROJECTION));
+                    c.assertTrue(HomeEndpointAuthority.inspectEntry(server, p.entry) == HomeEndpointAuthority.EntryStatus.ENTRY_AUTHORITY_INVALID,
+                            "FULL 後能確定 B 端點不合法");
+                    int invalidAt = server.getTicks();
+                    M7HomeClosureGameTests.until(c, label + "/invalid_tick_end", 40, () -> server.getTicks() > invalidAt, guard(p, hooks, () -> {
+                        var witness = new LinkedHashMap<String, Boolean>();
+                        witness.put("leaseWasHeldBeforeInvalid", watch.leaseAt(invalidAt - 1));
+                        witness.put("leaseReleasedAtInvalidTickEnd", !watch.leaseAt(invalidAt) && EntryTickets.lease(server, sid) == null);
+                        witness.put("backedOff200AtInvalidTickEnd", watch.delayOf(invalidAt) == 200 && watch.retryAtOf(invalidAt) == invalidAt + 200L);
+                        witness.put("warnNamesInvalidEntry", capture.matching(org.apache.logging.log4j.Level.WARN, "收尾核對 B：B 已載入", "ENTRY_AUTHORITY_INVALID", sid.toString()).size() == 1
+                                && expiryWarns(capture, sid) == 0);
+                        witness.put("keptCheckedCloseAndBusy", "current=CLOSE flushed=CLOSE rollForward=false".equals(describe(journal, sid))
+                                && gate().globalChamberBusy(server, p.chamber));
+                        controller.setInstanceKind(ChamberInstanceKind.PROJECTION);
+                        M7HomeClosureGameTests.until(c, label + "/close", CLOSE_TICKS,
+                                () -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid), guard(p, hooks, () -> {
+                                    witness.put("closedAfterTheEntryRecovered", "OPEN/NONE".equals(p.doorSummary()) && !gate().globalChamberBusy(server, p.chamber));
+                                    finish(c, p, hooks, witness, "CLOSE_FULL_INVALID_TICKET_RETAINED：" + witness + " invalidAt=" + invalidAt);
+                                }), () -> pendingWithoutTicket(c, p, hooks, sid, label, "CLOSE_FULL_INVALID_CLEANUP：" + witness));
+                    }), () -> fail(p, hooks, "CLOSE_FULL_INVALID_NO_TICK_END"));
+                }), () -> pendingWithoutTicket(c, p, hooks, sid, label, "CLOSE_FULL_INVALID_NO_TICKET"));
+            });
+        } catch (RuntimeException | Error failure) { p.close(); hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /** 以正式 journal 入口建立開過通道的可恢復封存列。 */
+    private static HomeSessionRecord sealedAfterReady(TestContext c, M7HomeClosureGameTests.Projection p, UUID sid, int slot) {
+        var server = p.f.server;
+        var journal = SessionRecoveryState.get(server);
+        var dormant = p.dormant(sid, slot);
+        var h = dormant.home();
+        long time = server.getOverworld().getTime();
+        var collapse = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.COLLAPSING,
+                new HomeSessionRecord.Home(h.selection(), time, -1, -1, List.of(), List.of(), java.util.Optional.empty(), -1, new HomeSessionRecord.None(),
+                        java.util.Optional.empty()));
+        c.assertTrue(journal.commitHomeRestore(server, dormant, collapse).committed(), "checked COLLAPSING");
+        var ready = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.PASSAGE_READY,
+                new HomeSessionRecord.Home(h.selection(), time, time, time + 1200, List.of(), List.of(), java.util.Optional.empty(), -1, new HomeSessionRecord.None(),
+                        java.util.Optional.empty()));
+        c.assertTrue(journal.commitHomeRestore(server, collapse, ready).committed(), "checked READY");
+        var sealed = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.SEALED,
+                new HomeSessionRecord.Home(h.selection(), time, time, time + 1200, List.of(), List.of(), java.util.Optional.empty(), -1, new HomeSessionRecord.None(),
+                        java.util.Optional.of(HomeSessionRecord.Seal.AUTHORITY_UNREADABLE)));
+        c.assertTrue(journal.commitHomeRollForward(server, ready, sealed).committed(), "checked SEALED(AUTHORITY_UNREADABLE)，曾 READY");
+        return sealed;
     }
 
     /**
@@ -522,6 +646,33 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         });
     }
 
+    /** 保留本案原判，再以正式 owner 清理這個 fixture 已 checked 的單一 CLOSE，避免第二次退避超過清理窗口而連坐。 */
+    private static void pendingBudgetClose(TestContext c, M7HomeClosureGameTests.Projection p, M2CorridorGameTests.TestHooks hooks, UUID sid, String label, String message) {
+        var server = p.f.server;
+        var journal = SessionRecoveryState.get(server);
+        var failure = new GameTestException(message + " thresholds=" + M7HomeClosureGameTests.closureThresholds(p, sid));
+        try {
+            journal.requireHealthy();
+            if (journal.allSessions().get(sid) instanceof HomeSessionRecord row && row.chamberUuid().equals(p.chamber)
+                    && row.entryEndpoint().equals(p.entry) && row.home().closeIntent() instanceof Close
+                    && row.equals(journal.allFlushedSessions().get(sid)) && !journal.rollForwardPending(sid)
+                    && !journal.pendingSessions().containsKey(sid) && !journal.quarantinedSessions().contains(sid)) {
+                hooks.add(M7HomeClosureGameTests.holdChunks(p.b, p.frame));
+                if (EntryTickets.backoff(server, sid) instanceof CollapseBackoff backoff) backoff.reset();
+            }
+        } catch (RuntimeException | Error cleanup) {
+            failure.addSuppressed(cleanup);
+        }
+        Runnable finishFailure = () -> {
+            try { p.close(); }
+            catch (RuntimeException | Error cleanup) { failure.addSuppressed(cleanup); }
+            hooks.releaseAfter(failure);
+            throw failure;
+        };
+        M7HomeClosureGameTests.until(c, label + "/cleanup", 300, () -> !journal.allSessions().containsKey(sid)
+                && !journal.allFlushedSessions().containsKey(sid), finishFailure, finishFailure);
+    }
+
     /** 放掉 {@code Projection} 保持 B 的測試票（反射呼叫它的釋放動作；之後 {@code close} 再呼叫一次是無作用的移除）。 */
     static void releaseHold(M7HomeClosureGameTests.Projection p) {
         ((Runnable) M4CandidateTestAccess.get(p, "release")).run();
@@ -711,7 +862,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         private static final net.minecraft.util.Identifier PHASE = net.minecraft.util.Identifier.of("quantumchamber:m7_t50_tick_end_watch");
         private static final Map<UUID, TickEndWatch> ACTIVE = new java.util.concurrent.ConcurrentHashMap<>();
         private static boolean registered;
-        private record Sample(int tick, boolean lease, int delay, long retryAt) {}
+        private record Sample(int tick, Object lease, int delay, long retryAt) {}
         private final MinecraftServer server;
         private final UUID sid;
         private final List<Sample> samples = new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -733,7 +884,7 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         private void observe(MinecraftServer owner) {
             if (owner != server) return;
             var backoff = EntryTickets.backoff(server, sid) instanceof dev.quantumchamber.collapse.CollapseBackoff value ? value : null;
-            samples.add(new Sample(server.getTicks(), EntryTickets.lease(server, sid) != null, backoff == null ? 0 : backoff.delayTicks(),
+            samples.add(new Sample(server.getTicks(), EntryTickets.lease(server, sid), backoff == null ? 0 : backoff.delayTicks(),
                     backoff == null ? 0 : backoff.retryAtTick()));
         }
 
@@ -746,21 +897,27 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
 
         long retryAtOf(int tick) { var sample = at(tick); return sample == null ? -1 : sample.retryAt(); }
 
+        private Sample firstLeaseSample() { return samples.stream().filter(sample -> sample.lease() != null).findFirst().orElse(null); }
+
+        int firstLeaseTick() { var sample = firstLeaseSample(); return sample == null ? -1 : sample.tick(); }
+
+        Object firstLease() { var sample = firstLeaseSample(); return sample == null ? null : sample.lease(); }
+
         /** 這個 tick 結束時是否持票；沒有這個 tick 的樣本時為假。 */
-        boolean leaseAt(int tick) { var sample = at(tick); return sample != null && sample.lease(); }
+        boolean leaseAt(int tick) { var sample = at(tick); return sample != null && sample.lease() != null; }
 
         /** {@code from}～{@code to}（含）每個 tick 結束時都有樣本、而且都沒有票。 */
         boolean noLeaseBetween(int from, long to) {
             for (long tick = from; tick <= to; tick++) {
                 var sample = at((int) tick);
-                if (sample == null || sample.lease()) return false;
+                if (sample == null || sample.lease() != null) return false;
             }
             return true;
         }
 
         /** {@code from}～{@code to}（含）之間持票的 tick（診斷訊息用）。 */
         List<Integer> leaseTicks(int from, long to) {
-            return samples.stream().filter(sample -> sample.tick() >= from && sample.tick() <= to && sample.lease()).map(Sample::tick).toList();
+            return samples.stream().filter(sample -> sample.tick() >= from && sample.tick() <= to && sample.lease() != null).map(Sample::tick).toList();
         }
     }
 

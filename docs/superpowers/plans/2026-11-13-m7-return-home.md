@@ -601,3 +601,9 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
 | H06–H07 | T8 同名兩列逐項採計。 |
 
 
+
+## 2026-11-20 T5-0 Codex 接手補記（controller技術決定，非新使用者裁示）
+
+- 完成原Step0剩項再T5本體。B2b5-M1採owning scripts/verification/m7-ci-gametest.ps1，明確納入清單；支持普通@Test修飾詞、其餘無可靠exact模型的動態宣告具名拒絕，補class層正負例，不默默漏類、不另建平行JUnit scanner。第9純onEntryStopped API例留T6真caller/guard；真stop/RESTART_VERIFY真重啟新列/Ubuntu relatch mutation明列未驗，不自增原生表。
+- 交接CI44480505340原FAIL保留；budget案責任分區如M7note現行節：不改400/300/200或600/90，只見同SID合時正式CLOSE_CONVERGE後fixture助B ready；所有budget/票/door/busy/receipt原斷言及獨立native cold-B兩路徑保。僅該失敗案健康settled checked CLOSE ownedSID可test-only重置退避後由正式owner清理，原錯仍丟；交獨立review核有無缺口，不預壓finding。
+- T5-0整體review BASE c533193，含原b0ea0f8/c749739未審批次；第三批具名RED→GREEN→各mutation逐位元還原→新pin必要focused兩輪，一席C/I0後完整holder自然ENDALL0與逐項採計，再push/同SHA requiredCI/結案docs一席。不自放寬門檻，既有source未涉的證據不盲重跑。spec v1.6與第8行pin未動，既有被引用行號不位移。

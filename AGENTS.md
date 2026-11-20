@@ -121,6 +121,15 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-20 現行：Codex 依真 user 新指示接手，先完成 T5-0；T5 本體尚未開始。** 入口仍是 docs/handoffs/2026-11-19-m7-codex-t5-handoff.md，第10節追加本輪紀錄。接手HEAD8f3c977已核clean；該SHA的CI44480505340 attempt1 completed/failure、9success/1failure，Windows M7 53案唯一BUDGET_RETRY_NOT_CLOSED，不符合M5熔岩例外、不rerun。原件及唯讀分析在S的ci-44480505340-codex-0befa5f8a4734cff83d2016383ae9418與t5-0-codex-ci-analysis.md；正式票200tick未ready後owner合法進400退避，底層載入延誤原因未證。
+- controller（Codex root，非使用者裁示）決定：B2b5-M1在owning m7-ci-gametest.ps1補類別核對；budget案保原時限/額度/正式票/退避/checked收尾斷言，只於合時同SID正式CLOSE_CONVERGE已持票後由fixture補exact B ready；獨立cold-B案與restart-close-unloaded-b的native獨力路徑不改。失敗清理僅該案owned/healthy/settled/checked CLOSE單SID可reset runtime backoff後走正式owner，原錯及300上限保持。此責任切分需獨立審查，不先宣稱已修復production載入缺陷。
+- 原b0ea0f8/c749739仍未獨立審查/完整回歸；本輪接續B2b5-M1、第三批M-1/M-3及註解歸屬、兩輪必要focused，一席C/I0後完整END ALL0逐項採計、正常push/同SHA required CI。onEntryStopped純API追加由本輪controller留T6真caller；真停服/RESTART_VERIFY真重啟/Ubuntu relatch mutation保未驗，不自增native rows。
+- 最新AccessDenied每codepin一次、M5熔岩exact例外、SelfTest1000/120及止損照下方常駐段/交接。full-launcher歷史2/3、participantCloses/only_exact再非預期即停；main/tag/人工開始/退役另問，PR/LICENSE/force push不做。原user全文S/user-codex-takeover-20261120.md；root唯一寫狀態與commit。
+
+- 第三批已取得具名RED：S/c-t50-red-ef21bd4f/ 下3案恰M-1/M-3兩目標FAIL，budget案PASS，XML SHA7175B876011297BAF2147EEC89A817912C2A9C0DDD7EC46A3725308BFC80F670；production在該輪未改。本筆RED提交只收測試/inventory及狀態docs，m7-ci宣告掃描候選另留工作副本，下一步GREEN；未宣稱T5-0結案或CI已綠。
+
+以下2026-11-19及更早段落為當時交接/進度快照，現況以本段與S/STATUS最新段為準。
+
 **2026-11-19 最新：M7 交給 Codex 接手（使用者 2026-11-19 指示「可以準備收尾交給codex實作」）。先讀 [`docs/handoffs/2026-11-19-m7-codex-t5-handoff.md`](docs/handoffs/2026-11-19-m7-codex-t5-handoff.md)。** T1～T4、T4A、T4B 已結案；T5-0（T5 Step 0）未結案：第一批 `b0ea0f8`、第二批 `c749739` 已 commit，未審查、未跑完整回歸，第三批（production）未開始。下一步依交接檔第 3 節完成 T5-0，再進 T5 本體。工作區、裁示、門檻、止損與已知陷阱都以交接檔為準；Claude 之後不再在這條分支實作。
 
 **（歷史）2026-11-19：T4B CLOSED，下一步 T5（含 T5 Step 0；Step 0 第一項依使用者 SelfTest 上限裁示改 runner）。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T4B CLOSED（2026-11-19）」節。

@@ -2,6 +2,18 @@
 
 本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
+## 最新：Codex 接手 T5-0（2026-11-20，進行中）
+
+- 真user本輪原文開頭：「M7 由你接手實作（Claude 已收尾）。工作區 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m7-return-home，分支 codex/m7-return-home，交接 HEAD 8f3c977。」完整七點文字在S/user-codex-takeover-20261120.md。本輪先T5-0，再T5～T8，下列技術決定不是user新裁示。
+- 接手實讀HEAD8f3c977fa72ca506e7289c84fc720ea2d8863ecc、tracked clean。CI44480505340 attempt1同head，10jobs自然終局9success/1failure；Windows M7 Main唯一失敗，原CI不rerun/不改判，不套M5熔岩例外。原件S/ci-44480505340-codex-0befa5f8a4734cff83d2016383ae9418（run.json/failed.log/artifact-Windows）。
+- 唯讀分析S/t5-0-codex-ci-analysis.md（6A8A622E89DB1FE95EC3774DE5B425BB4914C65004FCA432A3266E66364D4FD5）：53GT唯一close_ticket_budget_exhausted_warns_and_retries、BUDGET_RETRY_NOT_CLOSED。額度滿/200退避/合時CLOSE_CONVERGE 2refs有原log；票200tick未ready，owner釋票進400退避（retryAt1299）。測試900結束、fixture rehold後1200已ready，仍早於1299，清理也失敗；同SID後來checked收尾。首次lease未逐tick採樣，底層延誤未知，不稱已證實AccessDenied/環境偶發/production載入缺陷。
+- controller技術決定（非user裁示）：budget案保400觀察/200退避與租期、額度/WARN/無早取/sameSID/purpose/refs/門/busy/正式收據與移除斷言，僅合時正式CLOSE_CONVERGE已取得後由既有fixture一次補exact B ready。新witness須證助載在正式票之後；無票/錯purpose/提前不能靠助載過。獨立close_loads_unloaded_b_with_bounded_ticket與native restart-close-unloaded-b的獨力路徑不改；此budget案不再作native獨力cold-load證明。責任切分交獨立review，不預壓finding。
+- 受限失敗清理決定：先保原failure/thresholds，僅本案owned、healthy、current=flushed、無pending/quarantine、checked CLOSE單SID，fixture rehold後可reset該SID runtime backoff再由正式owner收尾；原300上限/原錯照丟，不改正常退避、不直接刪journal/假收據、不泛改別SID或未確認列。
+- B2b5-M1選owning scripts/verification/m7-ci-gametest.ps1納本輪清單，不另建平行JUnit scanner。第三production M-1/M-3與SessionRecoveryState:1027註解接續完整門檻。第9點onEntryStopped由controller留T6真caller/guard事件，真停服/RESTART_VERIFY真重啟/Ubuntu relatch mutation保待驗，不自增native rows，不提前T5本體。
+- 當前僅接手/診斷與已授實作在途；原b0ea0f8/c749739未獨審/未full的事實保。整個T5-0審查從c533193起，C/I0後holder full END ALL0逐項採計，再正常push/新SHA required CI與結案docs。時限決定交user，不自行延長。
+
+- 本輪第三批具名RED：HEAD8f3c977加測試/狀態dirty，src/main無變更。S/c-t50-red-ef21bd4f/gate-t50-red-008e9a88ba9b4cf9a55e507503e5a7e6 原XML 3案恰2FAIL，SHA7175B876011297BAF2147EEC89A817912C2A9C0DDD7EC46A3725308BFC80F670。restart_seal_with_root_stop_freezes_close_before_loading_b 以RESTART_ROOT_STOP_WRONG_TICKET失敗（B未載入、ROOT未凍、首票RESTART_VERIFY）；close_ticket_releases_at_full_with_invalid_entry 以CLOSE_FULL_INVALID_TICKET_RETAINED失敗（先有票、INVALID tick未釋/未退避/無精確WARN，checked CLOSE/busy保）。budget案PASS。這是真目標RED，不把先前-Batch靜態拒絕當RED；m7-ci平行候選未列本筆RED提交。
+
 ## 最新：交給 Codex 接手（2026-11-19）
 
 - 使用者 2026-11-19 原話：「可以準備收尾交給codex實作」。Claude 停止新的實作派工；交接入口是 [`docs/handoffs/2026-11-19-m7-codex-t5-handoff.md`](../handoffs/2026-11-19-m7-codex-t5-handoff.md)，`AGENTS.md`「目前接手入口」也指向它。
