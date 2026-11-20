@@ -1024,7 +1024,7 @@ public final class SessionRecoveryState extends PersistentState {
             Object manager = owner == null ? installation.manager.get() : owner.getOverworld().getPersistentStateManager();
             requireOwned(installationServer, manager, installation, this);
         } else if (owner != null) throw new IllegalStateException("JOURNAL_UNINSTALLED_OWNER");
-        // 以上（執行緒與 journal owner 的核對）是程式錯誤的守門，原生存檔照舊丟出（T4 P2 使用者裁示 2）。以下任何 journal 寫入失敗：checked flush 照舊丟出；
+        // 以上（執行緒與 journal owner 的核對）是程式錯誤的守門，原生存檔照舊丟出（T4 P2 controller 的決定）。以下任何 journal 寫入失敗：checked flush 照舊丟出；
         // 原生存檔（autosave、/save-all、停服）不丟進原版存檔鏈（T4 P2，使用者 2026-11-17 裁示），保持未寫出的狀態與 M5 的 pending／dirty 語意，見 reportNativeSaveFailure。
         var stage = NativeSaveFailure.UNHEALTHY;
         try {

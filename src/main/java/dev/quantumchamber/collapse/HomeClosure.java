@@ -226,17 +226,17 @@ public final class HomeClosure {
         var context = CONTEXTS.get(server);
         var startup = context != null && context.startup.contains(sid) ? Optional.of(context.instance) : Optional.<UUID>empty();
         boolean recovered = false;
-        if (row.state() == SessionState.SEALED && startup.isPresent()) {
+        if (restartVerifies(server, row)) {
             var status = HomeEndpointAuthority.inspectEntry(server, row.entryEndpoint());
             // M7 spec v1.6 C 第 2 種情況：開服集合中曾 READY 的 AUTHORITY_UNREADABLE，RESTART_CLOSED 之前要載入 B 才能核 entry 是否恢復（B 未載入時 inspectEntry 是 UNKNOWN）。
-            if (status == HomeEndpointAuthority.EntryStatus.UNKNOWN && restartVerifies(server, row) && entryUnloaded(server, row)) {
+            if (status == HomeEndpointAuthority.EntryStatus.UNKNOWN && entryUnloaded(server, row)) {
                 var backoff = backoff(context, sid);
                 if (!backoff.ready(server.getTicks()) || !entryTicketReady(server, row, backoff, HomeEntryTickets.Purpose.RESTART_VERIFY)) return;
                 status = HomeEndpointAuthority.inspectEntry(server, row.entryEndpoint());
-                if (status != HomeEndpointAuthority.EntryStatus.VALID) {
-                    entryTicketFailed(server, row, backoff, "開服收尾核對 B：B 已載入，但端點不是 exact 合法投影（" + status + "）");
-                    return;
-                }
+            }
+            if (status != HomeEndpointAuthority.EntryStatus.VALID && status != HomeEndpointAuthority.EntryStatus.UNKNOWN && entryTicketFull(server, sid)) {
+                entryTicketFailed(server, row, backoff(context, sid), "開服收尾核對 B：B 已載入，但端點不是 exact 合法投影（" + status + "）");
+                return;
             }
             recovered = status == HomeEndpointAuthority.EntryStatus.VALID;
         }
@@ -358,7 +358,12 @@ public final class HomeClosure {
             status = HomeEndpointAuthority.inspectEntry(server, row.entryEndpoint());
         }
         if (status != HomeEndpointAuthority.EntryStatus.VALID) {
-            if (status != HomeEndpointAuthority.EntryStatus.UNKNOWN) warn(server, row, "B", "B 端點不是 exact 合法投影（" + status + "），保留結案與占用", null);
+            if (status != HomeEndpointAuthority.EntryStatus.UNKNOWN) {
+                // B 可在兩個 tick 之間載入，這一輪的首次驗證就可能已確定端點不合法。
+                if (entryTicketFull(server, sid))
+                    entryTicketFailed(server, row, backoff, "收尾核對 B：B 已載入，但端點不是 exact 合法投影（" + status + "）");
+                else warn(server, row, "B", "B 端點不是 exact 合法投影（" + status + "），保留結案與占用", null);
+            }
             return;
         }
         var world = exactEntry(server, row);
@@ -407,6 +412,10 @@ public final class HomeClosure {
     private static final String TICKET_UNAVAILABLE = "B 收尾票取不到（A 票＋B 收尾票合計 64 份／256 refs 或與走廊共用的 4096 coverage 已滿，或停服中）";
     private static final String TICKET_EXPIRED = "B 收尾票在 " + HomeEntryTickets.LEASE_TICKS + " tick 內沒有就緒（B 的 home chunks 沒有全部 FULL，或收尾的其他前提仍未成立）";
 
+    private static boolean entryTicketFull(MinecraftServer server, UUID sid) {
+        return HomeEntryTickets.lease(server, sid).filter(HomeEntryTickets.Lease::full).isPresent();
+    }
+
     private static CollapseBackoff backoff(Context context, UUID sid) {
         return context == null ? new CollapseBackoff() : context.backoff.computeIfAbsent(sid, ignored -> new CollapseBackoff());
     }
@@ -451,16 +460,17 @@ public final class HomeClosure {
         backOff(server, sid, backoff);
         var context = CONTEXTS.get(server);
         if (backoff.delayTicks() >= CollapseBackoff.MAX_TICKS && (context == null || context.ticketErrored.add(sid)))
-            LOGGER.error(LOG_MARKER, "回程收尾的 B 收尾票退避到上限（{} tick）仍失敗，請管理員處理（確認 B 的世界與 chunk 能載入、伺服器的 chunk 票額度沒有被占滿）："
+            LOGGER.error(LOG_MARKER, "回程收尾的 B 收尾票退避到上限（{} tick）仍失敗，請管理員處理（確認 B 的世界與 chunk 能載入、B 端點合法、伺服器的 chunk 票額度沒有被占滿）："
                     + "{}；結案與占用保留，A 維持保護：session={} chamber={}", CollapseBackoff.MAX_TICKS, reason, sid, row.chamberUuid());
     }
 
-    /** M7 spec v1.6 C 第 2 種情況：本 instance 開服集合中、曾 READY（通道開過）、CloseIntent=NONE 的 AUTHORITY_UNREADABLE SEALED。 */
+    /** M7 spec v1.6 C 第 2 種情況：本 instance 開服集合中、曾 READY（通道開過）、未有原艙停止原因且 CloseIntent=NONE 的 AUTHORITY_UNREADABLE SEALED。 */
     static boolean restartVerifies(MinecraftServer server, HomeSessionRecord row) {
         var context = CONTEXTS.get(server);
         var h = row.home();
         return context != null && context.startup.contains(row.sessionUuid()) && row.state() == SessionState.SEALED
-                && h.sealedReason().orElse(null) == Seal.AUTHORITY_UNREADABLE && h.closeIntent() instanceof None && h.passageOpenedAtGameTime() >= 0;
+                && h.sealedReason().orElse(null) == Seal.AUTHORITY_UNREADABLE && h.closeIntent() instanceof None
+                && h.stopReason().isEmpty() && h.passageOpenedAtGameTime() >= 0;
     }
 
     /**

@@ -14,6 +14,10 @@
 
 - 本輪第三批具名RED：HEAD8f3c977加測試/狀態dirty，src/main無變更。S/c-t50-red-ef21bd4f/gate-t50-red-008e9a88ba9b4cf9a55e507503e5a7e6 原XML 3案恰2FAIL，SHA7175B876011297BAF2147EEC89A817912C2A9C0DDD7EC46A3725308BFC80F670。restart_seal_with_root_stop_freezes_close_before_loading_b 以RESTART_ROOT_STOP_WRONG_TICKET失敗（B未載入、ROOT未凍、首票RESTART_VERIFY）；close_ticket_releases_at_full_with_invalid_entry 以CLOSE_FULL_INVALID_TICKET_RETAINED失敗（先有票、INVALID tick未釋/未退避/無精確WARN，checked CLOSE/busy保）。budget案PASS。這是真目標RED，不把先前-Batch靜態拒絕當RED；m7-ci平行候選未列本筆RED提交。
 
+- 第三批GREEN：RED提交3ee0bef874fa11c0dc35eba46d55c1ba0eb0031e後才改production。HomeClosure.stepInGuard共用restartVerifies並排除stopReason，FULL且決定性非VALID於兩種票用途立即釋票/正確WARN退避；另涵蓋tick起初已INVALID而同SID仍有FULL活票的分支，UNKNOWN維持bounded，ERROR提示補B端點合法性。SessionRecoveryState:1027註解歸controller判讀，非user新增裁示。
+- S/c-t50-green-b1aae90a 原5GT全PASS（兩新案/budget/原無stop RESTART_VERIFY/原NEVER_FULL），XML ACA04ADD0B58B103FBAC7E30CD7E5AEC25729F9AF924094DB8C8A9D870FFC380。兩direct單點：M1 XML171EC63AF9835839C074AA637BB9DC0AD45D7D72AA6C7594C3A9AF158913C6B6、M3 XMLE5F2DB34DD29DC392CAA1C724801ADBA4487553893D836FAC98B6BD4FE27B19E；每輪2案只有相應精準target FAIL、原守邊案PASS，原/還原HomeClosure SHA均5EBDE4E8949707D576D49DD0E0CED1D27239ADE29FF5A07BC6CE2981E30386AD，root讀回相符。
+- B2b5-M1 owning runner與README已實作，S/c-t50-junit-scanner-38a949e8/static.json已驗真64宣告（Main53/Scale11）、public final及FQ/protected synchronized正例、unlisted class/unsupported FQ Parameterized/精確方法不符具名拒。正式新artifact的SelfTest/最終clean pin兩focused與獨審/full/新SHA CI均待；現階段不能寫全部門檻已過。新詳細報告S/t5-0-codex-report.md與原Claude報告分開保存。
+
 ## 最新：交給 Codex 接手（2026-11-19）
 
 - 使用者 2026-11-19 原話：「可以準備收尾交給codex實作」。Claude 停止新的實作派工；交接入口是 [`docs/handoffs/2026-11-19-m7-codex-t5-handoff.md`](../handoffs/2026-11-19-m7-codex-t5-handoff.md)，`AGENTS.md`「目前接手入口」也指向它。

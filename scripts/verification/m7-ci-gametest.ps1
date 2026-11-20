@@ -27,9 +27,47 @@ function Exact-M7([string[]]$Expected,[string[]]$Actual,[string]$Code){
     if(-not $Expected.Count -or $Expected.Count -ne $Actual.Count -or @($Actual|Sort-Object -Unique).Count -ne $Actual.Count -or @(Compare-Object ($Expected|Sort-Object) ($Actual|Sort-Object) -CaseSensitive).Count){throw $Code}
 }
 function M7-Classes([string[]]$Cases){return @($Cases|ForEach-Object {$_.Substring(0,$_.LastIndexOf('.'))}|Sort-Object -Unique -CaseSensitive)}
+function Assert-M7JUnitDeclarations([string]$Source,[string[]]$Expected){
+    $expectedClasses=@(M7-Classes $Expected)
+    $declaredClasses=@()
+    $declaredCases=@()
+    $commentsAndLiterals='(?s)"""(?:\\.|(?!""").)*"""|"(?:\\.|[^"\\\r\n])*"|''(?:\\.|[^''\\\r\n])*''|//[^\r\n]*|/\*.*?\*/'
+    $annotationName='[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*'
+    $testMethod=[regex]::new('\G\s*(?:\(\s*\)\s*)?(?:(?:@'+$annotationName+'(?:\s*\([^()]*\))?|public|protected|final|synchronized|strictfp)\s+)*void\s+(?<name>[A-Za-z_$][\w$]*)\s*\(\s*\)')
+    $testAnnotations=@('Test','org.junit.jupiter.api.Test')
+    $metadata=@('BeforeAll','AfterAll','BeforeEach','AfterEach','DisplayName','Order','Tag','TestInstance','TestMethodOrder','Timeout','Disabled')
+    $allowedAnnotations=$metadata + @($metadata|ForEach-Object {'org.junit.jupiter.api.'+$_}) +
+        @('Override','java.lang.Override','SuppressWarnings','java.lang.SuppressWarnings','TempDir','org.junit.jupiter.api.io.TempDir')
+    foreach($file in Get-ChildItem -LiteralPath $Source -Filter 'M7*Test.java' -Recurse -File){
+        $raw=Get-Content -LiteralPath $file.FullName -Raw
+        $java=[regex]::Replace([string]$raw,$commentsAndLiterals,{param($token) $token.Value -replace '[^\r\n]',' '})
+        $package=[regex]::Match($java,'(?m)^\s*package\s+(?<name>[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*;')
+        if(-not $package.Success){throw "M7_JUNIT_DECLARATION_FORM：$($file.Name) 缺少可辨識的 package"}
+        $class=($package.Groups['name'].Value -replace '\s','')+'.'+$file.BaseName
+        if($class -cnotin $expectedClasses){throw "M7_JUNIT_CLASS_UNLISTED：$class"}
+        $declaredClasses+=$class
+        $methodCount=0
+        foreach($annotation in [regex]::Matches($java,'@\s*(?<name>'+$annotationName+')')){
+            $name=$annotation.Groups['name'].Value -replace '\s',''
+            if($name -cin $testAnnotations){
+                $method=$testMethod.Match($java,$annotation.Index+$annotation.Length)
+                if(-not $method.Success){throw "M7_JUNIT_DECLARATION_FORM：$class @$name 需要可辨識的無參數 void 方法"}
+                $declaredCases+="$class."+$method.Groups['name'].Value
+                $methodCount++
+            }elseif($name -cnotin $allowedAnnotations){
+                throw "M7_JUNIT_DECLARATION_FORM：$class @$name"
+            }
+        }
+        if($methodCount -eq 0){throw "M7_JUNIT_DECLARATION_FORM：$class 沒有可辨識的 @Test 方法"}
+    }
+    Exact-M7 $expectedClasses $declaredClasses 'M7_JUNIT_CLASS_SET'
+    Exact-M7 $Expected $declaredCases 'M7_JUNIT_DECLARATION_SET'
+}
 # Gradle 以 class 篩選，所以兩段的 class 必須互斥（同一個 class 的方法不得分在兩段）。
 $mainClasses=@(M7-Classes $mainJUnit);$scaleClasses=@(M7-Classes $scaleJUnit)
 if(-not $mainClasses.Count -or -not $scaleClasses.Count -or @($mainClasses|Where-Object {$_ -cin $scaleClasses}).Count){throw 'M7_JUNIT_SEGMENT_OVERLAP'}
+$junitSource=Join-Path $repo 'src/test/java'
+$allJUnit=@($mainJUnit)+@($scaleJUnit)
 if($Segment -ceq 'Scale'){$expectedGame=@();$expectedJUnit=$scaleJUnit;$testClasses=$scaleClasses;$proofScope='m7_scale'}
 else{$expectedGame=@($inventory.portable.gametest)+@($inventory.$platformKey.gametest);$expectedJUnit=$mainJUnit;$testClasses=$mainClasses;$proofScope='m7_home'}
 # live發布必須重讀真正HEAD；歷史VerifyOnly不走此守門。
@@ -83,14 +121,7 @@ function Verify-M7([string]$Root){
         $declarations=@(Declared-GameTests $SourceRoot|Where-Object {$_.scope -ceq 'm7_home' -and ($_.batch -notmatch '_(windows|ubuntu)$' -or $_.batch.EndsWith('_'+$Platform.ToLowerInvariant(),[StringComparison]::Ordinal))}|ForEach-Object identity)
         Exact-M7 $expectedGame $declarations 'M7_DECLARATION_SET'
     }
-    $declaredJUnit=@()
-    foreach($file in Get-ChildItem (Join-Path $repo 'src/test/java/dev/quantumchamber') -Filter 'M7*Test.java' -Recurse -File){
-        $source=Get-Content -LiteralPath $file.FullName -Raw
-        $package=[regex]::Match($source,'(?m)^package ([\w.]+);').Groups[1].Value
-        foreach($m in [regex]::Matches($source,'@Test\s+void\s+(\w+)\(')){$declaredJUnit+="$package.$($file.BaseName)."+$m.Groups[1].Value}
-    }
-    # 兩段的聯集必須恰等於原始碼宣告的全部 M7 JUnit（不可漏掉或重複；兩段互斥已在開頭以 class 核過）。
-    Exact-M7 (@($mainJUnit)+@($scaleJUnit)) $declaredJUnit 'M7_JUNIT_DECLARATION_SET'
+    Assert-M7JUnitDeclarations $junitSource $allJUnit
     if($Segment -ceq 'Main'){
         [xml]$gt=Get-Content -LiteralPath (Join-Path $Root $xmls[0].relative) -Raw
         Exact-M7 $expectedGame @($gt.SelectNodes('//testcase')|ForEach-Object {$_.classname+'|'+$_.name}) 'M7_GAME_SET'
@@ -129,11 +160,27 @@ function SelfTest-M7([string]$Root){
         if($reason -cne $expected){throw "M7_SELFTEST $case expected=$expected got=$reason"};$results+=@{case=$case;expected=$expected;status=$(if($expected){'KILLED'}else{'PASS'})}
     }
     $reason='';try{Assert-M7LiveHead ('0'*40)}catch{$reason=$_.Exception.Message};if($reason -cne 'M7_HEAD_CHANGED'){throw 'M7_SELFTEST live-head-mismatch'};$results+=@{case='live-head-mismatch';expected='M7_HEAD_CHANGED';status='KILLED'}
+    $junitControls=@(
+        @{case='junit-declared-public';expected='';body='@Test public final void proof() {} // @ParameterizedTest'},
+        @{case='junit-unlisted-class';expected='M7_JUNIT_CLASS_UNLISTED：dev.quantumchamber.control.M7ControlTest';body='@Test public void proof() {}'},
+        @{case='junit-unsupported-annotation';expected='M7_JUNIT_DECLARATION_FORM：dev.quantumchamber.control.M7ControlTest @ParameterizedTest';body='@Test void proof() {} @ParameterizedTest void hidden(int value) {}'}
+    )
+    foreach($control in $junitControls){
+        $source=Join-Path $controls $control.case
+        New-Item -ItemType Directory $source|Out-Null
+        Set-Content -LiteralPath (Join-Path $source 'M7ControlTest.java') -Value "package dev.quantumchamber.control; class M7ControlTest { $($control.body)`n}" -Encoding utf8
+        $expected=@('dev.quantumchamber.control.M7ControlTest.proof')
+        if($control.case -ceq 'junit-unlisted-class'){$expected=@('dev.quantumchamber.control.M7OtherTest.proof')}
+        $reason='';try{Assert-M7JUnitDeclarations $source $expected}catch{$reason=$_.Exception.Message}
+        if($reason -cne $control.expected){throw "M7_SELFTEST $($control.case) expected=$($control.expected) got=$reason"}
+        $results+=@{case=$control.case;expected=$control.expected;status=$(if($control.expected){'KILLED'}else{'PASS'})}
+    }
     Save-Json (Join-Path $controls 'result.json') ([ordered]@{fixture=$true;head=$ExpectedHead;platform=$Platform;segment=$Segment;cases=$results})
     Verify-M7 $Root|Out-Null
 }
 $launched=-not $VerifyOnly
 if($launched){
+    Assert-M7JUnitDeclarations $junitSource $allJUnit
     if(-not(Test-Path $OutputRoot)){New-Item -ItemType Directory $OutputRoot|Out-Null};Assert-M6OutputFresh $OutputRoot
     if($head -cne $ExpectedHead){throw 'M7_HEAD'}
     if($Segment -ceq 'Scale'){if($GameNonce){throw 'M7_NONCE：Scale 段沒有 GameTest，不接受 -GameNonce'};$runtime=''}

@@ -128,6 +128,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 - 第三批已取得具名RED：S/c-t50-red-ef21bd4f/ 下3案恰M-1/M-3兩目標FAIL，budget案PASS，XML SHA7175B876011297BAF2147EEC89A817912C2A9C0DDD7EC46A3725308BFC80F670；production在該輪未改。本筆RED提交只收測試/inventory及狀態docs，m7-ci宣告掃描候選另留工作副本，下一步GREEN；未宣稱T5-0結案或CI已綠。
 
+- GREEN小集合5/5及兩個direct production mutation已完成，HomeClosure原/還原SHA皆5EBDE4E8949707D576D49DD0E0CED1D27239ADE29FF5A07BC6CE2981E30386AD；M1/M3各只有精準目標FAIL。B2b5-M1真64宣告/合法modifiers與FQ正例/未列類與unsupported動態等靜態正負已驗，正式新SelfTest與兩focused待clean pin；本筆GREEN候選仍未獨審/full/新CI，不記T5-0closed。
+
 以下2026-11-19及更早段落為當時交接/進度快照，現況以本段與S/STATUS最新段為準。
 
 **2026-11-19 最新：M7 交給 Codex 接手（使用者 2026-11-19 指示「可以準備收尾交給codex實作」）。先讀 [`docs/handoffs/2026-11-19-m7-codex-t5-handoff.md`](docs/handoffs/2026-11-19-m7-codex-t5-handoff.md)。** T1～T4、T4A、T4B 已結案；T5-0（T5 Step 0）未結案：第一批 `b0ea0f8`、第二批 `c749739` 已 commit，未審查、未跑完整回歸，第三批（production）未開始。下一步依交接檔第 3 節完成 T5-0，再進 T5 本體。工作區、裁示、門檻、止損與已知陷阱都以交接檔為準；Claude 之後不再在這條分支實作。

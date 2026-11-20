@@ -871,7 +871,8 @@ strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立
 - exact 集合（`m7-inventory.json` schema 4）：
   - M7 gate（`m7-ci-gametest.ps1 -Segment Main`，預設）：`portable.junit`＋`<平台>.junit`（不含規模測試），GameTest 與兩個 JAR 照舊；
   - 規模段（`-Segment Scale`）：`scale.portable.junit`＋`scale.<平台>.junit`，目前是 `M7HomeHistoryScaleTest` 的 11 個方法，兩平台都跑。
-  - Gradle 以 class 篩選，每一段的 `--tests` 直接由該段集合的 class 產生（不再用 `dev.quantumchamber.*.M7*Test`）。兩段的 class 必須互斥（`M7_JUNIT_SEGMENT_OVERLAP`）；兩段的聯集必須恰等於原始碼中 `M7*Test.java` 宣告的全部 `@Test`（`M7_JUNIT_DECLARATION_SET`）。新增 M7 JUnit 時要放進其中一段，漏列就以這兩個錯因失敗。
+  - Gradle 的 `--tests` 由各段的 class 集合產生，兩段的 class 必須互斥（`M7_JUNIT_SEGMENT_OVERLAP`）。`src/test/java` 內每個 `M7*Test.java` 都要列入 Main 或 Scale（`M7_JUNIT_CLASS_UNLISTED`）；兩段的聯集必須與 class 集合（`M7_JUNIT_CLASS_SET`）、方法集合（`M7_JUNIT_DECLARATION_SET`）各自完全一致。
+  - 一般無參數 `void` 測試支援 `@Test`、`@org.junit.jupiter.api.Test` 與 `public`、`final` 等合法修飾詞。`@ParameterizedTest`、`@RepeatedTest`、`@TestFactory`、`@TestTemplate` 等未支援的宣告，以 `M7_JUNIT_DECLARATION_FORM` 和實際 class／註解名稱拒絕。
 - 執行：
   - Windows：`m7-ci-gametest.ps1 -Segment Scale` 呼叫 `gates.ps1 -Mode M7ScaleRuntime`，以既有的 `Invoke-Gradle` 執行 `test --tests <規模段 class> --rerun-tasks`。總時限 600 秒、idle 90 秒，與 `M7Runtime` 用同一套 M6 deadline；只跑 JUnit（`runtimeLogMode junit`），不啟動 Minecraft。
   - Ubuntu：與 Main 段相同，直接呼叫 Gradle（輸出在 `gradle.log`），腳本內沒有 600／90 判定，只受 job 的 90 分鐘限制。
@@ -880,6 +881,7 @@ strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立
   - 格式與 Main 段相同：`raw/junit/*.xml`、`inputs.json`、`summary.json`。`inputs.json` 新增 `segment`（兩段都有）；`-VerifyOnly` 指定的 `-Segment` 與它不符時是 `M7_INPUT_IDENTITY`。
   - 規模段只收 JUnit XML（同一個 `TEST-dev.quantumchamber.*.M7*.xml` glob）。有 GameTest XML、runtime log 或 JAR，XML 數量不符，或不是本次寫出的，都是 `M7_NOT_CURRENT`。summary 的 `scope` 是 `m7_scale`，欄位集合必須恰等於重算的結果（`M7_SAVED_SUMMARY`）。
   - 規模段 SelfTest 的反例：`junit-drop`（`M7_JUNIT_SET`）、`junit-skip`（`M7_JUNIT_NOT_PASS`）、`wrong-segment` 與 `wrong-head`（`M7_INPUT_IDENTITY`）、`hash`（`M7_INPUT_HASH`）、`summary-junit-cases`（`M7_SAVED_JUNIT_CASES`）、`summary-scope` 與 `summary-extra-field`（`M7_SAVED_SUMMARY`），以及 `live-head-mismatch`。Main 段的 SelfTest 也多了 `wrong-segment`。
+  - 兩段的宣告 SelfTest 接受 `@Test public final`，並分別核對未列 class 與列入 class 卻混有 `@ParameterizedTest` 時的具名錯因。
   - 輸出行：`M7_SCALE_VERIFIED PASS platform=<平台> junit=11 launched=… HEAD=…`。
 - CI（`m7-validation`，Windows 與 Ubuntu matrix）：在原本的「確認 M7 精確集合與隔離」之後新增「執行 M7 規模測試」（`-Segment Scale -OutputRoot .superpowers/m7-scale`）與「確認 M7 規模測試精確集合」（`-VerifyOnly -SelfTest`），證據另存 artifact `m7-scale-<平台>`（`.superpowers/m7-scale/**`）。原本的 step 與 artifact `m7-validation-<平台>` 沒有改。
   - T5 Step 0（B2b-5 審查 M2）：這兩個規模段 step 加 `if: ${{ !cancelled() }}`，前面的 Main 段（或編譯）失敗時規模段照跑，兩段互不連坐（Main 段失敗時 job 仍是失敗）；step 時限執行 20 分、驗證 10 分（Ubuntu 原本只受 job 的 90 分鐘限制；Windows 另有 `Invoke-Gradle` 的 600 秒）。
