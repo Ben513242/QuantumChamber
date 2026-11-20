@@ -4,6 +4,8 @@
 
 ## 最新：Codex 接手 T5-0（2026-11-20，進行中）
 
+- 定向終局：clean code pin `19d6e3b51bf255010568d7a8a6d900d9ff4f76bc`，兩輪 Windows Main 各 JUnit 53／GameTest 55，R1 Scale 11，R2 default 精確 5／M5 精確 2 均 PASS、zero skip；R1 Main／Scale VerifyOnly+SelfTest 15／13 例，含新增宣告 guard 正負例。原件 `S/c-t50-focus-1-83d2c8a9`、`S/c-t50-focus-2-87a29bf0`，詳細 inputs/XML SHA 見 `S/t5-0-codex-report.md`（SHA-256 `4F2557B06DD72D9485609C615666129B7CB6D198E9867CCE4CC124D57DAAD676`）。root 已核 pin、inputs 雜湊、兩輪 XML 55／零失敗與精確集合。budget 收尾 263／248 tick，未見 LEFTOVER_HOME；此輪未刻意注入第二次退避。T5-0 尚未獨審、full／新 CI；下一步獨立一席規格與品質審查 `c533193..候選`，不是結案。以下較早「focused 待」為歷史階段。
+
 - 真user本輪原文開頭：「M7 由你接手實作（Claude 已收尾）。工作區 C:/Users/Ben/Documents/minecraft QuantumChamber/.worktrees/m7-return-home，分支 codex/m7-return-home，交接 HEAD 8f3c977。」完整七點文字在S/user-codex-takeover-20261120.md。本輪先T5-0，再T5～T8，下列技術決定不是user新裁示。
 - 接手實讀HEAD8f3c977fa72ca506e7289c84fc720ea2d8863ecc、tracked clean。CI44480505340 attempt1同head，10jobs自然終局9success/1failure；Windows M7 Main唯一失敗，原CI不rerun/不改判，不套M5熔岩例外。原件S/ci-44480505340-codex-0befa5f8a4734cff83d2016383ae9418（run.json/failed.log/artifact-Windows）。
 - 唯讀分析S/t5-0-codex-ci-analysis.md（6A8A622E89DB1FE95EC3774DE5B425BB4914C65004FCA432A3266E66364D4FD5）：53GT唯一close_ticket_budget_exhausted_warns_and_retries、BUDGET_RETRY_NOT_CLOSED。額度滿/200退避/合時CLOSE_CONVERGE 2refs有原log；票200tick未ready，owner釋票進400退避（retryAt1299）。測試900結束、fixture rehold後1200已ready，仍早於1299，清理也失敗；同SID後來checked收尾。首次lease未逐tick採樣，底層延誤未知，不稱已證實AccessDenied/環境偶發/production載入缺陷。

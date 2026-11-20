@@ -121,6 +121,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-20 T5-0 定向已完成，待獨立審查與完整回歸。** clean code pin `19d6e3b51bf255010568d7a8a6d900d9ff4f76bc`：Windows Main 兩輪各 JUnit 53／GameTest 55、Scale 11、第二批 default 5／M5 2 第二輪均 PASS；Main／Scale VerifyOnly+SelfTest 為 15／13 例。原件 `S/c-t50-focus-1-83d2c8a9`、`S/c-t50-focus-2-87a29bf0`；作者報告 `S/t5-0-codex-report.md` SHA-256 `4F2557B06DD72D9485609C615666129B7CB6D198E9867CCE4CC124D57DAAD676`，root 已讀回 inputs／XML／摘要。下一步一席獨審完整 `c533193..候選`；尚未 full／push／新 CI，T5-0 仍 OPEN。以下本日較早階段記錄依時間接續，不把「待 focused」誤讀為目前狀態。
+
 **2026-11-20 現行：Codex 依真 user 新指示接手，先完成 T5-0；T5 本體尚未開始。** 入口仍是 docs/handoffs/2026-11-19-m7-codex-t5-handoff.md，第10節追加本輪紀錄。接手HEAD8f3c977已核clean；該SHA的CI44480505340 attempt1 completed/failure、9success/1failure，Windows M7 53案唯一BUDGET_RETRY_NOT_CLOSED，不符合M5熔岩例外、不rerun。原件及唯讀分析在S的ci-44480505340-codex-0befa5f8a4734cff83d2016383ae9418與t5-0-codex-ci-analysis.md；正式票200tick未ready後owner合法進400退避，底層載入延誤原因未證。
 - controller（Codex root，非使用者裁示）決定：B2b5-M1在owning m7-ci-gametest.ps1補類別核對；budget案保原時限/額度/正式票/退避/checked收尾斷言，只於合時同SID正式CLOSE_CONVERGE已持票後由fixture補exact B ready；獨立cold-B案與restart-close-unloaded-b的native獨力路徑不改。失敗清理僅該案owned/healthy/settled/checked CLOSE單SID可reset runtime backoff後走正式owner，原錯及300上限保持。此責任切分需獨立審查，不先宣稱已修復production載入缺陷。
 - 原b0ea0f8/c749739仍未獨立審查/完整回歸；本輪接續B2b5-M1、第三批M-1/M-3及註解歸屬、兩輪必要focused，一席C/I0後完整END ALL0逐項採計、正常push/同SHA required CI。onEntryStopped純API追加由本輪controller留T6真caller；真停服/RESTART_VERIFY真重啟/Ubuntu relatch mutation保未驗，不自增native rows。
