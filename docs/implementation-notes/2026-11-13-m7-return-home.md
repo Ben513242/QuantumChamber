@@ -4,6 +4,8 @@
 
 ## 最新：Codex 接手 T5-0（2026-11-20，進行中）
 
+- fix1 原席窄複審終局：`df017d2..6849c84` 的 I-1／I-2／M-1／M-2 全為 ADDRESSED，新增阻擋 0，spec／quality 通過，C0／I0／M0。原 `S/t5-0-codex-review.md` 保首審並追加，現 SHA `79DA83C672C7E0D48720AE782DE024E6EBD2B2DA46D139D0619836A7782C76CB`，root 已讀回。原 FAIL 不改判，未驗真停服／新 RESTART_VERIFY 原生列／Ubuntu mutation 等限制續存。W10 producer 固定身分、非 reparse、7 個鎖可獨占、Java 0 已核，禁止重建或重套。接著以乾淨 HEAD、既有 UTF-8 holder、新 nonce 完整回歸與逐項採計；還沒有 full PASS／push／新 CI。
+
 - fix1 定向終局：root 已核校正後具名 GREEN 2/2 與 `S/c-t50-f1-covering-e26a682d` 的 Main 53 JUnit／57 GT、零錯誤／失敗／skip，live 與 VerifyOnly 實際 PASS 行，SelfTest 15 全部合預期。XML `469A07D2275965E0BE16D7CFC6D43502D25860EB5E1E39AA081177E54EB81C4B`，inputs `F20B0528A872AEC82CE5E80DD3B6122697F35F90C55D23059CC5AB594AF1EF3D`；作者報告現 SHA `191379E71A3141D1774B3C29FE8057C92F6F6FFA657E30E6F891127F1B1863AB`。這些是 HEAD df017d2＋明列七份 dirty 的定向，不冒稱 clean pin。五個作者修正檔、三份 root 狀態文件整理後交原席窄複審；production 無新 diff、HomeClosure bytes 仍 `5EBDE4E8949707D576D49DD0E0CED1D27239ADE29FF5A07BC6CE2981E30386AD`。首個 oracle FAIL 與簽章1保留；尚未 full／新 CI，T5-0 OPEN。
 
 - 首審終局：`c533193..df017d2` 一席 spec＋quality 皆需修正，C0／I2／M2；`S/t5-0-codex-review.md` SHA-256 `985FA51FDBACA2DE76D8907EC9CABEBC910FD35BA7F153B4FF3EB369F82A6FEA`。I-1 新／抽出 fixture 的 checked setup 只取 committed 布林，遺失底層 cause；I-2 predicate cleanup 先 close 後 hooks，close 例外會跳過 hooks。root 核實後交原 implementer fix round 1，限 testmod；同輪修 Minor 的負控執行前核上限與 README family 5.8 秒原件值。production 無新改動，兩個原 mutation 與 clean19d6 兩輪 focused 不改判。修正需具名控制、定向與原席窄複審 C/I0 後才 full；不是 T5-0 closed。原審查判定與未驗項保留。

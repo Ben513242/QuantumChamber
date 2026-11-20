@@ -121,6 +121,8 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-20 T5-0 原席 fix1 複審 C0／I0／M0，進完整回歸。** I-1／I-2／M-1／M-2 全數 ADDRESSED，原審查檔保首審並追加複審（`S/t5-0-codex-review.md` SHA `79DA83C672C7E0D48720AE782DE024E6EBD2B2DA46D139D0619836A7782C76CB`）。來源候選 `6849c843aa44a333481bed2d5282dacdb66ed45b`，production 仍 clean19d6 的 bytes。下一步乾淨 HEAD 以既有 UTF-8 holder 跑 fresh 完整 run-all，逐項採計後才 push／同 SHA required CI；尚未結案或啟 T5 本體。以下較早狀態為歷史過程。
+
 **2026-11-20 T5-0 fix1 定向完成，待原席窄複審。** I-1／I-2 具名控制 GREEN；本輪只改 testmod／腳本／README。`S/c-t50-f1-covering-e26a682d` 在 HEAD df017d2＋明列七份 dirty 下 Main 53 JUnit／57 GameTest、VerifyOnly+SelfTest 15 全部合預期，root 已核 XML `469A07D2275965E0BE16D7CFC6D43502D25860EB5E1E39AA081177E54EB81C4B` 與 inputs 雜湊、live/verify 實際 PASS 行。報告現 SHA `191379E71A3141D1774B3C29FE8057C92F6F6FFA657E30E6F891127F1B1863AB`。production HomeClosure bytes 與兩 focused 的 clean19d6 一致；首輪 oracle FAIL 保原判、工具簽章1。下一步原席複審 df017d2 之後修正，C/I0 才 full，T5 本體尚未開始。以下本日較早段為過程記錄。
 
 **2026-11-20 T5-0 首審 C0／I2／M2，fix round 1 在途。** 首審完整範圍 `c533193..df017d2`，報告 `S/t5-0-codex-review.md`（SHA-256 `985FA51FDBACA2DE76D8907EC9CABEBC910FD35BA7F153B4FF3EB369F82A6FEA`）。I-1 新／抽出 M7 fixture checked 提交未保 cause；I-2 predicate cleanup 的 close 拋錯會跳過 hooks。原 implementer 修 testmod；同輪補 M-1 負控執行前核 1000 上限、M-2 README family 耗時。production 不變，既有 RED／mutation／兩 focused 證據保留；修正定向與同席窄複審 C/I0 前不啟 full。兩輪整改 Important 未下降及工具第三次失敗止損照 user 規則，不重置。
