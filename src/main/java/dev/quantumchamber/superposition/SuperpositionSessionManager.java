@@ -181,6 +181,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     private final Map<UUID,dev.quantumchamber.collapse.CollapseBackoff> homeReturnRetries=new HashMap<>();
     /** HOME 的 WARN 去重鍵（SID → 最近一次的原因）。 */
     private final Map<UUID,String> homeWarnings=new HashMap<>();
+    /** HOME tick 段的意外例外去重（T5-3 Step 0，品質 M-10）：段名 → 最近一次的 {@link FailureText#dedupeKey}；該段之後成功一次就清除。 */
+    private final Map<String,String> homeTickFailures=new HashMap<>();
 
     public static void initialize() {
         if(initialized) return;
@@ -331,7 +333,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
      * <li>回 {@link StartResult#STAGING}：受理、等待 A FULL（controller C5）。之後由 {@link #tick} 在票 FULL 的 tick 續行（{@link #continueHomeStarts}）；
      *     票期到、{@code /reload}、停服都由暫占與票的既有 owner 釋放，不寫 ARMING。</li>
      * </ol>
-     * 回 {@link StartResult#REJECTED} 時沒有任何副作用（沒有暫占、票、reservation、journal 或玩家移動）。
+     * 回 {@link StartResult#REJECTED} 時沒有暫占、票、reservation、journal 或玩家移動。唯一的保守副作用（T5-3 Step 0，品質 M-9）：暫占成功之後才取 START_CHECK 票失敗時，
+     * 暫占（{@link #claimProvisional}）已撤銷 A 的斷電協調結果，{@link #cancelProvisional} 不會還原；A 維持受保護到下一次協調（與 legacy {@code start} 相同，fail-closed）。
+     * latch、平台與 B 資格三項拒絕都在暫占之前，沒有這個副作用。
      */
     public StartResult startHome(ServerWorld entry,ChamberControllerBlockEntity controller,List<UUID> requested) {
         var owner=entry.getServer();
@@ -398,10 +402,40 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             p.home=null;
             HomeRuntime admitted;
             try { admitted=pages.exclusiveOperation(p.sid,() -> admitHomeStart(owner,chamber,p,start)); }
-            catch(RuntimeException failure) { rejectHomeStart(owner,chamber,p.sid,"HOME 入場前的重驗或 checked ARMING 丟出例外",failure); continue; }
+            catch(RuntimeException failure) { settleFailedHomeStart(owner,chamber,p.sid,failure); continue; }
             if(admitted==null) continue;
             try { homeSourceTicket(admitted); pages.prepareHome(admitted.prepared); }
             catch(RuntimeException failure) { failHome(admitted,failure); }
+        }
+    }
+    /**
+     * T5-3 Step 0（品質 M-1）：{@link #admitHomeStart} 丟出意外例外時依現況收斂，不在 journal 未確認時釋放鎖或 reservation。
+     * <ul>
+     * <li>這座艙已有本 SID 的 runtime（checked ARMING 之後才建立）：補取 Entry=B 來源票與走廊票（返還要它們），交 {@link #failHome}，只回 B。</li>
+     * <li>還有走廊 reservation 或 journal 殘留：釋放 START_CHECK 票，暫占記號與 reservation 保留（鎖），交 {@link #finishHomeAbandoned}——journal 確認沒有殘留之後才歸還。</li>
+     * <li>兩者皆無（reservation 之前就丟出）：與原本相同，只釋放暫占與票。</li>
+     * </ul>
+     * checked ARMING 之後的清理例外由 {@link #admitHomeStart} 自己收斂（先建立 runtime），不會留下沒有 runtime 的 ARMING 列。
+     */
+    private void settleFailedHomeStart(MinecraftServer owner,UUID chamber,UUID sid,RuntimeException failure) {
+        if(sessions.get(chamber) instanceof HomeRuntime runtime && runtime.initial.sessionUuid().equals(sid)) {
+            try { homeSourceTicket(runtime); CorridorPageManager.forServer(owner).prepareHome(runtime.prepared); }
+            catch(RuntimeException setup) { failure.addSuppressed(setup); }
+            failHome(runtime,failure);
+            return;
+        }
+        boolean held;
+        try { held=CorridorPageManager.forServer(owner).hasReservation(sid) || homeResidue(sid); }
+        catch(RuntimeException unreadable) { failure.addSuppressed(unreadable); held=true; }
+        if(!held) { rejectHomeStart(owner,chamber,sid,"HOME 入場前的重驗丟出例外",failure); return; }
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        logger.warn("HOME 入場在走廊 reservation 之後丟出例外，保留暫占與 reservation，journal 確認沒有殘留之後才解除：chamber={} session={}",chamber,sid,failure);
+        try { cancelProvisional(owner,chamber,sid); }
+        catch(RuntimeException cleanup) { logger.warn("HOME 入場的暫占取消待重試：session={}",sid,cleanup); }
+        if(!homeAbandons.containsKey(sid)) {
+            var backoff=new dev.quantumchamber.collapse.CollapseBackoff();
+            backoff.failed(owner.getTicks());
+            homeAbandons.put(sid,new HomeAbandon(chamber,backoff));
         }
     }
     private void rejectHomeStart(MinecraftServer owner,UUID chamber,UUID sid,String reason,RuntimeException failure) {
@@ -459,9 +493,15 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             homeAbandons.put(sid,new HomeAbandon(chamber,backoff));
             return null;
         }
-        if(!finishProvisional(owner,chamber,sid)) { p.valid=false; dev.quantumchamber.collapse.HomeRootTickets.release(owner,sid); }
+        // T5-3 Step 0（品質 M-1）：checked ARMING 之後先建立 runtime，再釋放暫占與 START_CHECK 票；釋放丟出例外時入場照常（票由原艙票 owner 之後續清），
+        // 不會留下沒有 runtime、也沒有收斂者的 ARMING 列。
         var runtime=new HomeRuntime(start.world(),start.controller(),new ChamberFrame(start.endpoint().controllerPos(),start.endpoint().facing()),
                 effects,prepared,arming);
+        try { if(!finishProvisional(owner,chamber,sid)) { p.valid=false; dev.quantumchamber.collapse.HomeRootTickets.release(owner,sid); } }
+        catch(RuntimeException cleanup) {
+            p.valid=false;
+            logger.warn("HOME 入場已 checked ARMING，但暫占與 START_CHECK 票的釋放丟出例外；票由原艙票 owner 之後續清，入場照常：chamber={} session={}",chamber,sid,cleanup);
+        }
         sessions.put(chamber,runtime);
         logger.info("HOME 入場已 checked ARMING（Entry=B）：chamber={} session={} participants={}",chamber,sid,arming.participants().size());
         return runtime;
@@ -710,6 +750,21 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             warnHome(sid,"HOME 返還的 RETURNING 尚未 checked，依退避重試",failure);
         }
     }
+    /**
+     * HOME 的一個 tick 段（T5-3 Step 0，品質 M-10）：段內漏接的 RuntimeException 只記 WARN（同段同原因只記一次），不丟出，本 tick 其餘的 legacy、reposition 與 recovery
+     * 照常。段內的 HOME 狀態不因此改變；下一 tick 照常重做。
+     */
+    private void isolateHome(String segment,Runnable body) {
+        try {
+            body.run();
+            homeTickFailures.remove(segment);
+        } catch(RuntimeException failure) {
+            var key=FailureText.dedupeKey(failure);
+            if(key.equals(homeTickFailures.put(segment,key))) return;
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("HOME 的 tick 段（{}）丟出意外例外，已隔離；本 tick 其餘的 legacy、reposition 與 recovery 照常：{}",
+                    segment,FailureText.describe(failure),failure);
+        }
+    }
     private void warnHome(UUID sid,String message,RuntimeException failure) {
         var key=message+"｜"+FailureText.dedupeKey(failure);
         if(key.equals(homeWarnings.put(sid,key))) return;
@@ -909,8 +964,10 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         for (var entry:List.copyOf(sessions.entrySet())) if(entry.getValue() instanceof Provisional p && (!p.valid || owner.getTicks()-p.claimedAt>=200))
             cancelForEvent(owner,entry.getKey(),p);
         // M7 HOME（T5-2）：START_CHECK 的續行與 HOME runtime；legacy 的迴圈只看 SuperpositionSession。
-        continueHomeStarts(owner);
-        tickHomeRuntimes(owner);
+        // T5-3 Step 0（品質 M-10）：HOME 各段各自隔離意外例外（isolateHome）。不隔離時例外會從 END_SERVER_TICK 丟出：本 tick 其後的 legacy、reposition、recovery
+        // 與之後註冊的 tick owner 都被跳過，原版的 server 迴圈還會把它當成未預期例外而停服。
+        isolateHome("continueHomeStarts",() -> continueHomeStarts(owner));
+        isolateHome("tickHomeRuntimes",() -> tickHomeRuntimes(owner));
         for(var runtime : activeSessions()) {
             if(CorridorPageManager.forServer(owner).operationInProgress(runtime.initial.sessionUuid())) continue;
             var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
@@ -942,7 +999,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             } catch(IOException | RuntimeException failure) { fail(runtime,failure); }
         }
         reposition.tick(owner); recovery.tick(owner); finishAbandoned();
-        finishHomeAbandoned(owner); completeHomeReturns(owner);
+        isolateHome("finishHomeAbandoned",() -> finishHomeAbandoned(owner));
+        isolateHome("completeHomeReturns",() -> completeHomeReturns(owner));
         // 只有 DORMANT 的 MEASURED 在保留式清理完成後釋放 runtime 與來源 ticket。COLLAPSING 的清理收尾走 CorridorPageManager 延伸後的同一路徑，
         // runtime 與來源 ticket 保留到塌縮流程的終局或進入 SEALED 才釋放（spec §5：releaseAfterTerminal、releaseOnSealed）。
         for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.MEASURED
@@ -1229,7 +1287,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(recovery!=null) recovery.detach(owner);
         recovery=null; reposition=null; sessions.clear(); tickets.clear(); journal=null; server=null; lastTick=Integer.MIN_VALUE; checkpointWarning=null;
         abandonWarnings.clear(); abandonPending.clear(); retiredInitial.clear();
-        homeTickets.clear(); homeAbandons.clear(); homeReturnRetries.clear(); homeWarnings.clear();
+        homeTickets.clear(); homeAbandons.clear(); homeReturnRetries.clear(); homeWarnings.clear(); homeTickFailures.clear();
     }
     private void requireServer(MinecraftServer owner) {
         if(owner!=server || server==null || !owner.isOnThread()) throw new IllegalStateException("session 必須在 attached server thread");

@@ -61,15 +61,25 @@ public final class MeasuredWorldSaveCheckpoint {
                 || record.participants().stream().anyMatch(person -> !person.returned()))
             throw new IllegalStateException("HOME 世界 checkpoint 必須在全員返回 B 之後、清除租約之前的 server thread");
         var entry=record.entryEndpoint();
-        var world=server.getWorld(RegistryKey.of(RegistryKeys.WORLD,entry.worldKey()));
-        if(world==null || dev.quantumchamber.universe.UniverseLifecycleService.resolveActive(server,entry.universeId()).orElse(null)!=world)
-            throw new IllegalStateException("HOME checkpoint 的 B 不是 exact live 世界");
+        var world=exactLiveEntry(server,entry);
+        if(world==null) throw new IllegalStateException("HOME checkpoint 的 B 不是 exact live 世界");
         var corridor=Objects.requireNonNull(server.getWorld(SuperpositionWorld.KEY));
         if(world==corridor) throw new IllegalStateException("B 不得位於走廊世界");
         var entryChunks=new HashSet<ChunkPos>(); addChunks(entryChunks,ChamberGeometry.bounds(new ChamberFrame(entry.controllerPos(),entry.facing())));
         var corridorChunks=new HashSet<ChunkPos>(); record.spaceLeases().forEach(lease -> addChunks(corridorChunks,lease.bounds()));
         var relevant=new LinkedHashMap<ServerWorld,Set<ChunkPos>>(); relevant.put(world,entryChunks); relevant.put(corridor,corridorChunks);
         return relevant;
+    }
+    /**
+     * HOME checkpoint 的 B 是否為 exact live 世界（與 {@link #relevant(MinecraftServer,HomeSessionRecord)} 丟出「B 不是 exact live」的條件相同）。T5-3 Step 0（品質 M-2）：
+     * 走廊收尾在問 {@link #ready(MinecraftServer,HomeSessionRecord)} 之前先問這個，B 暫時不是 exact live 時托管等待（spec §9.2），不當成故障。只查詢、不載入。
+     */
+    public static boolean entryLive(MinecraftServer server,HomeSessionRecord record) {
+        return exactLiveEntry(server,record.entryEndpoint())!=null;
+    }
+    private static ServerWorld exactLiveEntry(MinecraftServer server,HomeSessionRecord.EntryEndpoint entry) {
+        var world=server.getWorld(RegistryKey.of(RegistryKeys.WORLD,entry.worldKey()));
+        return world!=null && dev.quantumchamber.universe.UniverseLifecycleService.resolveActive(server,entry.universeId()).orElse(null)==world ? world : null;
     }
     private static void addChunks(Set<ChunkPos> chunks,BlockBox bounds) {
         for(int x=bounds.getMinX()>>4;x<=bounds.getMaxX()>>4;x++)

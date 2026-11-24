@@ -135,7 +135,11 @@
       "quantumchamber:m1_empty|m7homecorridorgametests.returning_checkpoint_failure_keeps_row_and_lock",
       "quantumchamber:m1_empty|m7homecorridorgametests.unchecked_home_arming_keeps_chamber_busy_until_converged",
       "quantumchamber:m1_empty|m7homecorridorgametests.start_check_released_on_reload_and_timeout",
-      "quantumchamber:m1_empty|m7homecorridorgametests.start_home_checkpoint_unavailable_has_no_side_effects"
+      "quantumchamber:m1_empty|m7homecorridorgametests.start_home_checkpoint_unavailable_has_no_side_effects",
+      "quantumchamber:m1_empty|m7homecorridorgametests.home_start_cleanup_fault_after_checked_arming_keeps_runtime",
+      "quantumchamber:m1_empty|m7homecorridorgametests.home_release_waits_for_exact_b_without_error_flood",
+      "quantumchamber:m1_empty|m7homecorridorgametests.returning_roll_forward_pending_waits_for_journal_backoff",
+      "quantumchamber:m1_empty|m7homecorridorgametests.home_tick_exception_is_isolated_and_warned_once"
     ],
     "native": [
       "close-ordinary-before-close",

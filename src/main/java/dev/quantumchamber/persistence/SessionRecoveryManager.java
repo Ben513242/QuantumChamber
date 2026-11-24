@@ -472,7 +472,15 @@ public final class SessionRecoveryManager {
             if(pages.operationInProgress(sid) || !pages.hasReservation(sid) || journal.rollForwardPending(sid)
                     || journal.quarantinedSessions().contains(sid) || !home.equals(journal.allSessions().get(sid))) continue;
             if(now<=homeReturnTicks.computeIfAbsent(sid,ignored -> now)) continue;
-            try { recoverHome(home); homeFailures.remove(sid); }
+            try {
+                recoverHome(home); homeFailures.remove(sid);
+                // T5-3 Step 0（品質 M-8）：返還進度的 roll-forward 寫出未確認（ROLL_FORWARD_PENDING，recoverHome 正常返回、current 帶著這筆進度）時，
+                // 與寫出丟出例外相同記一次 journal 退避；同一個 tick 的 retryHomeRollForward 不再立刻重寫。
+                if(journal.rollForwardPending(sid)) {
+                    outstanding=true;
+                    if(journalRetryFailedTick!=now) { journalRetry.failed(now); journalRetryFailedTick=now; }
+                }
+            }
             catch(IOException | RuntimeException failure) {
                 if(journal.rollForwardPending(sid)) {
                     outstanding=true;

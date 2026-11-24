@@ -400,6 +400,8 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                             e.step(() -> {
                                 c.assertTrue(!e.journal.allSessions().containsKey(sid) && !e.journal.allFlushedSessions().containsKey(sid), "收斂後沒有殘留列");
                                 c.assertTrue(e.inB(player) && pose.equals(player.getPos()), "全程未移動玩家");
+                                // T5-2 品質 fix1 複審的可選建議（T5-3 Step 0）：未確認的 ARMING 不得取 Entry=B 來源票（取票只在 checked ARMING 之後）。
+                                e.assertNoSourceTicket(sid);
                                 e.finish();
                             }), e.timeout("unchecked_home_arming_keeps_chamber_busy_until_converged/converged"));
                 });
@@ -481,6 +483,204 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             c.assertTrue(e.inB(e.player(0)) && pose.equals(e.player(0).getPos()), "拒絕不移動玩家");
             e.finish();
         });
+    }
+
+    // ---- T5-3 Step 0：T5-2 品質審查分給 T5-3 Step 0 的 Minor ----
+
+    /**
+     * 品質 M-1：checked ARMING 之後的清理丟出例外（A 的 START_CHECK 票第一次原生移除失敗）不得留下沒有 runtime 的 ARMING 列：入場照常到 SUPERPOSITION，
+     * START_CHECK 票由原艙票 owner 之後續清；最後以正式取消返回 B 收尾。修正前：例外回到 {@code continueHomeStarts} 的 catch 只取消暫占，ARMING 列沒有 runtime、
+     * 沒有人收斂，艙一直 BUSY（{@code HOME_START_LEAKED_AFTER_CHECKED_ARMING}）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_corridor_start_fault_windows", tickLimit = 2000)
+    public void home_start_cleanup_fault_after_checked_arming_keeps_runtime(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            var capture = new LogCapture("quantumchamber");
+            hooks.add(capture::close);
+            e.requireStarted();
+            var sid = provisionalSid(e.chamber);
+            c.assertTrue(sid != null, "受理後有暫占");
+            var faults = e.failFirstRootTicketRemoval(sid);
+            var label = "home_start_cleanup_fault_after_checked_arming_keeps_runtime";
+            e.awaitSuperposition(label, row -> {
+                c.assertTrue(row.sessionUuid().equals(sid) && faults[0] == 1, "前提：同一個 SID、START_CHECK 票的第一次移除丟出例外：faults=" + faults[0]);
+                c.assertTrue("HomeRuntime".equals(ownerType(e.chamber)), "checked ARMING 之後由 HOME runtime 持有這座艙：" + ownerType(e.chamber));
+                c.assertTrue(HomeTicketFaultFixture.count(e.a, sid) == 0, "START_CHECK 票由原艙票 owner 之後續清：" + HomeTicketFaultFixture.count(e.a, sid));
+                c.assertTrue(capture.matching(Level.WARN, "HOME 入場已 checked ARMING，但暫占與 START_CHECK 票的釋放丟出例外", sid.toString()).size() == 1,
+                        "清理例外記一則 WARN");
+                c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
+                e.awaitReleased(sid, label + "/cancel", null, () -> {
+                    c.assertTrue(e.inB(e.player(0)), "取消後回到 exact B");
+                    e.finish();
+                });
+            }, e.step(() -> {
+                throw new GameTestException("HOME_START_LEAKED_AFTER_CHECKED_ARMING：checked ARMING 之後的清理例外不得留下沒有 runtime、沒有收斂者的列：row="
+                        + e.homeRow() + " owner=" + ownerType(e.chamber) + " faults=" + faults[0]);
+            }));
+        });
+    }
+
+    /**
+     * 品質 M-2：全員已返回 B、走廊收尾開始之後 B 暫時不是 exact live（宇宙 lifecycle 未就緒）：收尾托管等待（spec §9.2），保留 RETURNING 列、走廊與占用，
+     * 不得每個 tick 記一則 ERROR＋stack；B 恢復之後照常收尾。修正前：{@code MeasuredWorldSaveCheckpoint.ready} 每 tick 丟出、{@code failHome} 每 tick 記 ERROR
+     * （{@code HOME_RELEASE_ERROR_FLOOD}）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_corridor_release_wait_b_windows", tickLimit = 2000)
+    public void home_release_waits_for_exact_b_without_error_flood(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            e.requireStarted();
+            var label = "home_release_waits_for_exact_b_without_error_flood";
+            e.awaitSuperposition(label, row -> {
+                var sid = row.sessionUuid();
+                var player = e.player(0);
+                var capture = new LogCapture("quantumchamber");
+                hooks.add(capture::close);
+                var lifecycle = ((Map<?, ?>) M4CandidateTestAccess.get(UniverseLifecycleService.class, "CONTEXTS")).get(e.server);
+                var ready = M4CandidateTestAccess.get(lifecycle, "ready");
+                Runnable restore = () -> M4CandidateTestAccess.set(lifecycle, "ready", ready);
+                hooks.add(restore);
+                c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "取消開始返還");
+                M7HomeClosureGameTests.until(c, label + "/returned", 400, () -> {
+                    var current = e.homeRow();
+                    return current != null && current.state() == SessionState.RETURNING
+                            && current.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned);
+                }, e.step(() -> {
+                    // 全員已返回的同一個 recovery tick 已交走廊收尾（releaseHome）；走廊的收尾在下一個 END tick 才執行，這裡（test 回呼）早於它。
+                    c.assertTrue(e.inB(player) && e.pages.hasReservation(sid), "前提：全員已返回 B、走廊尚未收尾");
+                    M4CandidateTestAccess.set(lifecycle, "ready", false);
+                    c.assertTrue(HomeEndpointAuthority.inspectEntry(e.server, e.entry) == HomeEndpointAuthority.EntryStatus.UNKNOWN, "前提：B 暫時不是 exact live");
+                    e.hold(30, () -> { }, () -> {
+                        var errors = capture.matching(Level.ERROR, "HOME 走廊保留租約等待安全返回 B", sid.toString());
+                        c.assertTrue(errors.isEmpty(), "HOME_RELEASE_ERROR_FLOOD：B 暫時不是 exact live 時走廊收尾不得每 tick 記 ERROR：count=" + errors.size());
+                        var current = e.homeRow();
+                        c.assertTrue(current != null && current.state() == SessionState.RETURNING && !current.spaceLeases().isEmpty()
+                                        && e.pages.hasReservation(sid) && gate().globalChamberBusy(e.server, e.chamber),
+                                "托管等待：保留 RETURNING 列、租約、走廊與占用：" + current);
+                        restore.run();
+                        e.awaitReleased(sid, label + "/released", null, () -> {
+                            c.assertTrue(e.inB(player), "B 恢復之後照常收尾、玩家在 exact B");
+                            e.finish();
+                        });
+                    });
+                }), e.timeout(label + "/returned"));
+            });
+        });
+    }
+
+    /**
+     * 品質 M-8：返還進度（Returned）的 roll-forward 寫出未確認（ROLL_FORWARD_PENDING）時記一次 journal 退避，同一個 tick 不再重寫；寫出恢復之後由 journal 退避的重試確認、
+     * 照常收尾。修正前：recovery 沒有記退避，同一個 tick 的 {@code retryHomeRollForward} 立刻再寫一次（{@code HOME_ROLL_FORWARD_REWRITTEN_SAME_TICK}）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_corridor_roll_forward_backoff_windows", tickLimit = 2000)
+    public void returning_roll_forward_pending_waits_for_journal_backoff(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            e.requireStarted();
+            var label = "returning_roll_forward_pending_waits_for_journal_backoff";
+            e.awaitSuperposition(label, row -> {
+                var sid = row.sessionUuid();
+                var player = e.player(0);
+                c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "取消開始返還");
+                var returning = e.homeRow();
+                c.assertTrue(returning != null && returning.state() == SessionState.RETURNING
+                        && returning.participants().stream().noneMatch(SessionRecoveryRecord.Participant::returned), "前提：checked RETURNING、尚未有人返還");
+                M7NativeSaveFault.Handle fault;
+                try { fault = M7NativeSaveFault.arm(e.server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(SessionRecoveryState.STATE_ID + ".dat")); }
+                catch (java.io.IOException failure) { throw new GameTestException("M7NativeSaveFault 武裝失敗：" + failure); }
+                hooks.add(fault::close);
+                // 失敗路徑的收尾：解除故障之後把未確認的 roll-forward 寫出確認，避免共用 journal 的 pending 讓之後的 HOME 入場被拒（T5-3 RED 實測的連坐）。
+                hooks.add(() -> {
+                    fault.disarm();
+                    try { if (e.journal.rollForwardPending(sid)) e.journal.flush(e.server); }
+                    catch (RuntimeException flush) { LOG.warn("M7_GT_ROLL_FORWARD_CLEANUP 寫出失敗：session={}", sid, flush); }
+                });
+                M7HomeClosureGameTests.until(c, label + "/write", 200, () -> fault.hits() >= 1, e.step(() -> {
+                    c.assertTrue(fault.hits() == 1,
+                            "HOME_ROLL_FORWARD_REWRITTEN_SAME_TICK：返還進度寫出未確認的同一個 tick 不得再重寫（等 journal 退避）：hits=" + fault.hits());
+                    var current = e.journal.allSessions().get(sid) instanceof HomeSessionRecord home ? home : null;
+                    var flushed = e.homeRow();
+                    c.assertTrue(e.journal.rollForwardPending(sid) && current != null && current.participants().getFirst().returned()
+                                    && flushed != null && !flushed.participants().getFirst().returned(),
+                            "前提：返還進度的 roll-forward 寫出未確認（current 已返還、flushed 未返還）：current=" + current + " flushed=" + flushed);
+                    fault.disarm();
+                    e.awaitReleased(sid, label + "/released", null, () -> {
+                        c.assertTrue(e.inB(player), "寫出恢復之後照常收尾、玩家在 exact B");
+                        e.finish();
+                    });
+                }), e.timeout(label + "/write"));
+            });
+        });
+    }
+
+    /**
+     * 品質 M-10：HOME 的 tick 段丟出意外例外時只記一則 WARN（同段同原因去重），不從 END_SERVER_TICK 丟出；本 tick 其餘的 legacy、reposition 與 recovery 照常。
+     * 以 testmod 反射放入一個不完整的 HOME runtime（沒有 B 世界與 Controller）：{@code tickHomeRuntimes} 的失敗路徑本身丟出 NPE。修正前這個例外會從
+     * END_SERVER_TICK 丟出，原版 server 迴圈把它當成未預期例外而停服，所以這案沒有 RED 執行（以讀碼論證，見 T5-3 報告）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_corridor_tick_isolation_windows", tickLimit = 400)
+    public void home_tick_exception_is_isolated_and_warned_once(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        try {
+            var capture = new LogCapture("quantumchamber");
+            hooks.add(capture::close);
+            var chamber = UUID.randomUUID();
+            var bogus = incompleteHomeRuntime(chamber);
+            @SuppressWarnings("unchecked") var sessions = (Map<Object, Object>) M4CandidateTestAccess.get(gate(), "sessions");
+            sessions.put(chamber, bogus);
+            hooks.add(() -> sessions.remove(chamber, bogus));
+            int start = c.getWorld().getServer().getTicks();
+            c.waitAndRun(5, () -> {
+                try {
+                    var warned = capture.matching(Level.WARN, "HOME 的 tick 段（tickHomeRuntimes）丟出意外例外");
+                    c.assertTrue(c.getWorld().getServer().getTicks() >= start + 5, "server 在 HOME 段例外之後照常推進");
+                    c.assertTrue(warned.size() == 1 && warned.getFirst().thrown() instanceof NullPointerException,
+                            "HOME_TICK_EXCEPTION_NOT_ISOLATED：HOME 段的意外例外只記一則 WARN（去重）：" + warned.stream().map(entry -> String.valueOf(entry.thrown())).toList());
+                    hooks.release();
+                    c.complete();
+                } catch (RuntimeException | Error failure) {
+                    hooks.releaseAfter(failure);
+                    if (failure instanceof GameTestException test) throw test;
+                    var wrapped = new GameTestException("M7_HOME_CORRIDOR_CALLBACK：回呼內例外：" + failure);
+                    wrapped.initCause(failure);
+                    throw wrapped;
+                }
+            });
+        } catch (RuntimeException | Error failure) { hooks.releaseAfter(failure); throw failure; }
+    }
+
+    /**
+     * 不完整的 HOME runtime（只供 M-10 案）：B 世界、Controller、效果交易與 reservation 都是 null，凍結列是合法但不在 journal 的 ARMING 列（新 SID、新 chamber、
+     * 遠處的租約）。{@code tickHomeRuntimes} 的資格檢查丟出 NPE，失敗路徑 {@code failHome} 先把狀態設為 RETURNING、再於 B 權威核對丟出 NPE——只丟一次。
+     */
+    private static Object incompleteHomeRuntime(UUID chamber) {
+        var pos = new BlockPos(900003, 64, 900003);
+        var universe = UUID.randomUUID();
+        var root = new ChamberOriginAuthority(chamber, World.OVERWORLD.getValue(), DimensionRole.OVERWORLD, pos, net.minecraft.util.math.Direction.NORTH,
+                ChamberInstanceKind.ORIGIN);
+        var entry = new EntryEndpoint(chamber, UniverseId.of(universe), net.minecraft.util.Identifier.of("quantumchamber", "universe/" + universe + "/overworld"),
+                DimensionRole.OVERWORLD, pos, net.minecraft.util.math.Direction.NORTH, ChamberInstanceKind.PROJECTION);
+        var person = new SessionRecoveryRecord.Participant(UUID.randomUUID(), Vec3d.ZERO, Vec3d.ZERO, 0, 0, new net.minecraft.nbt.NbtCompound(), false);
+        var lease = new SessionRecoveryRecord.SpaceLease(62, new net.minecraft.util.math.BlockBox(900000, 64, 900000, 900006, 70, 900006));
+        var home = new HomeSessionRecord.Home(new Unselected(), -1, -1, -1, List.of(), List.of(), Optional.empty(), -1, new HomeSessionRecord.None(), Optional.empty());
+        var row = new HomeSessionRecord(UUID.randomUUID(), chamber, root, entry, List.of(person), List.of(lease), SessionState.ARMING, home);
+        try {
+            var type = Class.forName("dev.quantumchamber.superposition.SuperpositionSessionManager$HomeRuntime");
+            var constructor = type.getDeclaredConstructor(ServerWorld.class, ChamberControllerBlockEntity.class, ChamberFrame.class,
+                    dev.quantumchamber.transfer.QuantumEffectTransaction.class, CorridorPageManager.PreparedMappings.class, HomeSessionRecord.class);
+            constructor.setAccessible(true);
+            return constructor.newInstance(null, null, new ChamberFrame(pos, net.minecraft.util.math.Direction.NORTH), null, null, row);
+        } catch (ReflectiveOperationException failure) { throw new GameTestException("HOME runtime 反射建立失敗：" + failure); }
+    }
+
+    /** 這座艙在 gateway 的 owner 型別（{@code Provisional}／{@code HomeRuntime}／{@code SuperpositionSession}），沒有時為 null。只讀反射。 */
+    static String ownerType(UUID chamber) {
+        var owner = ((Map<?, ?>) M4CandidateTestAccess.get(gate(), "sessions")).get(chamber);
+        return owner == null ? null : owner.getClass().getSimpleName();
     }
 
     // ---- fixture ----
@@ -602,13 +802,49 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
 
         /** SUPERPOSITION 已 checked、mapping 已發布、入口 overlay 已寫完。 */
         void awaitSuperposition(String label, Consumer<HomeSessionRecord> then) {
+            awaitSuperposition(label, then, timeout(label + "/superposition"));
+        }
+
+        /** 同 {@link #awaitSuperposition(String, Consumer)}，逾時改執行 {@code timeout}（具名失敗）。 */
+        void awaitSuperposition(String label, Consumer<HomeSessionRecord> then, Runnable timeout) {
             M7HomeClosureGameTests.until(c, label + "/superposition", 400, () -> {
                 var row = homeRow();
                 if (row == null || row.state() != SessionState.SUPERPOSITION || !row.equals(journal.allSessions().get(row.sessionUuid()))
                         || !pages.hasReservation(row.sessionUuid()) || pages.currentMappings(row.sessionUuid()).epoch() < 1) return false;
                 for (var cell : overlayCells(row.sessionUuid())) if (!corridor().getBlockState(cell).isAir()) return false;
                 return true;
-            }, step(() -> then.accept(homeRow())), timeout(label + "/superposition"));
+            }, step(() -> then.accept(homeRow())), timeout);
+        }
+
+        /**
+         * T5-3 Step 0（品質 M-1）：把這座艙 START_CHECK 票的 backend 換成第一次原生移除丟出例外的代理（加票、FULL 判斷與之後的移除都照原生）。回傳丟出次數的計數格。
+         * 只在 startHome 受理的同一個 callback 內呼叫；票 owner 的租約是 package-private 介面，以 {@link java.lang.reflect.Proxy} 在同一個 package 建立代理。
+         */
+        int[] failFirstRootTicketRemoval(UUID sid) {
+            var owner = ((Map<?, ?>) M4CandidateTestAccess.get(HomeRootTickets.class, "servers")).get(server);
+            var lease = ((Map<?, ?>) M4CandidateTestAccess.get(owner, "leases")).get(sid);
+            c.assertTrue(lease != null, "START_CHECK 已取得 A 的票");
+            var nativeBackend = M4CandidateTestAccess.get(HomeRootTickets.class, "NATIVE");
+            Class<?> type;
+            try { type = Class.forName("dev.quantumchamber.collapse.HomeRootTickets$Backend", false, HomeRootTickets.class.getClassLoader()); }
+            catch (ClassNotFoundException failure) { throw new GameTestException("HomeRootTickets.Backend 找不到：" + failure); }
+            int[] thrown = {0};
+            var proxy = java.lang.reflect.Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, (self, method, args) -> {
+                if (method.getName().equals("remove") && thrown[0] == 0) {
+                    thrown[0]++;
+                    throw new IllegalStateException("M7_T5_3_START_CHECK_RELEASE_FAULT");
+                }
+                if (method.getName().equals("full")) {
+                    var world = (ServerWorld) args[0];
+                    var pos = (ChunkPos) args[1];
+                    return world.getChunkManager().getWorldChunk(pos.x, pos.z) != null;
+                }
+                method.setAccessible(true);
+                try { return method.invoke(nativeBackend, args); }
+                catch (java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+            });
+            M4CandidateTestAccess.set(lease, "backend", proxy);
+            return thrown;
         }
 
         /**

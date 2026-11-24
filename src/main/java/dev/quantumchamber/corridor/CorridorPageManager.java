@@ -990,6 +990,8 @@ public final class CorridorPageManager {
             if (!space.homeCheckpointFailedFor.equals(row)) { resetCheckpointBackoff(space); space.homeCheckpointFailedFor=null; }
             else if (server.getTicks()<space.checkpointRetryTick) return;
         }
+        // T5-3 Step 0（品質 M-2）：B 暫時不是 exact live 時托管等待（spec §9.2，與 recovery 的返還相同），不清除、不存檔，也不當成故障記 ERROR。
+        if (!MeasuredWorldSaveCheckpoint.entryLive(server,row)) return;
         if (!MeasuredWorldSaveCheckpoint.ready(server,row)) return;
         for (var lease : space.leases.values()) if (!clear(space,lease.slotId(),lease.bounds())) return;
         for (var lease : space.leases.values()) {
