@@ -37,6 +37,7 @@ import net.minecraft.world.chunk.WorldChunk;
  * M7 T4B（spec v1.6 C、V14）：回程收尾時替 B 取有界票。HOME 列的 CloseIntent=CLOSE 已 checked、exact live B world 存在，但 B 的 home chunks 沒有載入、B 無人無票時，
  * 回程終局 owner 以 ≤4 refs 的 B 收尾票有界載入 B，再照 §5.3 的順序收尾。fixture 沿 {@link M7HomeClosureGameTests.Projection}（A 原艙＋同艙 COMPLETE 的 B 投影），
  * 建好之後放掉測試票，等 B 的 home chunks 全部卸載才開始。B 收尾票 owner（{@code dev.quantumchamber.collapse.HomeEntryTickets}）以反射讀取：T4 沒有這個類，RED 時讀成「沒有票」。
+ * 冷 B 案（B 未載入時由正式 B 收尾票載入 B）在放掉測試票之前先生成 B 地形（{@link #whenPregeneratedBUnloaded}），取票當下 B 仍是未載入，正式票從磁碟載入 B。
  */
 public final class M7HomeEntryTicketGameTests implements FabricGameTest {
     private static SuperpositionSessionManager gate() { return (SuperpositionSessionManager) ChamberSessions.gateway(); }
@@ -66,8 +67,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             boolean[] fail = {false};
             M5GameTestSupport.installFlushProbe(c, state -> { if (fail[0]) throw new IllegalStateException("M7_T4B_CLOSE_FLUSH_FAULT：受控的 journal 寫出失敗"); }, hooks);
             hooks.add(() -> fail[0] = false);
-            whenBUnloaded(c, p, label, hooks, () -> {
+            whenPregeneratedBUnloaded(c, p, label, hooks, pregen -> {
                 var sid = UUID.randomUUID();
+                ColdBTimeline.start(p, sid, label, pregen, hooks);
                 var dormant = p.dormant(sid, 39);
                 var witness = new LinkedHashMap<String, Boolean>();
                 // 每個 tick 結束時的觀察從凍結之前開始（只存在一個 tick 的票，test callback 看不到）。
@@ -201,9 +203,10 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             var server = p.f.server;
             var journal = SessionRecoveryState.get(server);
             var capture = M5GameTestSupport.captureLogs(hooks);
-            whenBUnloaded(c, p, label, hooks, () -> {
+            whenPregeneratedBUnloaded(c, p, label, hooks, pregen -> {
                 var fill = Budget.fill(server, hooks);
                 var sid = UUID.randomUUID();
+                ColdBTimeline.start(p, sid, label, pregen, hooks);
                 var dormant = p.dormant(sid, 37);
                 var witness = new LinkedHashMap<String, Boolean>();
                 var watch = TickEndWatch.start(server, sid, hooks);
@@ -268,8 +271,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             var journal = SessionRecoveryState.get(server);
             var capture = M5GameTestSupport.captureLogs(hooks);
             var fake = FakeBackend.install(hooks);
-            whenBUnloaded(c, p, label, hooks, () -> {
+            whenPregeneratedBUnloaded(c, p, label, hooks, pregen -> {
                 var sid = UUID.randomUUID();
+                ColdBTimeline.start(p, sid, label, pregen, hooks);
                 var dormant = p.dormant(sid, 36);
                 var witness = new LinkedHashMap<String, Boolean>();
                 c.assertTrue(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
@@ -322,8 +326,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
         try {
             var server = p.f.server;
             var journal = SessionRecoveryState.get(server);
-            whenBUnloaded(c, p, label, hooks, () -> {
+            whenPregeneratedBUnloaded(c, p, label, hooks, pregen -> {
                 var sid = UUID.randomUUID();
+                ColdBTimeline.start(p, sid, label, pregen, hooks);
                 sealedAfterReady(p, p.dormant(sid, 35));
                 var instance = Startup.add(server, sid, hooks);
                 var witness = new LinkedHashMap<String, Boolean>();
@@ -359,8 +364,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             var server = p.f.server;
             var journal = SessionRecoveryState.get(server);
             var fake = FakeBackend.install(hooks);
-            whenBUnloaded(c, p, label, hooks, () -> {
+            whenPregeneratedBUnloaded(c, p, label, hooks, pregen -> {
                 var sid = UUID.randomUUID();
+                ColdBTimeline.start(p, sid, label, pregen, hooks);
                 var sealed = sealedAfterReady(p, p.dormant(sid, 35));
                 Startup.add(server, sid, hooks);
                 p.committed(journal.commitHomeRollForward(server, sealed,
@@ -399,8 +405,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             var server = p.f.server;
             var journal = SessionRecoveryState.get(server);
             var capture = M5GameTestSupport.captureLogs(hooks);
-            whenBUnloaded(c, p, label, hooks, () -> {
+            whenPregeneratedBUnloaded(c, p, label, hooks, pregen -> {
                 var sid = UUID.randomUUID();
+                ColdBTimeline.start(p, sid, label, pregen, hooks);
                 var dormant = p.dormant(sid, 33);
                 var watch = TickEndWatch.start(server, sid, hooks);
                 p.committed(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
@@ -512,8 +519,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
             var server = p.f.server;
             var journal = SessionRecoveryState.get(server);
             var capture = M5GameTestSupport.captureLogs(hooks);
-            whenBUnloaded(c, p, label, hooks, () -> {
+            whenPregeneratedBUnloaded(c, p, label, hooks, pregen -> {
                 var sid = UUID.randomUUID();
+                ColdBTimeline.start(p, sid, label, pregen, hooks);
                 var dormant = p.dormant(sid, 34);
                 var h = dormant.home();
                 var collapse = new HomeSessionRecord(sid, p.chamber, p.root, p.entry, dormant.participants(), List.of(), dev.quantumchamber.superposition.SessionState.COLLAPSING,
@@ -610,7 +618,8 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                     if (witness.containsValue(false) || expiryWarnCount != 0) {
                         String reason;
                         if (expiryWarnCount != 0) reason = "HANDOFF_FAIL_ENTRY_TICKET_EXPIRED";
-                        else if (!regionFullAtAssist[0]) reason = "HANDOFF_FAIL_ENTITY_REGION_NOT_FULL_AT_ASSIST";
+                        // 審查 M-1：只有助載真的發生過，才可能是「助載時區域未 FULL」；助載前就退避落到其他分支。
+                        else if (assistedAt[0] >= 0 && !regionFullAtAssist[0]) reason = "HANDOFF_FAIL_ENTITY_REGION_NOT_FULL_AT_ASSIST";
                         else if (atFault.sampled() && !atFault.live())
                             reason = atFault.deadline() >= 0 && atFault.deadline() <= atFault.faultTick() ? "HANDOFF_FAIL_LEASE_EXPIRED_BEFORE_DOOR_FAULT"
                                     : "HANDOFF_FAIL_NO_LIVE_LEASE_AT_DOOR_FAULT";
@@ -670,11 +679,202 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
     }
 
     /**
-     * 門案 fixture 的助載：同步把 home chunks 半徑 {@value #ENTITY_TICKING_RADIUS} 載入到 FULL（與 {@code holdChunks} 同樣的同步 {@code getChunk}，不消耗 tick）。
-     * 不加持久票：正式票已讓這個範圍的目標是 FULL，同步載入時原版加的 UNKNOWN 票是 level 33，下一個 tick 過期，不改任何 chunk 的票等級。
+     * 門案 fixture 的助載與冷 B 案的先生成（{@link #pregenerate}）：同步把 home chunks 半徑 {@value #ENTITY_TICKING_RADIUS} 載入到 FULL
+     * （與 {@code holdChunks} 同樣的同步 {@code getChunk}，不消耗 tick）。不加持久票：同步載入時原版加的 UNKNOWN 票是 level 33，下一個 tick 過期。
+     * 門案助載時正式票已讓這個範圍的目標是 FULL，不改任何 chunk 的票等級；先生成時沒有正式票，之後這些 chunks 照常卸載。
      */
     private static void loadEntityTickingRegion(ServerWorld world, Set<ChunkPos> home) {
         for (var pos : regionAround(home, ENTITY_TICKING_RADIUS)) world.getChunk(pos.x, pos.z);
+    }
+
+    /** 冷 B 案的先生成結果（{@link #pregenerate}）；沒有執行時是 {@link Pregen#NOT_RUN}。 */
+    private record Pregen(boolean ran, int regionChunks, long wallMillis) {
+        static final Pregen NOT_RUN = new Pregen(false, 0, -1);
+    }
+
+    /**
+     * 冷 B 案（B 未載入時由正式 B 收尾票載入 B）的 fixture：同 {@link #whenBUnloaded}，但在 B 就緒、放掉測試票之前先生成 B 地形（{@link #pregenerate}），
+     * 之後照原流程等 B 的 home chunks 全部卸載才執行 {@code body}。取票當下 B 仍符合回程終局 owner 的「未載入」判定，正式票仍要自己載入 B，
+     * 只是從磁碟讀、不必在票期內現場 worldgen（正式遊玩時玩家去過 B，地形通常已生成）。
+     */
+    private static void whenPregeneratedBUnloaded(TestContext c, M7HomeClosureGameTests.Projection p, String label, M2CorridorGameTests.TestHooks hooks,
+                                                  java.util.function.Consumer<Pregen> body) {
+        Pregen[] pregen = {Pregen.NOT_RUN};
+        whenBUnloaded(c, p, label, hooks, () -> pregen[0] = pregenerate(p.b, homeChunks(p.frame)), () -> body.accept(pregen[0]));
+    }
+
+    /**
+     * 先生成 B 地形：同步（不消耗 tick）把 B 各 home chunk 周圍半徑 {@value #ENTITY_TICKING_RADIUS} 的聯集載入到 FULL（{@link #loadEntityTickingRegion}；
+     * 1.21 正式票 level 31 要等這個範圍全部 FULL 才開始讀 entity），再自檢全部 FULL，否則以 {@code PREGEN_REGION_NOT_FULL} 失敗。
+     */
+    private static Pregen pregenerate(ServerWorld world, Set<ChunkPos> home) {
+        long start = System.nanoTime();
+        loadEntityTickingRegion(world, home);
+        long wallMillis = (System.nanoTime() - start) / 1_000_000L;
+        // 自檢用獨立的字面值 2（不讀 ENTITY_TICKING_RADIUS），常數或載入範圍被改時仍能抓到。
+        var region = regionAround(home, 2);
+        var missing = region.stream().filter(pos -> world.getChunkManager().getWorldChunk(pos.x, pos.z) == null).map(pos -> pos.x + "," + pos.z).toList();
+        if (!missing.isEmpty()) throw new GameTestException("PREGEN_REGION_NOT_FULL：先生成之後 B 各 home chunk 周圍半徑 2 的聯集沒有全部 FULL：missing=" + missing
+                + " region=" + region.size() + " home=" + home.size());
+        return new Pregen(true, region.size(), wallMillis);
+    }
+
+    /**
+     * T5-0 冷 B 案的時序觀測，只記錄、不當判定。每個 tick 結束時（{@code END_SERVER_TICK} 預設 phase 的回程終局 owner 推進之後）讀這個 SID 的 B 收尾票，
+     * 以及 B home chunks 的方塊（FULL）與 entity 就緒（讀法同 {@link DoorHandoffDiagnostic}：不寫 chunk cache、不呼叫 checkpoint）。收尾時輸出一行 {@value #MARKER}：
+     * 先生成的結果、首票那個 tick 結束時已 FULL 的 home chunk 數（取票當下 B 未載入時是 0）、看到的每份票（用途、refs、首次看到、期限、home chunks 全部 FULL、
+     * 不再持有的 tick）、checkpoint 前置（方塊＋entity）全部就緒的 tick、checked 移除的 tick，以及是否重取票。原斷言不讀取這裡；讀取失敗只記 diagnostic-error。
+     */
+    private static final class ColdBTimeline {
+        private static final String MARKER = "M7_T50_COLD_B_V1";
+        private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod");
+        private static final net.minecraft.util.Identifier PHASE = net.minecraft.util.Identifier.of("quantumchamber:m7_t50_cold_b_timeline");
+        private static final Map<UUID, ColdBTimeline> ACTIVE = new java.util.concurrent.ConcurrentHashMap<>();
+        private static boolean registered;
+
+        /** 看到的一份票；{@code fullAt}／{@code goneAt} 還沒發生時是 −1。 */
+        private static final class Span {
+            final Object lease;
+            final String purpose;
+            final int refs;
+            final long deadline;
+            final int seenAt;
+            int fullAt = -1;
+            int goneAt = -1;
+
+            Span(Object lease, String purpose, int refs, long deadline, int seenAt) {
+                this.lease = lease; this.purpose = purpose; this.refs = refs; this.deadline = deadline; this.seenAt = seenAt;
+            }
+        }
+
+        private final MinecraftServer server;
+        private final ServerWorld world;
+        private final UUID sid;
+        private final String label;
+        private final Pregen pregen;
+        private final List<ChunkPos> chunks;
+        private final int startTick;
+        private final List<Span> spans = new ArrayList<>();
+        private final List<String> errors = new ArrayList<>(4);
+        private int errorCount;
+        private Integer homeFullAtFirstLeaseEnd;
+        private int checkpointReadyTick = -1;
+        private int closedTick = -1;
+        private boolean rowSeen;
+        private boolean done;
+        private boolean emitted;
+
+        private ColdBTimeline(M7HomeClosureGameTests.Projection p, UUID sid, String label, Pregen pregen) {
+            server = p.f.server;
+            world = p.b;
+            this.sid = sid;
+            this.label = label;
+            this.pregen = pregen;
+            chunks = List.copyOf(homeChunks(p.frame));
+            startTick = server.getTicks();
+        }
+
+        static synchronized ColdBTimeline start(M7HomeClosureGameTests.Projection p, UUID sid, String label, Pregen pregen, M2CorridorGameTests.TestHooks hooks) {
+            if (!registered) {
+                registered = true;
+                net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.addPhaseOrdering(net.fabricmc.fabric.api.event.Event.DEFAULT_PHASE, PHASE);
+                net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(PHASE, owner -> ACTIVE.values().forEach(timeline -> timeline.observe(owner)));
+            }
+            var timeline = new ColdBTimeline(p, sid, label, pregen);
+            ACTIVE.put(sid, timeline);
+            hooks.add(timeline::emitOnce);
+            hooks.add(() -> ACTIVE.remove(sid, timeline));
+            return timeline;
+        }
+
+        private void observe(MinecraftServer owner) {
+            if (owner != server || done) return;
+            try {
+                int tick = server.getTicks();
+                var lease = EntryTickets.lease(server, sid);
+                var last = spans.isEmpty() ? null : spans.getLast();
+                if (last != null && last.goneAt < 0 && last.lease != lease) last.goneAt = tick;
+                var ready = readHome();
+                boolean blocks = ready[0] == chunks.size();
+                if (lease != null && (last == null || last.lease != lease)) {
+                    last = new Span(lease, M4CandidateTestAccess.get(lease, "purpose").toString(), ((Set<?>) M4CandidateTestAccess.get(lease, "chunks")).size(),
+                            (long) M4CandidateTestAccess.get(lease, "deadline"), tick);
+                    spans.add(last);
+                    if (spans.size() == 1) homeFullAtFirstLeaseEnd = ready[0];
+                }
+                if (lease != null && last.fullAt < 0 && blocks) last.fullAt = tick;
+                if (checkpointReadyTick < 0 && blocks && ready[1] == chunks.size()) checkpointReadyTick = tick;
+                var journal = SessionRecoveryState.get(server);
+                if (journal.allSessions().containsKey(sid) || journal.allFlushedSessions().containsKey(sid)) rowSeen = true;
+                else if (rowSeen) { closedTick = tick; done = true; }
+            } catch (RuntimeException | LinkageError failure) {
+                errorCount++;
+                if (errors.size() < 4) errors.add(failure.getClass().getName());
+            }
+        }
+
+        /** home chunks 中方塊已 FULL 與 entity 已載入的數量（只讀 cache 與 holder，同 {@link DoorHandoffDiagnostic#worldChunkIsReady}）。 */
+        private int[] readHome() {
+            var manager = world.getChunkManager();
+            var positions = (long[]) M4CandidateTestAccess.get(manager, "chunkPosCache");
+            var statuses = (Object[]) M4CandidateTestAccess.get(manager, "chunkStatusCache");
+            var cache = (Object[]) M4CandidateTestAccess.get(manager, "chunkCache");
+            var holders = (Long2ObjectMap<?>) M4CandidateTestAccess.get(M4CandidateTestAccess.get(manager, "chunkLoadingManager"), "chunkHolders");
+            var entities = ((ServerWorldRecoveryStorageAccessor) world).quantumchamber$entityManager();
+            int blocks = 0, loaded = 0;
+            for (var pos : chunks) {
+                long key = pos.toLong();
+                if (DoorHandoffDiagnostic.worldChunkIsReady(key, positions, statuses, cache, holders)) blocks++;
+                if (entities.isLoaded(key)) loaded++;
+            }
+            return new int[]{blocks, loaded};
+        }
+
+        void emitOnce() {
+            if (emitted) return;
+            emitted = true;
+            String payload;
+            try {
+                var data = new LinkedHashMap<String, Object>();
+                data.put("case", label);
+                data.put("sid", sid.toString());
+                var generated = new LinkedHashMap<String, Object>();
+                generated.put("ran", pregen.ran());
+                generated.put("regionChunks", pregen.regionChunks());
+                generated.put("wallMillis", pregen.wallMillis());
+                data.put("pregen", generated);
+                data.put("homeChunks", chunks.size());
+                data.put("startTick", startTick);
+                var first = spans.isEmpty() ? null : spans.getFirst();
+                data.put("firstLeaseTick", first == null ? null : first.seenAt);
+                data.put("homeFullAtFirstLeaseEnd", homeFullAtFirstLeaseEnd);
+                data.put("firstLeaseFullTick", first == null || first.fullAt < 0 ? null : first.fullAt);
+                data.put("checkpointReadyTick", checkpointReadyTick < 0 ? null : checkpointReadyTick);
+                data.put("closedTick", closedTick < 0 ? null : closedTick);
+                data.put("firstLeaseToReadyTicks", first == null || checkpointReadyTick < 0 ? null : checkpointReadyTick - first.seenAt);
+                data.put("reacquired", spans.size() > 1);
+                var leases = new ArrayList<Map<String, Object>>();
+                for (var span : spans) {
+                    var value = new LinkedHashMap<String, Object>();
+                    value.put("purpose", span.purpose);
+                    value.put("refs", span.refs);
+                    value.put("seenAt", span.seenAt);
+                    value.put("deadline", span.deadline);
+                    value.put("fullAt", span.fullAt < 0 ? null : span.fullAt);
+                    value.put("goneAt", span.goneAt < 0 ? null : span.goneAt);
+                    leases.add(value);
+                }
+                data.put("leases", leases);
+                data.put("status", errorCount == 0 ? "captured" : "diagnostic-error");
+                data.put("diagnosticErrorCount", errorCount);
+                data.put("diagnosticErrors", List.copyOf(errors));
+                payload = new com.google.gson.GsonBuilder().serializeNulls().create().toJson(data);
+            } catch (RuntimeException | LinkageError failure) {
+                payload = "{\"status\":\"diagnostic-error\",\"case\":\"" + label + "\",\"phase\":\"serialize\"}";
+            }
+            try { LOG.info("{} {}", MARKER, payload); }
+            catch (RuntimeException | LinkageError ignored) { /* 日誌失敗保持原測試判定。 */ }
+        }
     }
 
     /**
