@@ -128,6 +128,10 @@ public final class CorridorGeometry {
             this(view,frontOpen,rearOpen,SessionSemantics.LEGACY_FORWARD_CONSUMED);
         }
         Builder(CorridorPageManager.MappingView view, boolean frontOpen, boolean rearOpen,SessionSemantics semantics) {
+            this(view,frontOpen,rearOpen,semantics,false);
+        }
+        // T5-1 RED 腳手架：home 先忽略，輸出與 legacy 相同。
+        Builder(CorridorPageManager.MappingView view, boolean frontOpen, boolean rearOpen,SessionSemantics semantics,boolean home) {
             this.view=view; this.frontOpen=frontOpen; this.rearOpen=rearOpen;
             this.semantics=java.util.Objects.requireNonNull(semantics);
             volume = Math.multiplyExact(view.aliasEndBlock()-view.aliasStartBlock(),49);

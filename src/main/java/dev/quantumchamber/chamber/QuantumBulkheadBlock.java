@@ -40,6 +40,8 @@ public final class QuantumBulkheadBlock extends Block implements FluidFillable {
     public static final BooleanProperty OPEN = Properties.OPEN;
     /** 量子膜；舊存檔沒有這個屬性，讀入時是預設的 {@code none}。 */
     public static final EnumProperty<MembraneState> MEMBRANE = EnumProperty.of("membrane", MembraneState.class);
+    /** T5-1 RED 腳手架：只宣告，尚未加入 state。 */
+    public static final BooleanProperty HOME_MARKER = BooleanProperty.of("home_marker");
 
     /** 量子膜的外框：置中的 2px 薄板，和模型的平面（z=8 或 x=8）同位置，讓玩家瞄得到。 */
     private static final VoxelShape MEMBRANE_X_OUTLINE = Block.createCuboidShape(0, 0, 7, 16, 16, 9);

@@ -69,7 +69,7 @@ class MembraneStateTest {
         SharedConstants.createGameVersion();
         Bootstrap.initialize();
         // server 載入 data pack 後以 Blocks.refreshShapeCache() 建立每個 state 的 shape cache（isSolid、isFullCube 等都依賴它）；
-        // JUnit 不經過那一步，所以對 bulkhead 的 10 個 state 明確建立，與 runtime 一致。
+        // JUnit 不經過那一步，所以對 bulkhead 的全部 state（M7 T5-1 起 20 個）明確建立，與 runtime 一致。
         ModBlocks.QUANTUM_BULKHEAD.getStateManager().getStates().forEach(BlockState::initShapeCache);
     }
 
@@ -150,9 +150,73 @@ class MembraneStateTest {
     }
 
     @Test
+    void defaultStateAndOldSavesWithoutTheHomeMarkerDecodeToFalse() {
+        requireHomeMarker();
+        assertFalse(ModBlocks.QUANTUM_BULKHEAD.getDefaultState().get(QuantumBulkheadBlock.HOME_MARKER), "預設 home_marker=false");
+        List<Executable> checks = new ArrayList<>();
+        // M1–M4 的存檔只有 open；M5～M7 T5-0 的存檔有 open＋membrane；兩者都沒有 home_marker。
+        for (boolean open : new boolean[] {false, true}) for (String membrane : new String[] {null, "none", "sealed_x", "passable_z"}) {
+            NbtCompound legacy = new NbtCompound();
+            legacy.putString("Name", "quantumchamber:quantum_bulkhead");
+            NbtCompound properties = new NbtCompound();
+            properties.putString("open", Boolean.toString(open));
+            if (membrane != null) properties.putString("membrane", membrane);
+            legacy.put("Properties", properties);
+            String label = "open=" + open + " membrane=" + membrane;
+            BlockState fromCodec = BlockState.CODEC.parse(NbtOps.INSTANCE, legacy).getOrThrow();
+            BlockState fromHelper = NbtHelper.toBlockState(Registries.BLOCK.getReadOnlyWrapper(), legacy);
+            for (BlockState decoded : List.of(fromCodec, fromHelper)) {
+                checks.add(() -> assertTrue(decoded.isOf(ModBlocks.QUANTUM_BULKHEAD), label));
+                checks.add(() -> assertEquals(open, decoded.get(QuantumBulkheadBlock.OPEN), label));
+                checks.add(() -> assertEquals(membrane == null ? "none" : membrane, decoded.get(QuantumBulkheadBlock.MEMBRANE).asString(), label));
+                checks.add(() -> assertFalse(decoded.get(QuantumBulkheadBlock.HOME_MARKER), label + " 沒有 home_marker 讀成 false"));
+            }
+        }
+        assertAll(checks);
+    }
+
+    @Test
+    void homeMarkerOnlySwapsTheModelAndSurvivesDoorWrites() {
+        requireHomeMarker();
+        List<Executable> checks = new ArrayList<>();
+        BlockPos center = new BlockPos(0, 64, 0);
+        for (BlockState plain : ModBlocks.QUANTUM_BULKHEAD.getStateManager().getStates()) {
+            if (plain.get(QuantumBulkheadBlock.HOME_MARKER)) continue;
+            BlockState marked = plain.with(QuantumBulkheadBlock.HOME_MARKER, true);
+            String label = marked.toString();
+            // 碰撞、外框、culling、光、窒息、視線、流體與實際生效的 membrane 都和沒有標記的同一 state 相同。
+            checks.add(() -> assertEquals(plain.getCollisionShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN).getBoundingBoxes(),
+                    marked.getCollisionShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN).getBoundingBoxes(), label + " 碰撞"));
+            checks.add(() -> assertEquals(plain.getOutlineShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN).getBoundingBoxes(),
+                    marked.getOutlineShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN).getBoundingBoxes(), label + " 外框"));
+            checks.add(() -> assertEquals(plain.getCullingShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN).getBoundingBoxes(),
+                    marked.getCullingShape(EmptyBlockView.INSTANCE, BlockPos.ORIGIN).getBoundingBoxes(), label + " culling"));
+            checks.add(() -> assertEquals(plain.getOpacity(EmptyBlockView.INSTANCE, center), marked.getOpacity(EmptyBlockView.INSTANCE, center), label + " opacity"));
+            checks.add(() -> assertEquals(plain.shouldSuffocate(EmptyBlockView.INSTANCE, center), marked.shouldSuffocate(EmptyBlockView.INSTANCE, center), label + " suffocates"));
+            checks.add(() -> assertEquals(plain.shouldBlockVision(EmptyBlockView.INSTANCE, center), marked.shouldBlockVision(EmptyBlockView.INSTANCE, center), label + " blockVision"));
+            checks.add(() -> assertEquals(QuantumBulkheadBlock.membrane(plain), QuantumBulkheadBlock.membrane(marked), label + " 實際生效的 membrane"));
+            for (var fluid : List.of(Fluids.WATER, Fluids.LAVA)) {
+                checks.add(() -> assertFalse(marked.getBlock() instanceof FluidFillable fillable
+                        && fillable.canFillWithFluid(null, EmptyBlockView.INSTANCE, BlockPos.ORIGIN, marked, fluid), label + " 不可填入 " + fluid));
+                checks.add(() -> assertFalse(marked.canBucketPlace(fluid), label + " 水桶不可取代 " + fluid));
+            }
+            // 門的寫入（withOpen／withDoor）只改 open／membrane，不改 home_marker。
+            for (boolean open : new boolean[] {false, true}) {
+                checks.add(() -> assertTrue(QuantumBulkheadBlock.withOpen(marked, open).get(QuantumBulkheadBlock.HOME_MARKER), label + " withOpen " + open));
+                checks.add(() -> assertFalse(QuantumBulkheadBlock.withOpen(plain, open).get(QuantumBulkheadBlock.HOME_MARKER), plain + " withOpen " + open));
+            }
+            for (MembraneState membrane : MEMBRANES) {
+                checks.add(() -> assertTrue(QuantumBulkheadBlock.withDoor(marked, true, membrane).get(QuantumBulkheadBlock.HOME_MARKER), label + " withDoor " + membrane));
+            }
+            checks.add(() -> assertTrue(QuantumBulkheadBlock.withDoor(marked, false, MembraneState.NONE).get(QuantumBulkheadBlock.HOME_MARKER), label + " withDoor 關門"));
+        }
+        assertAll(checks);
+    }
+
+    @Test
     void withOpenFalseAlwaysClearsTheMembraneAndOpeningFromClosedIsAPlainOpenDoor() {
         List<Executable> checks = new ArrayList<>();
-        // 走訪笛卡兒積的全部 10 個狀態，包含只可能由指令寫出的 open=false＋*_x/z。
+        // 走訪笛卡兒積的全部狀態（M7 T5-1 起 20 個），包含只可能由指令寫出的 open=false＋*_x/z。
         for (BlockState state : ModBlocks.QUANTUM_BULKHEAD.getStateManager().getStates()) {
             String label = state.toString();
             BlockState closed = QuantumBulkheadBlock.withOpen(state, false);
@@ -398,9 +462,19 @@ class MembraneStateTest {
 
     @Test
     void blockstateMapsEveryStateToExactlyOneModel() throws IOException {
+        // M7 T5-1：home_marker 加入 open×membrane 的笛卡兒積；關門依標記選 HOME 模型或舊 bulkhead，開門（含量子膜）與標記無關。
+        requireHomeMarker();
+        assertEquals(20, ModBlocks.QUANTUM_BULKHEAD.getStateManager().getStates().size(), "open×membrane×home_marker");
         JsonObject variants = json("/assets/quantumchamber/blockstates/quantum_bulkhead.json").getAsJsonObject("variants");
         assertNotNull(variants, "variants");
         List<Executable> checks = new ArrayList<>();
+        for (var entry : variants.entrySet()) {
+            String model = entry.getValue().getAsJsonObject().get("model").getAsString();
+            if (model.startsWith("quantumchamber:")) {
+                String path = "/assets/quantumchamber/models/" + model.substring("quantumchamber:".length()) + ".json";
+                checks.add(() -> assertNotNull(MembraneStateTest.class.getResource(path), entry.getKey() + " 的模型存在：" + path));
+            }
+        }
         for (BlockState state : ModBlocks.QUANTUM_BULKHEAD.getStateManager().getStates()) {
             List<JsonObject> matches = new ArrayList<>();
             for (var entry : variants.entrySet()) if (matches(state, entry.getKey())) matches.add(entry.getValue().getAsJsonObject());
@@ -410,8 +484,12 @@ class MembraneStateTest {
             String model = variant.get("model").getAsString();
             int rotation = variant.has("y") ? variant.get("y").getAsInt() : 0;
             MembraneState membrane = QuantumBulkheadBlock.membrane(state);
+            checks.add(() -> assertFalse(variant.has("x"), state + " 不繞 x 旋轉"));
             if (!state.get(QuantumBulkheadBlock.OPEN)) {
-                checks.add(() -> assertEquals("quantumchamber:block/quantum_bulkhead", model, state + " 關門"));
+                String expected = state.get(QuantumBulkheadBlock.HOME_MARKER)
+                        ? "quantumchamber:block/quantum_bulkhead_home" : "quantumchamber:block/quantum_bulkhead";
+                checks.add(() -> assertEquals(expected, model, state + " 關門"));
+                checks.add(() -> assertEquals(0, rotation, state + " 關門不旋轉"));
             } else if (!membrane.isMembrane()) {
                 checks.add(() -> assertEquals("minecraft:block/air", model, state + " 一般開門"));
             } else {
@@ -454,6 +532,24 @@ class MembraneStateTest {
                 "不使用動畫或 emissive 等 metadata");
     }
 
+    /** HOME 門的最小區別（M7 spec §2 :51、plan Task 5 :319）：與舊 bulkhead 同一幾何，只把一個材質換成既有的原版材質，不新增材質檔。 */
+    @Test
+    void homeModelIsTheBulkheadModelWithOneExistingTextureSwapped() throws IOException {
+        JsonObject bulkhead = json("/assets/quantumchamber/models/block/quantum_bulkhead.json");
+        JsonObject home = json("/assets/quantumchamber/models/block/quantum_bulkhead_home.json");
+        assertEquals(bulkhead.keySet(), home.keySet(), "欄位相同");
+        assertEquals(bulkhead.get("parent"), home.get("parent"), "parent 相同");
+        assertEquals(bulkhead.get("elements"), home.get("elements"), "幾何相同，只換材質");
+        JsonObject before = bulkhead.getAsJsonObject("textures");
+        JsonObject after = home.getAsJsonObject("textures");
+        assertEquals(before.keySet(), after.keySet(), "材質欄位相同");
+        List<String> swapped = before.keySet().stream().filter(key -> !before.get(key).equals(after.get(key))).toList();
+        assertEquals(1, swapped.size(), "恰好換一個材質：" + swapped);
+        String texture = after.get(swapped.getFirst()).getAsString();
+        assertTrue(texture.startsWith("minecraft:block/"), "換成既有的原版材質：" + texture);
+        assertFalse(before.entrySet().stream().anyMatch(entry -> entry.getValue().getAsString().equals(texture)), "與舊 bulkhead 的任一材質不同：" + texture);
+    }
+
     // ---- 寫入路徑守門 ----
 
     /**
@@ -465,6 +561,8 @@ class MembraneStateTest {
      *       目前只有 {@code SessionEntranceAllocator} 一處，新增的位置也要在這裡列出。</li>
      *   <li>兩個門切換點傳給 {@code ChamberDoorService.toggle} 的 mutator，lambda 本體（去掉空白）必須逐字等於經過
      *       {@code withOpen} 的寫法。</li>
+     *   <li>M7 T5-1：{@code HOME_MARKER} 只准走廊幾何 Builder 的 HOME 模式對預設狀態寫入（{@code CorridorGeometry} 恰一處）；
+     *       其他位置、或對非預設狀態寫入都算違規。</li>
      * </ul>
      * 只比對 bulkhead 自己的屬性常數；{@code Properties.OPEN} 是許多原版方塊共用的屬性，不列入。
      */
@@ -472,11 +570,12 @@ class MembraneStateTest {
     void everyOpenAndMembraneWriteGoesThroughTheBulkheadGuards() throws IOException {
         Path root = repositoryRoot();
         Pattern qualified = Pattern.compile("(?<![\\w.])(?:dev\\s*\\.\\s*quantumchamber\\s*\\.\\s*chamber\\s*\\.\\s*)?"
-                + "QuantumBulkheadBlock\\s*\\.\\s*(OPEN|MEMBRANE)\\b");
-        Pattern staticImport = Pattern.compile("import\\s+static\\s+dev\\.quantumchamber\\.chamber\\.QuantumBulkheadBlock\\s*\\.\\s*(OPEN|MEMBRANE|\\*)\\s*;");
-        Pattern bare = Pattern.compile("(?<![\\w.])(OPEN|MEMBRANE)\\b");
+                + "QuantumBulkheadBlock\\s*\\.\\s*(OPEN|MEMBRANE|HOME_MARKER)\\b");
+        Pattern staticImport = Pattern.compile("import\\s+static\\s+dev\\.quantumchamber\\.chamber\\.QuantumBulkheadBlock\\s*\\.\\s*(OPEN|MEMBRANE|HOME_MARKER|\\*)\\s*;");
+        Pattern bare = Pattern.compile("(?<![\\w.])(OPEN|MEMBRANE|HOME_MARKER)\\b");
         Map<String, List<String>> unexpected = new TreeMap<>();
         Map<String, Integer> defaultStateOpenWrites = new TreeMap<>();
+        Map<String, Integer> defaultStateHomeMarkerWrites = new TreeMap<>();
         for (Path file : javaSources(root)) {
             String relative = root.relativize(file).toString().replace('\\', '/');
             if (relative.equals("src/main/java/dev/quantumchamber/chamber/QuantumBulkheadBlock.java")) continue;
@@ -497,6 +596,10 @@ class MembraneStateTest {
                     defaultStateOpenWrites.merge(relative, 1, Integer::sum);
                     continue;
                 }
+                if (reference.getValue().equals("HOME_MARKER") && receiver.endsWith("QUANTUM_BULKHEAD.getDefaultState()")) {
+                    defaultStateHomeMarkerWrites.merge(relative, 1, Integer::sum);
+                    continue;
+                }
                 int line = (int) text.substring(0, reference.getKey()).chars().filter(c -> c == '\n').count() + 1;
                 unexpected.computeIfAbsent(relative, ignored -> new ArrayList<>()).add(line + ":" + reference.getValue());
             }
@@ -504,6 +607,8 @@ class MembraneStateTest {
         assertEquals(Map.of(), unexpected, "直接寫 OPEN／MEMBRANE 的位置必須改用 QuantumBulkheadBlock.withOpen／withDoor");
         assertEquals(Map.of("src/main/java/dev/quantumchamber/corridor/SessionEntranceAllocator.java", 1), defaultStateOpenWrites,
                 "只有入口門從預設狀態（membrane=none）直接寫 OPEN");
+        assertEquals(Map.of("src/main/java/dev/quantumchamber/corridor/CorridorGeometry.java", 1), defaultStateHomeMarkerWrites,
+                "只有走廊幾何 Builder 的 HOME 模式從預設狀態寫 HOME_MARKER");
         assertEquals("(target,open)->world.setBlockState(target,QuantumBulkheadBlock.withOpen(world.getBlockState(target),open))",
                 toggleMutator(root, "src/main/java/dev/quantumchamber/chamber/WorldChamberDoorAdapter.java"), "原艙門切換的 mutator");
         assertEquals("(position,open)->write(position,QuantumBulkheadBlock.withOpen(world.getBlockState(position),open))",
@@ -511,6 +616,12 @@ class MembraneStateTest {
     }
 
     // ---- helpers ----
+
+    /** M7 T5-1：home_marker 已登記在 bulkhead 的 state 上；缺少時以具名訊息失敗，而不是 state.get 的例外。 */
+    private static void requireHomeMarker() {
+        assertSame(QuantumBulkheadBlock.HOME_MARKER, ModBlocks.QUANTUM_BULKHEAD.getStateManager().getProperty("home_marker"),
+                "bulkhead 缺 home_marker 屬性");
+    }
 
     private static List<BlockState> legalStates() {
         List<BlockState> states = new ArrayList<>();
