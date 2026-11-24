@@ -526,7 +526,10 @@ public final class CorridorPageManager {
     }
 
     public Optional<Map<UUID,MappingRef>> currentEntityOwners(UUID sessionUuid) {
-        var space=space(sessionUuid); durable(space);
+        var space=space(sessionUuid);
+        // M7 T5-3：HOME Space 走自己的 durable 核對（legacy durable 只看舊列）。
+        if (space.home) return homeCurrentEntityOwners(space);
+        durable(space);
         if(space.current.instances().isEmpty() || space.current.instances().stream().anyMatch(view -> !leaseReady(view.bounds())))
             return Optional.empty();
         requirePinCapacity(); var owners=new LinkedHashMap<UUID,MappingRef>();
@@ -538,7 +541,9 @@ public final class CorridorPageManager {
     }
 
     public Map<UUID,MappingRef> affectedEntityOwners(PreparedMappings prepared) {
-        var space=pending(prepared); durable(space);
+        var space=pending(prepared);
+        if (space.home) return homeAffectedEntityOwners(space,prepared);
+        durable(space);
         if(!ready(prepared) || changedSources(space).stream().anyMatch(view -> !leaseReady(view.bounds())))
             throw new IllegalStateException("affected owners 尚未實體就緒");
         requirePinCapacity(); return affectedOwners(space);
@@ -586,6 +591,8 @@ public final class CorridorPageManager {
     }
     public PreparedMappings prepareRemap(UUID sessionUuid, long expectedCurrentEpoch, Set<Long> occupiedPages) {
         var space=space(sessionUuid);
+        // M7 T5-3：HOME 以 checked roll-forward 寫租約聯集，容量拒絕留可重試的 pending（spec §5.1）。
+        if (space.home) return prepareHomeRemap(space,expectedCurrentEpoch,occupiedPages);
         if (space.current.epoch()!=expectedCurrentEpoch || expectedCurrentEpoch==0 || space.pending!=null || space.releasing
                 || space.failed || space.operations!=0) throw new IllegalStateException("remap epoch／操作狀態不符");
         var record=durable(space);
@@ -625,6 +632,7 @@ public final class CorridorPageManager {
     }
     public boolean ready(PreparedMappings prepared) {
         var space=pending(prepared);
+        if (space.home) return homeRemapReady(space,prepared);
         if (!space.queued || space.failed || space.releasing || space.operations!=0 || measured(space) || !space.builds.isEmpty()) return false;
         var record=durable(space); var staged=journal.records().get(space.id);
         return record.state()!=SessionState.RETURNING && staged!=null && staged.state()!=SessionState.RETURNING
@@ -652,6 +660,7 @@ public final class CorridorPageManager {
     }
     public RemapBatch beginRemap(PreparedMappings prepared, Map<UUID, MappingRef> affectedEntityOwners) {
         var space=pending(prepared);
+        if (space.home) return beginHomeRemap(space,prepared,affectedEntityOwners);
         if (prepared.baseEpoch()==0 || !ready(prepared) || space.batch!=null || space.operations!=0) throw new IllegalStateException("remap 尚未就緒");
         if (durable(space).state()!=SessionState.SUPERPOSITION) throw new IllegalStateException("session 正在安全返還");
         requireActiveBuff(space);
@@ -677,6 +686,7 @@ public final class CorridorPageManager {
     }
     public RetiredMappings commitRemap(RemapBatch batch) {
         var space=pending(batch.prepared());
+        if (space.home) return commitHomeRemap(space,batch);
         if (space.batch!=batch || space.batchTick!=server.getTicks()) throw new IllegalArgumentException("過期或偽造 remap batch");
         if (space.failed || space.releasing || space.operations!=0 || measured(space) || durable(space).state()!=SessionState.SUPERPOSITION) throw new IllegalStateException("session 不再允許發布");
         requireActiveBuff(space);
@@ -699,6 +709,7 @@ public final class CorridorPageManager {
     }
     public RetiredMappings cancelPrepared(PreparedMappings prepared) {
         var space=pending(prepared);
+        if (space.home) return cancelHomePrepared(space,prepared);
         if(space.operations!=0 || measured(space)) throw new IllegalStateException("空間操作中或已測量，不可取消mapping");
         if (prepared.baseEpoch()==0) {
             if (space.queued || journal.records().containsKey(space.id) || journal.flushedRecords().containsKey(space.id)) {
@@ -726,6 +737,8 @@ public final class CorridorPageManager {
     public void retire(RetiredMappings retired) {
         var space=space(retired.sessionUuid());
         if(measured(space)) throw new IllegalStateException("已測量空間保留所有mapping");
+        // M7 T5-3：已選定的 HOME 列同樣保留所有 mapping（選門之後的換頁不在 T5-3）；未選定的 HOME 退休與 legacy 相同，舊租約由 tickHomeRetirement 清除與 checked 移除。
+        if(space.home && homeSelected(space)) throw new IllegalStateException("已選定的 HOME 空間保留所有 mapping");
         if (space.retireTokens.get(retired.token())!=retired) throw new IllegalArgumentException("偽造或過期退休 token");
         if (space.operations!=0) throw new IllegalStateException("入口操作租約尚未結束");
         if (space.provisionalCancelled) {
@@ -946,10 +959,13 @@ public final class CorridorPageManager {
         return record;
     }
 
-    /** HOME Space 的每 tick：收尾，或寫 HOME 幾何與入口 overlay；不發布候選、不寫 M4 ledger（T5-1 審查 M-1），沒有換頁退休（T5-3）。 */
+    /**
+     * HOME Space 的每 tick：收尾，或寫 HOME 幾何（初始與換頁的新實例，同一個 HOME mode）、入口 overlay 與換頁退休的舊租約；不發布候選、不寫 M4 ledger（T5-1 審查 M-1）。
+     */
     private void tickHome(Space space) {
+        settleConfirmedHomeRetirement(space);
         if (space.releasing) { tickHomeRelease(space); return; }
-        if (space.failed || space.builds.isEmpty() && space.overlay.isEmpty()) return;
+        if (space.failed || space.builds.isEmpty() && space.overlay.isEmpty() && space.retiring.isEmpty()) return;
         var record=homeDurable(space);
         if (record.state()==SessionState.RETURNING || !(journal.allSessions().get(space.id) instanceof HomeSessionRecord staged)
                 || staged.state()==SessionState.RETURNING) return;
@@ -973,6 +989,8 @@ public final class CorridorPageManager {
         while (writes<4096 && !space.overlay.isEmpty()) {
             var cell=space.overlay.removeFirst(); write(cell.position(),cell.state());
         }
+        // T5-3：換頁退休的舊租約（比照 legacy tick 的 tickRetirement）。
+        for (int slot : List.copyOf(space.retiring)) tickHomeRetirement(space,slot);
     }
 
     /**
@@ -1053,6 +1071,243 @@ public final class CorridorPageManager {
             }
         } catch (RuntimeException persistence) { failure.addSuppressed(persistence); }
         org.slf4j.LoggerFactory.getLogger("quantumchamber").error("HOME 走廊保留租約等待安全返回 B：{}",space.id,failure);
+    }
+
+    // ---- M7 HOME（T5-3）：換頁（remap／頁面伸展）。legacy 的 remap 方法只在開頭加 HOME 分派；以下比照 legacy，durable 核對換成 HOME 列、租約以 checked roll-forward 寫入，
+    // 容量拒絕是可重試的 pending（spec §5.1），其他失敗只回 B。新實例照 enqueue 傳入的 space.home 以同一個 HOME mode 建造。 ----
+
+    /** HOME 頁面移動的一般故障（正式 reposition 呼叫）：交 HOME 的故障路徑（未選定的 ARMING／SUPERPOSITION checked 轉 RETURNING，只回 B）。已標記故障的 space 不重複記錄。 */
+    public void failHome(UUID sessionUuid,Exception cause) {
+        var space=space(sessionUuid);
+        if (!space.home) throw new IllegalArgumentException("不是 HOME 走廊");
+        if (space.operations!=0) throw new IllegalStateException("HOME 走廊的操作 guard 尚未釋放");
+        if (!space.failed) failHome(space,cause);
+    }
+
+    /** checked 未選定的 SUPERPOSITION、current 與 flushed 一致、沒有未確認的 roll-forward：才可以換頁、提交或退休租約。 */
+    private boolean homeRemappable(Space space,HomeSessionRecord record) {
+        return record.state()==SessionState.SUPERPOSITION && record.home().selection() instanceof HomeSessionRecord.Unselected
+                && record.equals(journal.allSessions().get(space.id)) && !journal.rollForwardPending(space.id);
+    }
+
+    private boolean homeSelected(Space space) {
+        return java.util.stream.Stream.of(journal.allFlushedSessions().get(space.id),journal.allSessions().get(space.id))
+                .anyMatch(row -> row instanceof HomeSessionRecord home && home.home().selection() instanceof HomeSessionRecord.Selected);
+    }
+
+    private void requireHomeBuff(Space space) {
+        if (!homeCohortHasBuff(space.id)) throw new IllegalStateException("HOME 凍結 cohort 的目前 Buff 失效，禁止繼續頁面移動或發布");
+    }
+
+    /**
+     * HOME 的 remap 準備（比照 {@link #prepareRemap}）：保留新實例的 slot 之後，以 checked roll-forward 寫入新舊租約的聯集（未選定 HOME 的完成預留已含 64 slot 上界）。
+     * <ul>
+     * <li>寫入前就被拒（{@code REJECTED}）：本次額外租約還沒寫入 journal、建幾何或取票，完整撤回（slot、保護範圍、pending 與 instance epoch），舊 mapping、原 SID、未變的
+     *     Selection 與 CLOSE 空間都保留。拒絕原因含 {@link CapacityExceeded} 時原樣丟出，交呼叫端留 pending、之後重試；其他拒絕交 HOME 故障路徑。</li>
+     * <li>寫出未確認（{@code ROLL_FORWARD_PENDING}）或確認之後才失敗：current 已帶著聯集，額外 slot 留著（之後任何寫出都會帶出它），補取全部租約的票讓返還找得到 pin，
+     *     再交 HOME 故障路徑。</li>
+     * </ul>
+     */
+    private PreparedMappings prepareHomeRemap(Space space,long expectedCurrentEpoch,Set<Long> occupiedPages) {
+        if (space.current.epoch()!=expectedCurrentEpoch || expectedCurrentEpoch==0 || space.pending!=null || space.releasing
+                || space.failed || space.operations!=0) throw new IllegalStateException("HOME remap epoch／操作狀態不符");
+        var record=homeDurable(space);
+        if (!homeRemappable(space,record)) throw new IllegalStateException("只有 checked 未選定的 SUPERPOSITION HOME 走廊可以 remap");
+        requireHomeBuff(space);
+        var oldSlots=Set.copyOf(space.leases.keySet());
+        var oldPending=space.pending;
+        var oldPages=space.pendingPages;
+        long oldInstanceEpoch=space.instanceEpoch;
+        RuntimeException failed;
+        space.operations++;
+        try {
+            requirePageCapacity(space,occupiedPages); requirePinCapacity();
+            var prepared=reserve(space,expectedCurrentEpoch,occupiedPages);
+            var next=new HomeSessionRecord(record.sessionUuid(),record.chamberUuid(),record.rootAnchor(),record.entryEndpoint(),record.participants(),
+                    List.copyOf(space.leases.values()),record.state(),record.home());
+            var result=journal.commitHomeRollForward(server,record,next);
+            if (!result.committed()) {
+                var cause=result.failure().orElse(null);
+                if (result.status()==SessionRecoveryState.CommitResult.Status.REJECTED) {
+                    withdrawHomeRemap(space,oldSlots,oldPending,oldPages,oldInstanceEpoch);
+                    var capacity=capacityExceeded(cause);
+                    if (capacity!=null) throw capacity;
+                }
+                throw new IllegalStateException("HOME remap 的租約聯集尚未 checked："+result.status(),cause);
+            }
+            space.selectable=Map.of();
+            homeDurable(space); acquireTickets(space); enqueue(space); return prepared;
+        } catch (CapacityExceeded retry) {
+            // 已撤回本次額外資源；不標故障、不送 RETURNING，由呼叫端留 pending。
+            throw retry;
+        } catch (RuntimeException failure) {
+            if (journalHoldsNewLeases(space,oldSlots)) {
+                try { acquireTickets(space); } catch (RuntimeException tickets) { failure.addSuppressed(tickets); }
+            } else withdrawHomeRemap(space,oldSlots,oldPending,oldPages,oldInstanceEpoch);
+            failed=failure;
+        } finally { space.operations--; }
+        fail(space,failed);
+        throw failed;
+    }
+
+    /** 撤回 HOME remap 尚未寫入 journal 的額外租約（比照 legacy {@link #prepareRemap} 的容量拒絕分支）。 */
+    private void withdrawHomeRemap(Space space,Set<Integer> oldSlots,PreparedMappings oldPending,Set<Long> oldPages,long oldInstanceEpoch) {
+        for (int slot : List.copyOf(space.leases.keySet())) if (!oldSlots.contains(slot)) {
+            space.leases.remove(slot); allocator.release(slot); protectedLeases.remove(slot);
+        }
+        space.pending=oldPending; space.pendingPages=oldPages; space.instanceEpoch=oldInstanceEpoch;
+    }
+
+    /** journal 的 current 是否已帶著本次新保留的租約（寫出未確認，或確認之後才失敗）。 */
+    private boolean journalHoldsNewLeases(Space space,Set<Integer> oldSlots) {
+        try {
+            return journal.allSessions().get(space.id) instanceof HomeSessionRecord current
+                    && current.spaceLeases().stream().anyMatch(lease -> !oldSlots.contains(lease.slotId()));
+        } catch (RuntimeException unreadable) { return true; }
+    }
+
+    /** 失敗原因（含 cause 鏈）裡的 {@link CapacityExceeded}；沒有時為 null。 */
+    private static CapacityExceeded capacityExceeded(Throwable failure) {
+        var seen=Collections.newSetFromMap(new IdentityHashMap<Throwable,Boolean>());
+        for (Throwable cause=failure; cause!=null && seen.add(cause); cause=cause.getCause())
+            if (cause instanceof CapacityExceeded capacity) return capacity;
+        return null;
+    }
+
+    /** HOME 換頁的新實例已建好、租約實體就緒，而且 checked 列仍是未選定的 SUPERPOSITION（比照 {@link #ready(PreparedMappings)}）。 */
+    private boolean homeRemapReady(Space space,PreparedMappings prepared) {
+        if (prepared.baseEpoch()==0 || !space.queued || space.failed || space.releasing || space.operations!=0 || !space.builds.isEmpty()) return false;
+        return homeRemappable(space,homeDurable(space)) && prepared.target().instances().stream().allMatch(view -> leaseReady(view.bounds()));
+    }
+
+    private Optional<Map<UUID,MappingRef>> homeCurrentEntityOwners(Space space) {
+        homeDurable(space);
+        if (space.current.instances().isEmpty() || space.current.instances().stream().anyMatch(view -> !leaseReady(view.bounds())))
+            return Optional.empty();
+        requirePinCapacity(); var owners=new LinkedHashMap<UUID,MappingRef>();
+        for (var view : space.current.instances()) for (var entity : pins(view.bounds())) {
+            if (!contains(box(view.bounds()),entity.getBoundingBox()) || owners.put(entity.getUuid(),view.ref())!=null)
+                throw new IllegalStateException("HOME entity 沒有唯一完整 current bbox owner");
+        }
+        return Optional.of(Map.copyOf(owners));
+    }
+
+    private Map<UUID,MappingRef> homeAffectedEntityOwners(Space space,PreparedMappings prepared) {
+        homeDurable(space);
+        if (!homeRemapReady(space,prepared) || changedSources(space).stream().anyMatch(view -> !leaseReady(view.bounds())))
+            throw new IllegalStateException("HOME affected owners 尚未實體就緒");
+        requirePinCapacity(); return affectedOwners(space);
+    }
+
+    /** 比照 {@link #beginRemap}：durable 核對換成未選定的 HOME 列，Buff 核對換成 {@link #homeCohortHasBuff}。 */
+    private RemapBatch beginHomeRemap(Space space,PreparedMappings prepared,Map<UUID,MappingRef> affectedEntityOwners) {
+        if (prepared.baseEpoch()==0 || !homeRemapReady(space,prepared) || space.batch!=null || space.operations!=0) throw new IllegalStateException("HOME remap 尚未就緒");
+        requireHomeBuff(space);
+        requirePinCapacity();
+        var owners=affectedOwners(space);
+        if (!owners.equals(affectedEntityOwners)) throw new IllegalArgumentException("affected entity 清單不等於最新完整 live pins");
+        for (var target : changedTargets(space)) if (!pins(target.bounds()).isEmpty()) throw new IllegalStateException("新 target 已出現額外 pin");
+        if (changedSources(space).stream().anyMatch(view -> !leaseReady(view.bounds()))) throw new IllegalStateException("source 實體載入尚未確認");
+        var moves=new ArrayList<EntityMove>();
+        for (var owner : owners.entrySet()) {
+            var entity=world.getEntity(owner.getKey());
+            if (entity==null) throw new IllegalStateException("live entity 已消失");
+            var before=pose(entity); var logical=toLogical(owner.getValue(),before);
+            var target=select(prepared.target(),logical.logicalZ()); var after=toPhysical(target.ref(),logical);
+            if (!contains(box(target.bounds()),entity.getBoundingBox().offset(after.position().subtract(before.position())))) {
+                throw new IllegalStateException("entity 完整 bbox 無法放入 target");
+            }
+            moves.add(new EntityMove(entity.getUuid(),owner.getValue(),target.ref(),logical,before,after));
+        }
+        space.batchTick=server.getTicks();
+        space.batch=new RemapBatch(UUID.randomUUID(),prepared,moves);
+        return space.batch;
+    }
+
+    /** 比照 {@link #commitRemap}：全群已在新實例的 actual target 才切換 current，舊實例交退休。 */
+    private RetiredMappings commitHomeRemap(Space space,RemapBatch batch) {
+        if (space.batch!=batch || space.batchTick!=server.getTicks()) throw new IllegalArgumentException("過期或偽造 HOME remap batch");
+        if (space.failed || space.releasing || space.operations!=0 || !homeRemappable(space,homeDurable(space)))
+            throw new IllegalStateException("HOME session 不再允許發布");
+        requireHomeBuff(space);
+        requirePinCapacity();
+        var expected=batch.moves().stream().map(EntityMove::entityUuid).collect(java.util.stream.Collectors.toSet());
+        if (!movingPins(space).equals(expected)) throw new IllegalStateException("begin 後出現新的 pin 或遺失 entity");
+        for (var move : batch.moves()) {
+            var entity=world.getEntity(move.entityUuid());
+            if (entity==null || entity.getWorld()!=world || !samePose(pose(entity),move.after())
+                    || !contains(box(view(move.target()).bounds()),entity.getBoundingBox())) {
+                throw new IllegalStateException("全群 actual target 尚未確認；保留唯一 batch 與兩邊租約");
+            }
+        }
+        var previous=changedSources(space);
+        previous.forEach(view -> space.retiredViews.put(view.ref(),view));
+        var retired=retiredToken(space,previous.stream().map(MappingView::ref).toList());
+        space.current=space.pending.target(); space.currentPages=space.pendingPages;
+        space.pending=null; space.pendingPages=Set.of(); space.queued=false; space.batch=null;
+        return retired;
+    }
+
+    /** 比照 {@link #cancelPrepared} 的 remap 分支（HOME 初始 reservation 只經 {@link #abandonHomeReservation} 放棄）。 */
+    private RetiredMappings cancelHomePrepared(Space space,PreparedMappings prepared) {
+        if (space.operations!=0) throw new IllegalStateException("HOME 空間操作中，不可取消 mapping");
+        if (prepared.baseEpoch()==0) throw new IllegalStateException("HOME 初始 reservation 只經 abandonHomeReservation 放棄");
+        var record=homeDurable(space);
+        if (record.state()!=SessionState.SUPERPOSITION || !(record.home().selection() instanceof HomeSessionRecord.Unselected))
+            throw new IllegalStateException("RETURNING 或已選定的 HOME 不可當作普通 remap 取消");
+        if (space.batch!=null) {
+            for (var move : space.batch.moves()) {
+                var entity=world.getEntity(move.entityUuid());
+                if (entity==null || entity.getWorld()!=world || !samePose(pose(entity),move.before())) {
+                    throw new IllegalStateException("部分移動尚未安全 rollback，保留兩邊 owner");
+                }
+            }
+        }
+        for (var target : changedTargets(space)) if (!pins(target.bounds()).isEmpty()) throw new IllegalStateException("target 仍有 pin");
+        var changed=changedTargets(space);
+        changed.forEach(view -> space.retiredViews.put(view.ref(),view));
+        var token=retiredToken(space,changed.stream().map(MappingView::ref).toList());
+        space.pending=null; space.pendingPages=Set.of(); space.queued=false; space.batch=null; space.builds.clear();
+        return token;
+    }
+
+    /**
+     * HOME 換頁退休的舊租約（比照 {@link #tickRetirement}）：清空之後以 checked roll-forward 從 HOME 列移除該租約，確認之後才釋放票、slot 與保護範圍。
+     * 寫出未確認（{@code ROLL_FORWARD_PENDING}）時保留 slot、等 journal 退避的重試確認（{@link #settleConfirmedHomeRetirement} 補做原生釋放），不另寫。
+     */
+    private void tickHomeRetirement(Space space,int slot) {
+        var lease=space.leases.get(slot);
+        if (lease==null || space.operations>0 || !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty()) return;
+        var record=homeDurable(space);
+        if (!homeRemappable(space,record)) return;
+        if (!clear(space,slot,lease.bounds())) return;
+        var remaining=space.leases.values().stream().filter(other -> other.slotId()!=slot).toList();
+        if (remaining.isEmpty()) throw new IllegalStateException("最後租約必須經 release 收尾");
+        var next=new HomeSessionRecord(record.sessionUuid(),record.chamberUuid(),record.rootAnchor(),record.entryEndpoint(),record.participants(),
+                remaining,record.state(),record.home());
+        var result=journal.commitHomeRollForward(server,record,next);
+        if (result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) return;
+        if (!result.committed()) throw new IllegalStateException("HOME 舊租約移除尚未 checked："+result.status(),result.failure().orElse(null));
+        releaseRetiredHomeSlot(space,slot);
+    }
+
+    /**
+     * 換頁退休的租約移除寫出未確認、之後由 journal 退避的重試（或任何其他寫出）確認時：checked 列已沒有該 slot，補做原生釋放，讓 Space 與 checked 列一致。
+     * 只處理已清空、仍在退休中、checked 與 current 一致而且已不含該 slot 的租約。
+     */
+    private void settleConfirmedHomeRetirement(Space space) {
+        if (!space.home || space.retiring.isEmpty() || space.operations!=0) return;
+        if (!(journal.allFlushedSessions().get(space.id) instanceof HomeSessionRecord checked) || !checked.equals(journal.allSessions().get(space.id))) return;
+        for (int slot : List.copyOf(space.retiring))
+            if (space.cleared.contains(slot) && space.leases.containsKey(slot) && checked.spaceLeases().stream().noneMatch(lease -> lease.slotId()==slot))
+                releaseRetiredHomeSlot(space,slot);
+    }
+
+    private void releaseRetiredHomeSlot(Space space,int slot) {
+        releaseTickets(space,slot); space.leases.remove(slot); allocator.release(slot); protectedLeases.remove(slot);
+        space.retiring.remove(slot); space.cleared.remove(slot);
+        space.retiredViews.entrySet().removeIf(entry -> entry.getKey().slotId()==slot);
+        space.retireTokens.values().removeIf(token -> token.instances().stream().noneMatch(space.retiredViews::containsKey));
     }
 
     private boolean cohortHasBuff(List<SessionRecoveryRecord.Participant> people) {

@@ -790,6 +790,85 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
         });
     }
 
+    /**
+     * 正式 remap 進行中（HOME 列已 checked 新舊租約聯集、舊實例還沒退休），另一個 SID 的舊候選 append 嘗試侵占新舊 lease 預留（plan :325、spec §5.1、V01）。journal 恰在 16 MiB
+     * 預留不變量的邊界上（壓力列的 padding 扣掉兩列 HOME 的完成預留；舊列沒有預留）：append 被拒——舊旅程留下既有 mapping、原 SID、已發布的門與原列，HOME 列可用的 CLOSE
+     * 餘額（完成預留）不變；已承諾的 HOME remap 照常完成。兩趟都以正式路徑收尾（舊旅程先收）。容量釋出之後舊候選的重試由既有的
+     * {@code M7HomeSpikeGameTests.candidate_and_remap_capacity_retry_keeps_published_team} 涵蓋。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_corridor_remap_reserve_windows", tickLimit = 4000)
+    public void legacy_candidate_append_cannot_spend_home_remap_reserve(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            var legacy = new M2CorridorGameTests.NativeEntry(c, 1, net.minecraft.util.math.Direction.NORTH, true, new BlockPos(32, 0, 0));
+            e.beforeClose(legacy::close);
+            var label = "legacy_candidate_append_cannot_spend_home_remap_reserve";
+            legacy.power();
+            e.requireStarted();
+            // 舊旅程的候選要全部發布完（候選每 tick 最多一批 256 個；發布數連續 5 次不變）才放壓力列：還有漏掉的 key 時，舊路徑每 tick 以整份 16 MiB journal 重試 append，
+            // server 沒有空檔載入新租約的 chunk（T5-3 開發輪實測：HOME remap 的新實例停在載入）。
+            int[] stable = {0, -1};
+            M7HomeClosureGameTests.until(c, label + "/ready", 800, () -> {
+                var old = legacy.record();
+                if (!e.superpositionReady() || old == null || !legacy.activeReady()) return false;
+                int published = e.pages.selectableDoors(old.sessionUuid()).size();
+                if (published == 0 || published != stable[1]) { stable[1] = published; stable[0] = 0; return false; }
+                return ++stable[0] >= 5;
+            }, e.step(() -> {
+                var row = e.homeRow();
+                var sid = row.sessionUuid();
+                var player = e.player(0);
+                var old = legacy.record();
+                var oldSid = old.sessionUuid();
+                var oldMapping = e.pages.currentMappings(oldSid);
+                var oldDoors = e.pages.selectableDoors(oldSid);
+                var oldView = e.pages.currentMappings(sid).instances().getFirst();
+                var key = new dev.quantumchamber.corridor.DoorKey(oldSid, 10_000L, dev.quantumchamber.corridor.DoorKey.DoorWallSide.POSITIVE_LATERAL);
+                var pressure = M7CapacityFixture.admitBeside(e.server, row);
+                e.beforeClose(() -> M7CapacityFixture.releaseIfPresent(e.server, pressure));
+                var closeReserve = M7CapacityFixture.remaining(row);
+                e.walkHome(sid, player, 96.5);
+                M7HomeClosureGameTests.until(c, label + "/union", 200, () -> {
+                    var current = e.homeRow();
+                    return current != null && current.spaceLeases().size() == 2;
+                }, e.step(() -> {
+                    // HOME 列已 checked 新舊租約聯集（已承諾的 remap 進行中）：另一個 SID 的舊候選 append。
+                    var union = e.homeRow();
+                    var unionReserve = M7CapacityFixture.remaining(union);
+                    var journalBefore = e.journal.allSessions();
+                    var append = new dev.quantumchamber.candidate.CandidateLedgerService().commitCandidates(e.server, oldSid, List.of(key));
+                    c.assertTrue(!append.sessionFailed() && !append.committedKeys().contains(key),
+                            "RESERVE_SPENT_BY_LEGACY_APPEND：舊候選 append 不得侵占 HOME 的新舊 lease 預留：committed=" + append.committedKeys().contains(key)
+                                    + " failed=" + append.sessionFailed());
+                    c.assertTrue(journalBefore.equals(e.journal.allSessions()) && old.equals(e.journal.allFlushedSessions().get(oldSid)),
+                            "被拒的 append 不改 journal：舊旅程保留原 SID 與原列");
+                    c.assertTrue(oldMapping.equals(e.pages.currentMappings(oldSid)) && oldDoors.equals(e.pages.selectableDoors(oldSid)),
+                            "被拒的一方留下既有 mapping 與已發布的門");
+                    c.assertTrue(union.equals(e.homeRow()) && M7CapacityFixture.remaining(e.homeRow()) == unionReserve, "HOME 列與它可用的 CLOSE 餘額（完成預留）不變");
+                    // 被拒的舊旅程先以正式路徑收尾（壓力列仍在，舊列的返還與移除只會變小），再等已承諾的 HOME remap 完成：走廊世界同時有兩趟的玩家時，新租約周圍
+                    // 半徑 2 的 chunk 要約 1000 tick 才全部 FULL（T5-3 開發輪實測，同一趟單人時約 30～60 tick），先收掉舊旅程以免拉長 M7 gate。
+                    legacy.trustedTeardown((int) c.getTick() + 1, () -> M7HomeClosureGameTests.until(c, label + "/remapped", 1200, () -> e.remappedOnce(sid, oldView), e.step(() -> {
+                        var after = e.homeRow();
+                        c.assertTrue(after.sessionUuid().equals(sid) && after.home().equals(row.home()) && M7CapacityFixture.remaining(after) == closeReserve,
+                                "已承諾的 HOME remap 在 16 MiB 邊界上完成（原 SID、未變的 Selection、CLOSE 空間相同）：" + after);
+                        M7CapacityFixture.release(e.server, pressure);
+                        c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "HOME 正式取消（返回 B）開始");
+                        e.awaitReleased(sid, label + "/home-cancel", null, () -> {
+                            c.assertTrue(e.inB(player), "HOME 取消後回到 exact B");
+                            e.finish();
+                        });
+                    }), e.step(() -> {
+                        throw new GameTestException("COMMITTED_REMAP_BLOCKED：已承諾的 HOME remap 在 16 MiB 邊界上沒有完成：epoch=" + e.pages.currentMappings(sid).epoch()
+                                + " " + e.spaceDiagnostics(sid) + " leases=" + e.homeRow().spaceLeases().stream().map(lease -> lease.slotId() + ":" + lease.bounds()).toList());
+                    })));
+                }), e.step(() -> {
+                    throw new GameTestException("COMMITTED_REMAP_BLOCKED：16 MiB 邊界上的 HOME remap 沒有寫出新舊租約聯集（預留沒有涵蓋聯集）：row=" + e.homeRow());
+                }));
+            }), e.timeout(label + "/ready"));
+        });
+    }
+
     private static Set<Integer> slots(HomeSessionRecord row) {
         var slots = new TreeSet<Integer>();
         row.spaceLeases().forEach(lease -> slots.add(lease.slotId()));
@@ -930,13 +1009,16 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
 
         /** 同 {@link #awaitSuperposition(String, Consumer)}，逾時改執行 {@code timeout}（具名失敗）。 */
         void awaitSuperposition(String label, Consumer<HomeSessionRecord> then, Runnable timeout) {
-            M7HomeClosureGameTests.until(c, label + "/superposition", 400, () -> {
-                var row = homeRow();
-                if (row == null || row.state() != SessionState.SUPERPOSITION || !row.equals(journal.allSessions().get(row.sessionUuid()))
-                        || !pages.hasReservation(row.sessionUuid()) || pages.currentMappings(row.sessionUuid()).epoch() < 1) return false;
-                for (var cell : overlayCells(row.sessionUuid())) if (!corridor().getBlockState(cell).isAir()) return false;
-                return true;
-            }, step(() -> then.accept(homeRow())), timeout);
+            M7HomeClosureGameTests.until(c, label + "/superposition", 400, this::superpositionReady, step(() -> then.accept(homeRow())), timeout);
+        }
+
+        /** SUPERPOSITION 已 checked（current 與 flushed 相同）、mapping 已發布、入口 overlay 已寫完。 */
+        boolean superpositionReady() {
+            var row = homeRow();
+            if (row == null || row.state() != SessionState.SUPERPOSITION || !row.equals(journal.allSessions().get(row.sessionUuid()))
+                    || !pages.hasReservation(row.sessionUuid()) || pages.currentMappings(row.sessionUuid()).epoch() < 1) return false;
+            for (var cell : overlayCells(row.sessionUuid())) if (!corridor().getBlockState(cell).isAir()) return false;
+            return true;
         }
 
         /**
@@ -1031,6 +1113,45 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             var slots = new TreeSet<Integer>();
             for (var key : ((Map<?, ?>) M4CandidateTestAccess.get(space, "leases")).keySet()) slots.add((Integer) key);
             return slots;
+        }
+
+        /** 逾時診斷（只讀反射）：Space 的旗標、建造／退休佇列與各租約 chunk 的載入狀態。只放進失敗訊息，不參與判定。 */
+        String spaceDiagnostics(UUID sid) {
+            try {
+                var space = M4CandidateTestAccess.space(pages, sid);
+                if (space == null) return "space=ABSENT";
+                var line = new StringBuilder("space[");
+                for (var name : List.of("queued", "failed", "releasing", "operations")) line.append(name).append('=').append(M4CandidateTestAccess.get(space, name)).append(' ');
+                line.append("builds=").append(((Map<?, ?>) M4CandidateTestAccess.get(space, "builds")).keySet())
+                        .append(" retiring=").append(M4CandidateTestAccess.get(space, "retiring"))
+                        .append(" pending=").append(M4CandidateTestAccess.get(space, "pending") != null)
+                        .append(" ticketed=").append(((Map<?, ?>) M4CandidateTestAccess.get(space, "ticketed")).keySet()).append(']');
+                for (var entry : ((Map<?, ?>) M4CandidateTestAccess.get(space, "leases")).entrySet()) {
+                    var box = ((SessionRecoveryRecord.SpaceLease) entry.getValue()).bounds();
+                    int total = 0, full = 0, ticking = 0;
+                    for (int x = box.getMinX() >> 4; x <= box.getMaxX() >> 4; x++) for (int z = box.getMinZ() >> 4; z <= box.getMaxZ() >> 4; z++) {
+                        total++;
+                        if (corridor().getChunkManager().getWorldChunk(x, z) != null) full++;
+                        if (corridor().shouldTick(new ChunkPos(x, z))) ticking++;
+                    }
+                    line.append(" lease").append(entry.getKey()).append(" chunks=").append(total).append(" full=").append(full).append(" ticking=").append(ticking);
+                    int ring = 0, ringFull = 0;
+                    for (int x = (box.getMinX() >> 4) - 2; x <= (box.getMaxX() >> 4) + 2; x++) for (int z = (box.getMinZ() >> 4) - 2; z <= (box.getMaxZ() >> 4) + 2; z++) {
+                        ring++;
+                        if (corridor().getChunkManager().getWorldChunk(x, z) != null) ringFull++;
+                    }
+                    line.append(" ring=").append(ringFull).append('/').append(ring);
+                    try {
+                        var manager = corridor().getChunkManager().chunkLoadingManager;
+                        var method = manager.getClass().getDeclaredMethod("getCurrentChunkHolder", long.class);
+                        method.setAccessible(true);
+                        var holder = (net.minecraft.server.world.ChunkHolder) method.invoke(manager, ChunkPos.toLong(box.getMinX() >> 4, box.getMinZ() >> 4));
+                        line.append(" firstHolder=").append(holder == null ? "null" : holder.getLevel() + "/" + holder.getLevelType());
+                    } catch (ReflectiveOperationException | RuntimeException holderFailure) { line.append(" firstHolder=?").append(holderFailure.getClass().getSimpleName()); }
+                }
+                line.append(" avgTickMs=").append(server.getAverageNanosPerTick() / 1_000_000.0);
+                return line.toString();
+            } catch (RuntimeException failure) { return "diagnostics-failed=" + failure; }
         }
 
         /** 一次換頁已完成：mapping 前進到 epoch 2 的唯一新實例，舊實例已退休（checked 列與 Space 都只剩新實例的租約）。 */

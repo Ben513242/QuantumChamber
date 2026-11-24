@@ -214,6 +214,12 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             var runtime=runtime(record.chamberUuid());
             return server==owner && runtime!=null && runtime.initial.sessionUuid().equals(record.sessionUuid())
                     && runtime.state==SessionState.SUPERPOSITION && record.state()==SessionState.SUPERPOSITION;
+        },home -> {
+            // M7 T5-3：HOME 列只在本 server 的 HOME runtime 已入場（SUPERPOSITION）、checked 列未選定時換頁；選門之後的換頁不在 T5-3。
+            var runtime=sessions.get(home.chamberUuid()) instanceof HomeRuntime value ? value : null;
+            return server==owner && runtime!=null && runtime.initial.sessionUuid().equals(home.sessionUuid())
+                    && runtime.state==SessionState.SUPERPOSITION && home.state()==SessionState.SUPERPOSITION
+                    && home.home().selection() instanceof HomeSessionRecord.Unselected;
         });
         for(var record : journal.flushedRecords().values()) attachRecord(record);
     }

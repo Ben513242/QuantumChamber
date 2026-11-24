@@ -141,7 +141,8 @@
       "quantumchamber:m1_empty|m7homecorridorgametests.returning_roll_forward_pending_waits_for_journal_backoff",
       "quantumchamber:m1_empty|m7homecorridorgametests.home_tick_exception_is_isolated_and_warned_once",
       "quantumchamber:m1_empty|m7homecorridorgametests.home_remap_builds_no_second_home_door",
-      "quantumchamber:m1_empty|m7homecorridorgametests.formal_tick_capacity_pending_preserves_home_mapping"
+      "quantumchamber:m1_empty|m7homecorridorgametests.formal_tick_capacity_pending_preserves_home_mapping",
+      "quantumchamber:m1_empty|m7homecorridorgametests.legacy_candidate_append_cannot_spend_home_remap_reserve"
     ],
     "native": [
       "close-ordinary-before-close",
