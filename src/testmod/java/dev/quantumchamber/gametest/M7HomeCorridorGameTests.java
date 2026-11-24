@@ -699,24 +699,33 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 c.assertTrue(before.epoch() == 1 && before.instances().size() == 1 && row.spaceLeases().size() == 1, "前提：入場後一個實例、一筆租約：" + before);
                 var oldView = before.instances().getFirst();
                 e.assertSingleHomeDoor(sid, oldView, "前提（換頁前）");
+                var oldSlots = Set.of(oldView.ref().slotId());
                 e.walkHome(sid, player, 96.5);
-                M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
-                    var view = e.pages.currentMappings(sid).instances().getFirst();
-                    var after = e.homeRow();
-                    c.assertTrue(after.sessionUuid().equals(sid) && after.state() == SessionState.SUPERPOSITION && after.home().equals(row.home())
-                            && after.spaceLeases().size() == 1 && after.spaceLeases().getFirst().slotId() == view.ref().slotId(),
-                            "換頁後原 SID、未變的 Selection、租約只剩新實例：" + after);
-                    c.assertTrue(player.getServerWorld() == e.corridor() && Math.abs(e.logicalZ(sid, player) - 96.5) < 1e-6, "玩家以同一個邏輯座標搬到新實例");
-                    e.assertSingleHomeDoor(sid, view, "SECOND_HOME_DOOR（換頁後）");
-                    c.assertTrue(e.bulkheads(oldView.bounds()).isEmpty() && e.allAir(oldView.bounds()), "OLD_HOME_DOOR_LEFT：舊實例已清空，沒有第二扇 HOME 門");
-                    c.assertTrue(e.pages.selectableDoors(sid).isEmpty(), "HOME 換頁後仍不發布候選門");
-                    c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
-                    e.awaitReleased(sid, label + "/cancel", null, () -> {
-                        c.assertTrue(e.inB(player), "取消後回到 exact B");
-                        e.finish();
-                    });
+                // T5-3 fix1：正式 tick 寫出新舊租約聯集之後，先同步生成新租約周圍的走廊 chunk（只改 chunk 載入），換頁仍由正式 reposition tick 完成。
+                M7HomeClosureGameTests.until(c, label + "/union", 200, () -> e.newLeaseWritten(sid, oldSlots), e.step(() -> {
+                    e.pregenerateNewLeases(sid, oldSlots, label);
+                    M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
+                        var view = e.pages.currentMappings(sid).instances().getFirst();
+                        var after = e.homeRow();
+                        c.assertTrue(after.sessionUuid().equals(sid) && after.state() == SessionState.SUPERPOSITION && after.home().equals(row.home())
+                                && after.spaceLeases().size() == 1 && after.spaceLeases().getFirst().slotId() == view.ref().slotId(),
+                                "換頁後原 SID、未變的 Selection、租約只剩新實例：" + after);
+                        c.assertTrue(player.getServerWorld() == e.corridor() && Math.abs(e.logicalZ(sid, player) - 96.5) < 1e-6, "玩家以同一個邏輯座標搬到新實例");
+                        e.assertSingleHomeDoor(sid, view, "SECOND_HOME_DOOR（換頁後）");
+                        c.assertTrue(e.bulkheads(oldView.bounds()).isEmpty() && e.allAir(oldView.bounds()), "OLD_HOME_DOOR_LEFT：舊實例已清空，沒有第二扇 HOME 門");
+                        c.assertTrue(e.pages.selectableDoors(sid).isEmpty(), "HOME 換頁後仍不發布候選門");
+                        c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
+                        e.awaitReleased(sid, label + "/cancel", null, () -> {
+                            c.assertTrue(e.inB(player), "取消後回到 exact B");
+                            e.finish();
+                        });
+                    }), e.step(() -> {
+                        throw new GameTestException("HOME_REMAP_NOT_COMPLETED：新舊租約聯集已 checked，但換頁沒有在 600 tick 內完成：epoch=" + e.pages.currentMappings(sid).epoch()
+                                + " " + e.spaceDiagnostics(sid) + " row=" + e.homeRow());
+                    }));
                 }), e.step(() -> {
-                    throw new GameTestException("HOME_REMAP_NOT_ATTEMPTED：正式 tick 沒有為 HOME 走廊換頁：epoch=" + e.pages.currentMappings(sid).epoch() + " row=" + e.homeRow());
+                    throw new GameTestException("HOME_REMAP_NOT_ATTEMPTED：正式 tick 沒有為 HOME 走廊換頁（新舊租約聯集沒有寫出）：epoch=" + e.pages.currentMappings(sid).epoch()
+                            + " row=" + e.homeRow());
                 }));
             });
         });
@@ -769,20 +778,27 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                     c.assertTrue(M7CapacityFixture.remaining(e.homeRow()) == closeReserve && e.pages.hasReservation(sid)
                             && gate().globalChamberBusy(e.server, e.chamber), "CLOSE 空間（完成預留）、走廊 reservation 與占用都不變");
                     restore.run();
-                    M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
-                        var after = e.homeRow();
-                        c.assertTrue(after.sessionUuid().equals(sid) && after.state() == SessionState.SUPERPOSITION && after.home().equals(row.home()),
-                                "容量恢復之後以原 SID、未變的 Selection 完成換頁：" + after);
-                        c.assertTrue(M7CapacityFixture.remaining(after) == closeReserve, "換頁前後 CLOSE 空間（完成預留）相同");
-                        c.assertTrue(Math.abs(e.logicalZ(sid, player) - 96.5) < 1e-6, "玩家以同一個邏輯座標搬到新實例");
-                        M7CapacityFixture.release(e.server, pressure);
-                        c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
-                        e.awaitReleased(sid, label + "/cancel", null, () -> {
-                            c.assertTrue(e.inB(player), "取消後回到 exact B");
-                            e.finish();
-                        });
+                    // T5-3 fix1：容量恢復之後由正式 tick 重試、寫出新舊租約聯集；之後先同步生成新租約周圍的走廊 chunk，換頁仍由正式 reposition tick 完成。
+                    M7HomeClosureGameTests.until(c, label + "/union", 200, () -> e.newLeaseWritten(sid, rowSlots), e.step(() -> {
+                        e.pregenerateNewLeases(sid, rowSlots, label);
+                        M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
+                            var after = e.homeRow();
+                            c.assertTrue(after.sessionUuid().equals(sid) && after.state() == SessionState.SUPERPOSITION && after.home().equals(row.home()),
+                                    "容量恢復之後以原 SID、未變的 Selection 完成換頁：" + after);
+                            c.assertTrue(M7CapacityFixture.remaining(after) == closeReserve, "換頁前後 CLOSE 空間（完成預留）相同");
+                            c.assertTrue(Math.abs(e.logicalZ(sid, player) - 96.5) < 1e-6, "玩家以同一個邏輯座標搬到新實例");
+                            M7CapacityFixture.release(e.server, pressure);
+                            c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
+                            e.awaitReleased(sid, label + "/cancel", null, () -> {
+                                c.assertTrue(e.inB(player), "取消後回到 exact B");
+                                e.finish();
+                            });
+                        }), e.step(() -> {
+                            throw new GameTestException("HOME_REMAP_NOT_COMPLETED：容量恢復之後新舊租約聯集已 checked，但換頁沒有在 600 tick 內完成：epoch="
+                                    + e.pages.currentMappings(sid).epoch() + " " + e.spaceDiagnostics(sid) + " row=" + e.homeRow());
+                        }));
                     }), e.step(() -> {
-                        throw new GameTestException("HOME_REMAP_NOT_RETRIED：容量恢復之後 HOME 換頁沒有重試完成：epoch=" + e.pages.currentMappings(sid).epoch()
+                        throw new GameTestException("HOME_REMAP_NOT_RETRIED：容量恢復之後正式 tick 沒有重試寫出新舊租約聯集：epoch=" + e.pages.currentMappings(sid).epoch()
                                 + " row=" + e.homeRow() + " space=" + e.spaceSlots(sid));
                     }));
                 });
@@ -846,9 +862,10 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                     c.assertTrue(oldMapping.equals(e.pages.currentMappings(oldSid)) && oldDoors.equals(e.pages.selectableDoors(oldSid)),
                             "被拒的一方留下既有 mapping 與已發布的門");
                     c.assertTrue(union.equals(e.homeRow()) && M7CapacityFixture.remaining(e.homeRow()) == unionReserve, "HOME 列與它可用的 CLOSE 餘額（完成預留）不變");
-                    // 被拒的舊旅程先以正式路徑收尾（壓力列仍在，舊列的返還與移除只會變小），再等已承諾的 HOME remap 完成：走廊世界同時有兩趟的玩家時，新租約周圍
-                    // 半徑 2 的 chunk 要約 1000 tick 才全部 FULL（T5-3 開發輪實測，同一趟單人時約 30～60 tick），先收掉舊旅程以免拉長 M7 gate。
-                    legacy.trustedTeardown((int) c.getTick() + 1, () -> M7HomeClosureGameTests.until(c, label + "/remapped", 1200, () -> e.remappedOnce(sid, oldView), e.step(() -> {
+                    // T5-3 fix1：同步生成新租約周圍的走廊 chunk（只改 chunk 載入）。不預生成時，走廊世界同時有兩趟的玩家，新租約周圍半徑 2 的 chunk 要約 1000 tick
+                    // 才全部 FULL（T5-3 開發輪實測）。被拒的舊旅程仍先以正式路徑收尾（壓力列仍在，舊列的返還與移除只會變小），再等已承諾的 HOME remap 由正式 tick 完成。
+                    e.pregenerateNewLeases(sid, Set.of(oldView.ref().slotId()), label);
+                    legacy.trustedTeardown((int) c.getTick() + 1, () -> M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
                         var after = e.homeRow();
                         c.assertTrue(after.sessionUuid().equals(sid) && after.home().equals(row.home()) && M7CapacityFixture.remaining(after) == closeReserve,
                                 "已承諾的 HOME remap 在 16 MiB 邊界上完成（原 SID、未變的 Selection、CLOSE 空間相同）：" + after);
@@ -859,7 +876,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                             e.finish();
                         });
                     }), e.step(() -> {
-                        throw new GameTestException("COMMITTED_REMAP_BLOCKED：已承諾的 HOME remap 在 16 MiB 邊界上沒有完成：epoch=" + e.pages.currentMappings(sid).epoch()
+                        throw new GameTestException("HOME_REMAP_NOT_COMPLETED：16 MiB 邊界上已承諾的 HOME remap（聯集已 checked）沒有在 600 tick 內完成：epoch=" + e.pages.currentMappings(sid).epoch()
                                 + " " + e.spaceDiagnostics(sid) + " leases=" + e.homeRow().spaceLeases().stream().map(lease -> lease.slotId() + ":" + lease.bounds()).toList());
                     })));
                 }), e.step(() -> {
@@ -1152,6 +1169,41 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 line.append(" avgTickMs=").append(server.getAverageNanosPerTick() / 1_000_000.0);
                 return line.toString();
             } catch (RuntimeException failure) { return "diagnostics-failed=" + failure; }
+        }
+
+        /** 正式 tick 已以 checked 寫出新租約：checked 列（current＝flushed）帶著 {@code oldSlots} 以外的 slot。 */
+        boolean newLeaseWritten(UUID sid, Set<Integer> oldSlots) {
+            var row = homeRow();
+            return row != null && row.sessionUuid().equals(sid) && row.equals(journal.allSessions().get(sid))
+                    && row.spaceLeases().stream().anyMatch(lease -> !oldSlots.contains(lease.slotId()));
+        }
+
+        /**
+         * T5-3 fix1（使用者 2026-11-25「測試先生成走廊 chunk（建議）」）：checked 列上 {@code oldSlots} 以外的每一筆新租約，把 footprint 外擴 2 個 chunk 以走廊世界的
+         * {@code getChunk(x, z)} 同步生成到 FULL。新實例要 entity ticking 才算租約就緒，而 entity ticking 需要 5×5 鄰域都是 FULL；不預生成時全新 slot 的鄰域在負載下約 1000 tick
+         * 才載完（T5-3 開發輪實測）。比照冷 B 案的「測試先生成 B 地形」：只改 chunk 載入，不呼叫任何 remap API，換頁仍由正式 reposition tick 完成。
+         */
+        void pregenerateNewLeases(UUID sid, Set<Integer> oldSlots, String label) {
+            var row = homeRow();
+            c.assertTrue(row != null && row.sessionUuid().equals(sid), "預生成的前提：HOME 列仍在：" + row);
+            int leases = 0;
+            for (var lease : row.spaceLeases()) {
+                if (oldSlots.contains(lease.slotId())) continue;
+                leases++;
+                var box = lease.bounds();
+                long start = System.nanoTime();
+                int chunks = 0, full = 0;
+                for (int x = (box.getMinX() >> 4) - 2; x <= (box.getMaxX() >> 4) + 2; x++)
+                    for (int z = (box.getMinZ() >> 4) - 2; z <= (box.getMaxZ() >> 4) + 2; z++) {
+                        corridor().getChunk(x, z);
+                        chunks++;
+                        if (corridor().getChunkManager().getWorldChunk(x, z) != null) full++;
+                    }
+                long wallMillis = (System.nanoTime() - start) / 1_000_000;
+                LOG.info("M7_T53_CORRIDOR_PREGEN case={} sid={} slot={} chunks={} full={} wallMillis={}", label, sid, lease.slotId(), chunks, full, wallMillis);
+                c.assertTrue(full == chunks, "預生成之後新租約外擴 2 個 chunk 都是 FULL：" + full + "/" + chunks);
+            }
+            c.assertTrue(leases > 0, "預生成的前提：checked 列已有新租約：" + row.spaceLeases());
         }
 
         /** 一次換頁已完成：mapping 前進到 epoch 2 的唯一新實例，舊實例已退休（checked 列與 Space 都只剩新實例的租約）。 */
