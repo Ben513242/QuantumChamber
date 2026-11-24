@@ -90,7 +90,7 @@ public final class DoorWriteFault {
         private final ServerWorld world; private final Set<BlockPos> positions; private int failures;
         private Runnable firstHitObserver;
         private OpenFailure(ServerWorld world,Set<BlockPos> positions) { this.world=world; this.positions=positions; }
-        /** 只供本次診斷在原故障命中點取樣，回呼自行隔離觀測例外。 */
+        /** 門案故障瞬間的觀察（正式見證與診斷）：在原故障命中點取樣，回呼自行隔離觀測例外、不丟回呼叫端。 */
         void observeFirstHit(Runnable observer) { firstHitObserver = observer; }
         /** 被擋下的開門寫入次數（每格每次一筆）。 */
         public int failures() { return failures; }

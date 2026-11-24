@@ -547,6 +547,8 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
      * B 門改為 OPEN 的寫入受 {@link DoorWriteFault#failOpens} 阻擋。只有命中實際寫入、同 SID 的門 WARN 和該 tick 的退避樣本，才進行門失敗驗證。
      * 核失敗前一個 tick 持票、失敗當下及整個 200 tick 退避期間無票。解除故障後，由 owner 等退避到期再收尾。
      * 用來殺「{@code backOff} 不釋票」的單點變異（只拿掉 {@code backOff} 的釋放時，票要到 200 tick 租期才由票 owner 釋放）。
+     * 助載的同一個 test callback 同步（不消耗 tick）把 home chunks 半徑 2 載入到 FULL（{@link #loadEntityTickingRegion}），並自檢已全部 FULL；
+     * 門寫入失敗的瞬間另核仍持同一份首票（{@link DoorFaultLease}）。fixture 保持 B 載入時租期到期不經 owner 的到期 WARN，只有這個見證能排除「票已到期才寫門」。
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_entry_ticket_handoff_fail", tickLimit = 2000)
     public void close_ticket_released_when_the_door_write_fails_and_backs_off(TestContext c) {
@@ -571,8 +573,13 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                 var diagnostic = new DoorHandoffDiagnostic(c, p, sid, chunks);
                 hooks.add(diagnostic::emitOnce);
                 watch.diagnostic = diagnostic;
-                fault.observeFirstHit(() -> diagnostic.atDoorFault(watch));
+                var atFault = new DoorFaultLease(server, sid, watch);
+                fault.observeFirstHit(() -> {
+                    atFault.sample();
+                    diagnostic.atDoorFault(watch);
+                });
                 int[] assistedAt = {-1};
+                boolean[] regionFullAtAssist = {false};
                 int latchedAt = server.getTicks();
                 p.committed(journal.commitHomeRollForward(server, dormant, M7HomeClosureGameTests.withStop(dormant, RootReason.ROOT_DISABLED,
                         server.getOverworld().getTime())), "原艙停止原因已 checked latch");
@@ -582,6 +589,9 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                     if (assistedAt[0] < 0 && firstLeaseTick >= latchedAt && firstLeaseTick < server.getTicks()
                             && firstExactCloseLeaseIsHeld(p, sid, watch, chunks)) {
                         hooks.add(M7HomeClosureGameTests.holdChunks(p.b, p.frame));
+                        loadEntityTickingRegion(p.b, chunks);
+                        // 自檢用獨立的字面值 2（不讀 ENTITY_TICKING_RADIUS），常數被改時仍能抓到。
+                        regionFullAtAssist[0] = regionAround(chunks, 2).stream().allMatch(pos -> p.b.getChunkManager().getWorldChunk(pos.x, pos.z) != null);
                         assistedAt[0] = server.getTicks();
                         diagnostic.afterAssist(watch);
                     }
@@ -594,12 +604,20 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
                     witness.put("oneDoorWarn", doorWarns(capture, sid) == 1);
                     witness.put("observedAtTheNextTick", server.getTicks() == failureTick + 1);
                     witness.put("fixtureAssistedAfterTheExactLease", assistedAt[0] > watch.firstLeaseTick() && assistedAt[0] <= failureTick);
+                    witness.put("entityRegionFullAtAssist", regionFullAtAssist[0]);
+                    witness.put("leaseLiveAtTheDoorFault", atFault.live());
                     int expiryWarnCount = expiryWarns(capture, sid);
                     if (witness.containsValue(false) || expiryWarnCount != 0) {
-                        var reason = expiryWarnCount != 0 ? "HANDOFF_FAIL_ENTRY_TICKET_EXPIRED" : "HANDOFF_FAIL_OTHER_BACKOFF";
+                        String reason;
+                        if (expiryWarnCount != 0) reason = "HANDOFF_FAIL_ENTRY_TICKET_EXPIRED";
+                        else if (!regionFullAtAssist[0]) reason = "HANDOFF_FAIL_ENTITY_REGION_NOT_FULL_AT_ASSIST";
+                        else if (atFault.sampled() && !atFault.live())
+                            reason = atFault.deadline() >= 0 && atFault.deadline() <= atFault.faultTick() ? "HANDOFF_FAIL_LEASE_EXPIRED_BEFORE_DOOR_FAULT"
+                                    : "HANDOFF_FAIL_NO_LIVE_LEASE_AT_DOOR_FAULT";
+                        else reason = "HANDOFF_FAIL_OTHER_BACKOFF";
                         var warnings = capture.matching(org.apache.logging.log4j.Level.WARN, sid.toString()).stream().map(LogCapture.Entry::message).toList();
                         fail(p, hooks, reason + "：未證明在持票時因門寫入失敗而退避：" + witness + " firstLease=" + watch.firstLeaseTick()
-                                + " assistedAt=" + assistedAt[0] + " failureTick=" + failureTick + " warns=" + warnings);
+                                + " assistedAt=" + assistedAt[0] + " failureTick=" + failureTick + " atFault=" + atFault + " warns=" + warnings);
                         return;
                     }
                     witness.put("backedOff200", watch.delayOf(failureTick) == 200 && retryAt == failureTick + 200L);
@@ -634,6 +652,73 @@ public final class M7HomeEntryTicketGameTests implements FabricGameTest {
 
     private static int doorWarns(LogCapture capture, UUID sid) {
         return capture.matching(org.apache.logging.log4j.Level.WARN, "B 門尚未改為結案目標", sid.toString()).size();
+    }
+
+    /**
+     * 1.21 {@code ServerChunkLoadingManager.makeChunkEntitiesTickable}＝{@code getRegion(holder, 2, FULL)}：正式票（level 31，ENTITY_TICKING）的 home chunk
+     * 要等半徑 2 全部 FULL 才開始讀 entity。
+     */
+    private static final int ENTITY_TICKING_RADIUS = 2;
+
+    /** {@code home} 每一格 Chebyshev 距離 ≤ {@code radius} 的 chunks 聯集，依 x、z 排序。 */
+    private static Set<ChunkPos> regionAround(Set<ChunkPos> home, int radius) {
+        var region = new java.util.TreeSet<ChunkPos>(java.util.Comparator.comparingInt((ChunkPos pos) -> pos.x).thenComparingInt(pos -> pos.z));
+        for (var center : home)
+            for (int x = center.x - radius; x <= center.x + radius; x++)
+                for (int z = center.z - radius; z <= center.z + radius; z++) region.add(new ChunkPos(x, z));
+        return java.util.Collections.unmodifiableSet(region);
+    }
+
+    /**
+     * 門案 fixture 的助載：同步把 home chunks 半徑 {@value #ENTITY_TICKING_RADIUS} 載入到 FULL（與 {@code holdChunks} 同樣的同步 {@code getChunk}，不消耗 tick）。
+     * 不加持久票：正式票已讓這個範圍的目標是 FULL，同步載入時原版加的 UNKNOWN 票是 level 33，下一個 tick 過期，不改任何 chunk 的票等級。
+     */
+    private static void loadEntityTickingRegion(ServerWorld world, Set<ChunkPos> home) {
+        for (var pos : regionAround(home, ENTITY_TICKING_RADIUS)) world.getChunk(pos.x, pos.z);
+    }
+
+    /**
+     * 門案的正式見證：B 門寫入失敗的瞬間（{@link DoorWriteFault.OpenFailure#observeFirstHit}，回程終局 owner 的 {@code applyTarget} 之內）是否仍持同一份首票、
+     * 不在清理中、而且 tick 小於租期期限。取樣例外記為「無活票」並保留類別，絕不丟回 production（否則會變成交接 WARN 與另一種退避）。
+     */
+    private static final class DoorFaultLease {
+        private final MinecraftServer server;
+        private final UUID sid;
+        private final TickEndWatch watch;
+        private boolean sampled;
+        private boolean live;
+        private int faultTick = -1;
+        private long deadline = -1;
+        private String error;
+
+        DoorFaultLease(MinecraftServer server, UUID sid, TickEndWatch watch) { this.server = server; this.sid = sid; this.watch = watch; }
+
+        void sample() {
+            if (sampled) return;
+            sampled = true;
+            try {
+                faultTick = server.getTicks();
+                var first = watch.firstLease();
+                if (first != null) deadline = (long) M4CandidateTestAccess.get(first, "deadline");
+                var lease = EntryTickets.lease(server, sid);
+                live = lease != null && lease == first && !(Boolean) M4CandidateTestAccess.get(lease, "closing") && faultTick < deadline;
+            } catch (RuntimeException | LinkageError failure) {
+                live = false;
+                error = failure.getClass().getName();
+            }
+        }
+
+        boolean sampled() { return sampled; }
+
+        boolean live() { return live; }
+
+        int faultTick() { return faultTick; }
+
+        long deadline() { return deadline; }
+
+        @Override public String toString() {
+            return "{sampled=" + sampled + ", live=" + live + ", faultTick=" + faultTick + ", deadline=" + deadline + ", error=" + error + "}";
+        }
     }
 
     /** 一次性收集門案的診斷資料。只保存固定數量的時點與當時的值，原斷言不讀取這裡。 */
