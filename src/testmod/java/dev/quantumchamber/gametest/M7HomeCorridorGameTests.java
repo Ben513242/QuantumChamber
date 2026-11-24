@@ -90,6 +90,8 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                         && gate().localPresence(e.a, e.frame.controllerPos()) == ChamberSessionGateway.Presence.BUSY,
                         "B 顯示 ACTIVE、A 顯示 BUSY");
                 c.assertTrue(!ChamberProtectionService.get().mayMutate(e.a, e.frame.controllerPos()), "A 自暫占起受保護");
+                // T5-2 審查 I-1：Entry=B 的來源票（spec §7 :203）在 B 的 Controller chunk 恰一張、A（Root）世界沒有。
+                e.assertSourceTicketOnB(sid);
                 c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
                 e.awaitReleased(sid, "home_entry_commits_superposition_with_entry_b/cancel", null, () -> {
                     c.assertTrue(e.inB(player), "取消後回到 exact B");
@@ -113,6 +115,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 var sid = row.sessionUuid();
                 var player = e.player(0);
                 var overworld = M5GameTestSupport.installChunkCheckpointProbe(c, e.a.getRegistryKey(), 0, ignored -> "", hooks);
+                e.assertSourceTicketOnB(sid);
                 c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "取消當下尚未返還完成");
                 var returning = e.homeRow();
                 c.assertTrue(returning != null && returning.state() == SessionState.RETURNING && returning.home().selection() instanceof Unselected,
@@ -167,7 +170,15 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 var sid = arming.sessionUuid();
                 var last = e.server.getPlayerManager().getPlayer(arming.participants().getLast().playerUuid());
                 c.assertTrue(e.ids().stream().allMatch(id -> e.inB(e.server.getPlayerManager().getPlayer(id))), "ARMING 時全員仍在 B");
-                M4CandidateTestAccess.set(last, "quantumchamber$rawRecoveryMarker", NbtString.of("m7-t5-2-corrupt-marker"));
+                // T5-2 審查 M-5：竄改之後立即登記冪等的還原（只在 marker 仍是竄改值時寫回原值），失敗路徑也會還原。
+                var originalMarker = M4CandidateTestAccess.get(last, "quantumchamber$rawRecoveryMarker");
+                var corruptMarker = NbtString.of("m7-t5-2-corrupt-marker");
+                M4CandidateTestAccess.set(last, "quantumchamber$rawRecoveryMarker", corruptMarker);
+                Runnable restoreMarker = () -> {
+                    if (corruptMarker.equals(M4CandidateTestAccess.get(last, "quantumchamber$rawRecoveryMarker")))
+                        M4CandidateTestAccess.set(last, "quantumchamber$rawRecoveryMarker", originalMarker);
+                };
+                hooks.add(restoreMarker);
                 boolean[] published = {false};
                 BooleanSupplier observe = () -> {
                     var current = e.homeRow();
@@ -186,7 +197,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                         c.assertTrue(e.inB(player) && player.getPos().squaredDistanceTo(person.sourcePosition()) < 1e-10,
                                 "ROLLBACK_NOT_B：已移動的人依 ARMING 快照原生移回 exact B 原位：" + player.getPos() + " vs " + person.sourcePosition());
                     }
-                    M4CandidateTestAccess.set(last, "quantumchamber$rawRecoveryMarker", null);
+                    restoreMarker.run();
                     e.awaitReleased(sid, "last_checkpoint_fails_after_native_moves/returned", observe::getAsBoolean, () -> {
                         c.assertTrue(!published[0], "整段都沒有發布 SUPERPOSITION 或 mapping");
                         for (var person : arming.participants()) c.assertTrue(e.inB(e.server.getPlayerManager().getPlayer(person.playerUuid())), "全員在 B");
@@ -267,10 +278,19 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                     int joined = rejoined.joinTick();
                     c.assertTrue(joined == e.server.getTicks() && rejoined.player().getServerWorld() == e.corridor(),
                             "JOIN 只排隊，玩家照 playerdata 先回到走廊");
-                    e.awaitReleased(sid, "offline_participant_returns_to_b_after_join/returned", null, () -> {
-                        c.assertTrue(e.inB(rejoined.player()) && e.inB(online), "重登者在 JOIN 之後回到 exact B");
-                        c.assertTrue(e.server.getTicks() > joined, "不在 JOIN 當 tick 返還");
-                        e.finish();
+                    // T5-2 審查 M-4：JOIN 當 tick 的 END tick（recovery）不得返還。下一個 tick 的 test callback 早於該 tick 的 END tick，
+                    // 這時重登者必須仍在走廊、列中仍未 Returned；之後才由 recovery 送回 B。
+                    e.nextTick(() -> {
+                        c.assertTrue(e.server.getTicks() == joined + 1, "前提：觀察點是 JOIN 的下一個 tick（早於該 tick 的 END tick）：" + e.server.getTicks() + " / " + joined);
+                        var pending = e.homeRow();
+                        c.assertTrue(rejoined.player().getServerWorld() == e.corridor() && pending != null && pending.participants().stream()
+                                .anyMatch(person -> person.playerUuid().equals(absent) && !person.returned()),
+                                "RETURNED_ON_JOIN_TICK：JOIN 當 tick 的 recovery 不得返還重登者（JOIN 只排到下一個 tick）：world="
+                                        + rejoined.player().getServerWorld().getRegistryKey().getValue() + " row=" + pending);
+                        e.awaitReleased(sid, "offline_participant_returns_to_b_after_join/returned", null, () -> {
+                            c.assertTrue(e.inB(rejoined.player()) && e.inB(online), "重登者在 JOIN 之後回到 exact B");
+                            e.finish();
+                        });
                     });
                 }), e.timeout("offline_participant_returns_to_b_after_join/online"));
             });
@@ -398,7 +418,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             e.requireStarted();
             var reloaded = e.delayRootTicket();
             c.assertTrue(HomeTicketFaultFixture.count(e.a, reloaded) > 0 && gate().globalChamberBusy(e.server, e.chamber), "START_CHECK 持有 A 的票與暫占");
-            e.c.waitAndRun(1, e.step(() -> {
+            e.nextTick(() -> {
                 c.assertTrue(reloaded.equals(provisionalSid(e.chamber)) && e.homeRow() == null, "A 未 FULL 前只等待，不寫 ARMING");
                 if (!(e.server.getResourceManager() instanceof net.minecraft.resource.LifecycledResourceManager resources))
                     throw new GameTestException("RELOAD_FIXTURE：resource manager 不是 LifecycledResourceManager");
@@ -421,7 +441,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                     c.assertTrue(e.inB(player) && pose.equals(player.getPos()), "逾時與 reload 都不移動玩家");
                     e.finish();
                 }), e.timeout("start_check_released_on_reload_and_timeout/timeout"));
-            }));
+            });
         });
     }
 
@@ -592,7 +612,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
         }
 
         /**
-         * 這座艙不再 busy（HOME 列 checked 移除、runtime 與暫占都已釋放），再核對沒有殘留：列、走廊 space、完成收據都已清除。{@code each} 在每次判斷時先執行（監看用）。
+         * 這座艙不再 busy（HOME 列 checked 移除、runtime 與暫占都已釋放），再核對沒有殘留：列、走廊 space、完成收據與 Entry=B 來源票都已清除。{@code each} 在每次判斷時先執行（監看用）。
          */
         void awaitReleased(UUID sid, String label, Runnable each, Runnable then) {
             M7HomeClosureGameTests.until(c, label + "/released", 600, () -> {
@@ -603,6 +623,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                         "HOME 列已 checked 移除");
                 c.assertTrue(!pages.hasReservation(sid) && !pages.releaseComplete(sid), "走廊 space 已釋放、完成收據已消費（ack）");
                 c.assertTrue(gate().localPresence(b, frame.controllerPos()) == ChamberSessionGateway.Presence.NONE, "B 不再顯示旅程");
+                assertNoSourceTicket(sid);
                 then.run();
             }), timeout(label + "/released"));
         }
@@ -657,7 +678,43 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
         /** 之後的 {@code ticks} 個 tick 每 tick 執行一次 {@code monitor}（一次只排一筆），結束後執行 {@code then}；任一步失敗都先收尾。 */
         void hold(int ticks, Runnable monitor, Runnable then) {
             if (ticks <= 0) { step(then).run(); return; }
-            c.waitAndRun(1, step(() -> { monitor.run(); hold(ticks - 1, monitor, then); }));
+            nextTick(() -> { monitor.run(); hold(ticks - 1, monitor, then); });
+        }
+
+        /** 下一個 tick 執行 {@code body}（{@link #callback}）。 */
+        void nextTick(Runnable body) { c.waitAndRun(1, callback(body)); }
+
+        /**
+         * {@code waitAndRun} 的 callback（T5-2 審查 M-7）：失敗時先收尾（{@link #step}），非 GameTestException 包成 GameTestException 並保留 cause——原版只把
+         * GameTestException 記為單案失敗，其他例外會讓整個 test server 崩潰；與 {@code M7HomeClosureGameTests.until} 的轉換一致。
+         */
+        Runnable callback(Runnable body) {
+            var guarded = step(body);
+            return () -> {
+                try { guarded.run(); }
+                catch (GameTestException failure) { throw failure; }
+                catch (RuntimeException | Error failure) {
+                    var wrapped = new GameTestException("M7_HOME_CORRIDOR_CALLBACK：回呼內例外：" + failure);
+                    wrapped.initCause(failure);
+                    throw wrapped;
+                }
+            };
+        }
+
+        /** T5-2 審查 I-1：Entry=B 的來源票（spec §7 :203）在 B 的 Controller chunk 恰一張，A（Root）世界沒有這個 SID 的來源票。 */
+        void assertSourceTicketOnB(UUID sid) {
+            var onB = M5GameTestSupport.tickets(b, "quantumchamber_source", sid);
+            c.assertTrue(onB.size() == 1 && onB.containsKey(new ChunkPos(frame.controllerPos())),
+                    "HOME_SOURCE_TICKET_MISSING_ON_B：Entry=B 的來源票必須恰一張、在 B 的 Controller chunk：" + onB);
+            var onRoot = M5GameTestSupport.tickets(a, "quantumchamber_source", sid);
+            c.assertTrue(onRoot.isEmpty(), "HOME_SOURCE_TICKET_ON_ROOT：A（Root）世界不得有 HOME 的來源票：" + onRoot);
+        }
+
+        /** 收尾之後 B 與 A 都沒有這個 SID 的來源票。 */
+        void assertNoSourceTicket(UUID sid) {
+            var onB = M5GameTestSupport.tickets(b, "quantumchamber_source", sid);
+            var onRoot = M5GameTestSupport.tickets(a, "quantumchamber_source", sid);
+            c.assertTrue(onB.isEmpty() && onRoot.isEmpty(), "HOME_SOURCE_TICKET_LEAKED：收尾之後來源票必須釋放：B=" + onB + " A=" + onRoot);
         }
 
         Runnable timeout(String label) {
