@@ -26,7 +26,7 @@ import net.minecraft.world.WorldAccess;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * 量子艙門（25 格門板的一格）。屬性為 {@link #OPEN} 與 {@link #MEMBRANE}（M5 spec §10.1）。
+ * 量子艙門（25 格門板的一格）。屬性為 {@link #OPEN} 與 {@link #MEMBRANE}（M5 spec §10.1），以及 HOME 門標記 {@link #HOME_MARKER}（M7）。
  *
  * <p>方塊屬性是笛卡兒積，型別上無法排除 {@code open=false}＋{@code *_x/z}；本 mod 的寫入一律經過 {@link #withOpen} 或
  * {@link #withDoor}，所以不會產生它。只有指令（{@code /setblock}）寫得出來，這時它的碰撞、模型與 {@link ChamberDetector}
@@ -40,7 +40,11 @@ public final class QuantumBulkheadBlock extends Block implements FluidFillable {
     public static final BooleanProperty OPEN = Properties.OPEN;
     /** 量子膜；舊存檔沒有這個屬性，讀入時是預設的 {@code none}。 */
     public static final EnumProperty<MembraneState> MEMBRANE = EnumProperty.of("membrane", MembraneState.class);
-    /** T5-1 RED 腳手架：只宣告，尚未加入 state。 */
+    /**
+     * HOME 門標記（M7 spec §4.2、plan Task 5 :319）；舊存檔沒有這個屬性，讀入時是預設的 {@code false}。只有走廊幾何 Builder 的
+     * HOME 模式對預設狀態寫 {@code true}（{@code MembraneStateTest} 守門）。它只把關門換成 HOME 模型：碰撞、外框、光、流體與
+     * {@link #membrane} 都不看它，{@link #withOpen}／{@link #withDoor} 也不改它。
+     */
     public static final BooleanProperty HOME_MARKER = BooleanProperty.of("home_marker");
 
     /** 量子膜的外框：置中的 2px 薄板，和模型的平面（z=8 或 x=8）同位置，讓玩家瞄得到。 */
@@ -50,12 +54,12 @@ public final class QuantumBulkheadBlock extends Block implements FluidFillable {
     public QuantumBulkheadBlock(AbstractBlock.Settings settings) {
         // bedrock 的預設 suffocates／blockVision 是「blocksMovement 且碰撞為完整方塊」，sealed 量子膜也成立；改成只有關門成立。
         super(settings.suffocates(QuantumBulkheadBlock::closedDoor).blockVision(QuantumBulkheadBlock::closedDoor));
-        setDefaultState(getDefaultState().with(OPEN, false).with(MEMBRANE, MembraneState.NONE));
+        setDefaultState(getDefaultState().with(OPEN, false).with(MEMBRANE, MembraneState.NONE).with(HOME_MARKER, false));
     }
 
     @Override
     protected void appendProperties(StateManager.Builder<Block, BlockState> builder) {
-        builder.add(OPEN, MEMBRANE);
+        builder.add(OPEN, MEMBRANE, HOME_MARKER);
     }
 
     /**

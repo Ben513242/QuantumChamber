@@ -2,6 +2,7 @@ package dev.quantumchamber.corridor;
 
 import dev.quantumchamber.chamber.ChamberFrame;
 import dev.quantumchamber.chamber.ChamberSpaceCoordinates;
+import dev.quantumchamber.chamber.QuantumBulkheadBlock;
 import dev.quantumchamber.persistence.SessionSemantics;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
@@ -121,6 +122,7 @@ public final class CorridorGeometry {
         private final CorridorPageManager.MappingView view;
         private final boolean frontOpen, rearOpen;
         private final SessionSemantics semantics;
+        private final boolean home;
         private final long volume;
         private long index;
         private int overlay;
@@ -130,10 +132,15 @@ public final class CorridorGeometry {
         Builder(CorridorPageManager.MappingView view, boolean frontOpen, boolean rearOpen,SessionSemantics semantics) {
             this(view,frontOpen,rearOpen,semantics,false);
         }
-        // T5-1 RED 腳手架：home 先忽略，輸出與 legacy 相同。
+        /**
+         * {@code home=true}：M7 HOME 走廊（spec §4.2）。側門格只有 {@link HomeDoorLayout} 的 25 格是帶 HOME 標記的 bulkhead，
+         * 其餘側門格是牆（bedrock）；入口 overlay 與其他格和 legacy 相同。HOME 只用 lateral 語意。
+         */
         Builder(CorridorPageManager.MappingView view, boolean frontOpen, boolean rearOpen,SessionSemantics semantics,boolean home) {
             this.view=view; this.frontOpen=frontOpen; this.rearOpen=rearOpen;
             this.semantics=java.util.Objects.requireNonNull(semantics);
+            if (home && semantics!=SessionSemantics.LATERAL_BUFF_MAINTAINED) throw new IllegalArgumentException("HOME 走廊只用 LATERAL_BUFF_MAINTAINED");
+            this.home=home;
             volume = Math.multiplyExact(view.aliasEndBlock()-view.aliasStartBlock(),49);
             if (!hasEntrance(view)) overlay=343;
         }
@@ -148,7 +155,10 @@ public final class CorridorGeometry {
                 boolean shell=side || y==0 || y==6 || logicalZ==view.aliasStartBlock() || logicalZ==view.aliasEndBlock()-1;
                 BlockState state=shell ? Blocks.BEDROCK.getDefaultState() : Blocks.AIR.getDefaultState();
                 if (side && y>0 && y<6 && Math.floorMod(logicalZ,8)>=1 && Math.floorMod(logicalZ,8)<=5) {
-                    state=ModBlocks.QUANTUM_BULKHEAD.getDefaultState();
+                    if (!home) state=ModBlocks.QUANTUM_BULKHEAD.getDefaultState();
+                    else if (HomeDoorLayout.isHomeCell(x,y,logicalZ)) {
+                        state=ModBlocks.QUANTUM_BULKHEAD.getDefaultState().with(QuantumBulkheadBlock.HOME_MARKER,true);
+                    }
                 }
                 return new Cell(block(frame(view),x,y,Math.toIntExact(logicalZ-view.logicalAnchorBlock())),state);
             }

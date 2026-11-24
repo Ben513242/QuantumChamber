@@ -1,6 +1,7 @@
 {
   "variants": {
-    "open=false": { "model": "quantumchamber:block/quantum_bulkhead" },
+    "home_marker=false,open=false": { "model": "quantumchamber:block/quantum_bulkhead" },
+    "home_marker=true,open=false": { "model": "quantumchamber:block/quantum_bulkhead_home" },
     "membrane=none,open=true": { "model": "minecraft:block/air" },
     "membrane=sealed_x,open=true": { "model": "quantumchamber:block/quantum_bulkhead_membrane" },
     "membrane=passable_x,open=true": { "model": "quantumchamber:block/quantum_bulkhead_membrane" },
