@@ -215,12 +215,16 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 var snapshot = StatusEffectInstance.fromNbt(row.participants().stream().filter(person -> person.playerUuid().equals(other.getUuid()))
                         .findFirst().orElseThrow().quantumStateSnapshot());
                 c.assertTrue(snapshot != null && other.hasStatusEffect(ModEffects.QUANTUM_STATE), "前提：入場快照與目前藥效");
+                // testmod 的連線玩家不經網路 tick，藥效不會自己倒數：以較短的剩餘時間代表走廊中已經過的時間，才看得出返還是否把它重設成入場快照。
+                other.removeStatusEffect(ModEffects.QUANTUM_STATE);
+                c.assertTrue(other.addStatusEffect(new StatusEffectInstance(ModEffects.QUANTUM_STATE, 5000)) && snapshot.getDuration() > 5000,
+                        "另一人的剩餘藥效短於入場快照");
                 c.assertTrue(milk.clearStatusEffects() && !milk.hasStatusEffect(ModEffects.QUANTUM_STATE), "一人喝牛奶");
                 e.awaitReleased(sid, "milk_or_buff_lapse_returns_whole_cohort_to_b_without_refund", null, () -> {
                     c.assertTrue(e.inB(milk) && e.inB(other), "整組返回 exact B");
                     c.assertTrue(!milk.hasStatusEffect(ModEffects.QUANTUM_STATE), "BUFF_REFUNDED：喝牛奶的人回到 B 仍沒有藥效（不退款）");
                     var remaining = other.getStatusEffect(ModEffects.QUANTUM_STATE);
-                    c.assertTrue(remaining != null && remaining.getDuration() < snapshot.getDuration(),
+                    c.assertTrue(remaining != null && remaining.getDuration() <= 5000,
                             "BUFF_RESTORED：另一人保留剩餘藥效，不重設為入場快照：" + (remaining == null ? null : remaining.getDuration()) + " / " + snapshot.getDuration());
                     c.assertTrue(capture.matching(Level.INFO, "凍結 cohort 的 QuantumState 已失效", sid.toString()).size() == 1
                             && capture.matching(Level.WARN, "HOME 入場交易保留 RETURNING", sid.toString()).isEmpty(),

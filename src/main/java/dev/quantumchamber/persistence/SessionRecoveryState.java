@@ -823,15 +823,28 @@ public final class SessionRecoveryState extends PersistentState {
             return TerminalResult.of(TerminalResult.Status.REJECTED,new IllegalStateException("沒有回程終局 owner 的移除 proof"));
         return terminateHome(store,flush,expected);
     }
-    /** 未選定 RETURNING 的完整返還收尾；已結案列只經 {@link #finishHomeClose}，外部 caller 不能自宣已完成。 */
-    public TerminalResult terminateHome(MinecraftServer server,HomeSessionRecord expected) {
+    /**
+     * 未選定 RETURNING 的完整返還收尾（plan Task 5 :308，T5-2）：只接受走廊 owner 的一次性 proof——全員已返回 B、走廊幾何已清除、
+     * HOME 原生 checkpoint（{@link MeasuredWorldSaveCheckpoint#save(MinecraftServer,HomeSessionRecord)}）已在同一個 tick 成功之後，由
+     * {@code CorridorPageManager} 建立。已選定或已結案的列一律拒絕（結案列只經 {@link #finishHomeClose}）。移除本身與 {@link #terminateHome} 共用同一個 checked 本體。
+     */
+    public TerminalResult finishHomeReturn(MinecraftServer server, HomeSessionRecord expected, dev.quantumchamber.corridor.CorridorPageManager.HomeReturnProof proof) {
         requireServerThread(server);
-        if(expected.home().closeIntent() instanceof HomeSessionRecord.Close)
-            return TerminalResult.of(TerminalResult.Status.REJECTED,new IllegalStateException("結案列只經 finishHomeClose 移除"));
+        if(expected.home().closeIntent() instanceof HomeSessionRecord.Close || !(expected.home().selection() instanceof HomeSessionRecord.Unselected)
+                || proof==null || !proof.consume(server,expected))
+            return TerminalResult.of(TerminalResult.Status.REJECTED,new IllegalStateException("沒有走廊 owner 的未選定返還 proof"));
         HomeReceiptStore store;
         try { store=new HomeReceiptStore(server.getSavePath(WorldSavePath.ROOT)); }
         catch(IOException failure) { return TerminalResult.of(TerminalResult.Status.REJECTED,new UncheckedIOException(failure)); }
         return terminateHome(store,() -> flush(server),expected);
+    }
+    /**
+     * T5-2 收窄（controller C3）：外部 caller 不能自宣 HOME 列已完成。未選定的 RETURNING 只經 {@link #finishHomeReturn}（要求 HOME checkpoint 的 proof），
+     * 已結案列只經 {@link #finishHomeClose}；這個入口一律拒絕、不寫入。保留簽章只為相容既有 testmod 的負向斷言。
+     */
+    public TerminalResult terminateHome(MinecraftServer server,HomeSessionRecord expected) {
+        requireServerThread(server);
+        return TerminalResult.of(TerminalResult.Status.REJECTED,new IllegalStateException("HOME 列只經 finishHomeReturn 或 finishHomeClose 移除"));
     }
     TerminalResult terminateHome(HomeReceiptStore store,Runnable flush,HomeSessionRecord expected) {
         requireMutationThread(); requireHealthy(); var sid=expected.sessionUuid();

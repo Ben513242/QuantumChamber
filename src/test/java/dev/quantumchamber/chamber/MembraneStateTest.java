@@ -604,7 +604,8 @@ class MembraneStateTest {
                 unexpected.computeIfAbsent(relative, ignored -> new ArrayList<>()).add(line + ":" + reference.getValue());
             }
         }
-        assertEquals(Map.of(), unexpected, "直接寫 OPEN／MEMBRANE 的位置必須改用 QuantumBulkheadBlock.withOpen／withDoor");
+        assertEquals(Map.of(), unexpected, "直接寫 OPEN／MEMBRANE 的位置必須改用 QuantumBulkheadBlock.withOpen／withDoor；"
+                + "HOME_MARKER 只准 CorridorGeometry 的 Builder 對預設狀態寫入（withOpen／withDoor 不能設標記）");
         assertEquals(Map.of("src/main/java/dev/quantumchamber/corridor/SessionEntranceAllocator.java", 1), defaultStateOpenWrites,
                 "只有入口門從預設狀態（membrane=none）直接寫 OPEN");
         assertEquals(Map.of("src/main/java/dev/quantumchamber/corridor/CorridorGeometry.java", 1), defaultStateHomeMarkerWrites,

@@ -65,7 +65,12 @@ public final class M7CapacityFixture {
         var first=initial.participants().getFirst();
         var done=new HomeSessionRecord(initial.sessionUuid(),initial.chamberUuid(),initial.rootAnchor(),initial.entryEndpoint(),
                 List.of(person(first.playerUuid(),first.quantumStateSnapshot(),true)),initial.spaceLeases(),SessionState.RETURNING,initial.home());
+        // T5-2 起 public terminateHome 一律拒絕（未選定的返還只經走廊 owner 的 finishHomeReturn proof）。這列是沒有真 B、沒有走廊 space 的容量壓力列，
+        // 由同 package 的 checked 移除本體收掉（與 JUnit 用的同一個本體），不經 HOME checkpoint。
+        HomeReceiptStore store;
+        try { store=new HomeReceiptStore(server.getSavePath(net.minecraft.util.WorldSavePath.ROOT)); }
+        catch(IOException failure) { throw new UncheckedIOException(failure); }
         if(!journal.commitHomeRestore(server,initial,returning).committed() || !journal.commitHomeRollForward(server,returning,done).committed()
-                || !journal.terminateHome(server,done).removed()) throw new IllegalStateException("測試 HOME 空間未釋出");
+                || !journal.terminateHome(store,() -> journal.flush(server),done).removed()) throw new IllegalStateException("測試 HOME 空間未釋出");
     }
 }

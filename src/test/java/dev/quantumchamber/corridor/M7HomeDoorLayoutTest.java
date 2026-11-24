@@ -96,11 +96,8 @@ class M7HomeDoorLayoutTest {
             }
             assertTrue(disjoint(doors, entranceDoor), facing + "：HOME∩入口門=0");
             assertTrue(disjoint(doors, entranceBox(view)), facing + "：HOME 與入口 overlay 的 343 格零交集");
-            // 鏡像 CorridorPageManager.commitInitial 的連接開口（Space.overlay，lateral 的入口 x=0、6 牆）；HOME Space 的接線屬 T5-2。
-            var opening = new HashSet<BlockPos>();
-            var frame = CorridorGeometry.entrance(view, LATERAL);
-            for (int y = 1; y <= 5; y++) for (int n = 1; n <= 5; n++) for (int x : new int[] {0, 6}) opening.add(ChamberSpaceCoordinates.block(frame, x, y, n));
-            assertTrue(disjoint(doors, opening), facing + "：HOME 與入口連接開口零交集");
+            // Space.overlay（commitInitial 排入的連接開口）與 HOME 門零交集改由真 HOME Space 驗：M7HomeCorridorGameTests
+            // .home_entry_commits_superposition_with_entry_b 在 overlay 寫完後讀世界（T5-1 審查 M-3：鏡像同一公式沒有獨立覆蓋力，已移除）。
         }
     }
 

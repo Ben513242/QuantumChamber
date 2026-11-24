@@ -21,13 +21,46 @@ import net.minecraft.util.math.*;
 public final class SuperpositionSessionManager implements ChamberSessionGateway {
     private static boolean initialized;
     private static final ChunkTicketType<UUID> SOURCE_TICKET=ChunkTicketType.create("quantumchamber_source",Comparator.comparing(UUID::toString));
-    sealed interface Owner permits SuperpositionSession, Provisional {}
+    sealed interface Owner permits SuperpositionSession, Provisional, HomeRuntime {}
     private static final class Provisional implements Owner {
         final UUID sid;
         final int claimedAt;
         boolean valid = true;
         boolean warned;
+        /** M7 HOME（T5-2）：等待 A 的 START_CHECK 票 FULL 的入場；null 表示一般暫占或檢查已用掉。 */
+        HomeStart home;
         Provisional(UUID sid,int claimedAt) { this.sid = sid; this.claimedAt=claimedAt; }
+    }
+    /** startHome 受理後、A 的 START_CHECK FULL 之前保留的入場請求（只在本 server instance、記憶體中）。 */
+    private record HomeStart(ServerWorld world,ChamberControllerBlockEntity controller,HomeSessionRecord.EntryEndpoint endpoint,
+            ChamberOriginAuthority root,List<UUID> requested,dev.quantumchamber.collapse.HomeRootTickets.Lease lease) {}
+    /** B 的資格與投影權威都已核對：Entry 是 exact B，Root 是同一個 Chamber 的 canonical 主世界 ORIGIN。 */
+    private record HomeEntryCheck(HomeSessionRecord.EntryEndpoint endpoint,ChamberOriginAuthority root) {}
+    /**
+     * M7 HOME 的 runtime 入場交易（T5-2，比照 {@link SuperpositionSession}）：恢復權威仍在 checked journal。來源是 exact B，所以與 legacy runtime 分開型別，
+     * legacy 的 {@link #runtime}／{@link #activeSessions} 看不到它。
+     */
+    static final class HomeRuntime implements Owner {
+        final ServerWorld entryWorld;
+        final ChamberControllerBlockEntity controller;
+        final ChamberFrame frame;
+        final QuantumEffectTransaction effects;
+        final CorridorPageManager.PreparedMappings prepared;
+        final HomeSessionRecord initial;
+        SessionState state=SessionState.ARMING;
+        /** 本 session 已嘗試原生移動的參與者；ARMING rollback 只拉回這些人或目前真的在走廊世界的人。 */
+        final Set<UUID> moveAttempted=new HashSet<>();
+        HomeRuntime(ServerWorld entryWorld,ChamberControllerBlockEntity controller,ChamberFrame frame,QuantumEffectTransaction effects,
+                CorridorPageManager.PreparedMappings prepared,HomeSessionRecord initial) {
+            this.entryWorld=entryWorld; this.controller=controller; this.frame=frame; this.effects=effects; this.prepared=prepared; this.initial=initial;
+        }
+    }
+    private static UUID ownerSid(Owner owner) {
+        return switch(owner) {
+            case Provisional provisional -> provisional.sid;
+            case SuperpositionSession runtime -> runtime.initial.sessionUuid();
+            case HomeRuntime home -> home.initial.sessionUuid();
+        };
     }
     private final Map<UUID,Owner> sessions=new LinkedHashMap<>();
 
@@ -68,8 +101,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         Objects.requireNonNull(chamber); Objects.requireNonNull(sid);
         if (globalChamberBusy(owner,chamber)) return false;
         var pages=CorridorPageManager.forServer(owner);
-        if (pages.operationInProgress(sid) || pages.hasReservation(sid) || sessions.values().stream().anyMatch(value ->
-                value instanceof Provisional p ? p.sid.equals(sid) : ((SuperpositionSession)value).initial.sessionUuid().equals(sid))) return false;
+        if (pages.operationInProgress(sid) || pages.hasReservation(sid) || sessions.values().stream().anyMatch(value -> ownerSid(value).equals(sid))) return false;
         if (journal.allSessions().containsKey(sid) || journal.allFlushedSessions().containsKey(sid)
                 || journal.pendingSessions().containsKey(sid) || journal.quarantinedSessions().contains(sid)) return false;
         boolean claimed=pages.exclusiveOperation(sid,() -> sessions.putIfAbsent(chamber,new Provisional(sid,owner.getTicks()))==null);
@@ -138,6 +170,17 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     private final Map<UUID,String> abandonPending=new LinkedHashMap<>();
     // cancelPrepared 已成功、retire 尚未成功的初始 reservation；重試時只做 retire（cancelPrepared 不可重做）。
     private final Map<UUID,CorridorPageManager.RetiredMappings> retiredInitial=new HashMap<>();
+    // ---- M7 HOME（T5-2） ----
+    /** HOME 的 Entry=B 來源票（SID → B 的世界與 Controller chunk）；與 legacy 的 {@link #tickets} 分開（legacy 的 SourceTicket 綁舊列）。 */
+    private final Map<UUID,HomeTicket> homeTickets=new LinkedHashMap<>();
+    private record HomeTicket(ServerWorld world,ChunkPos chunk) {}
+    /** 初始 ARMING 沒有 checked 的 HOME 入場：暫占記號與 reservation 保留到 journal 確認沒有殘留（spec §6 :184）。 */
+    private final Map<UUID,HomeAbandon> homeAbandons=new LinkedHashMap<>();
+    private record HomeAbandon(UUID chamber,dev.quantumchamber.collapse.CollapseBackoff backoff) {}
+    /** 要轉 RETURNING 但還沒 checked 的 HOME 列：per-SID 退避重試（B 的 Controller 沒有協調器會再呼叫 returnToOrigin）。 */
+    private final Map<UUID,dev.quantumchamber.collapse.CollapseBackoff> homeReturnRetries=new HashMap<>();
+    /** HOME 的 WARN 去重鍵（SID → 最近一次的原因）。 */
+    private final Map<UUID,String> homeWarnings=new HashMap<>();
 
     public static void initialize() {
         if(initialized) return;
@@ -280,11 +323,422 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         runtime.controller.requireCandidateRetryLow();
     }
     /**
-     * M7 HOME 入場：從同艙已確認的 COMPLETE 投影 B 啟動回程走廊（plan Task 5 :308，T7 才接正式入口）。
-     * <p>T5-2 RED 腳手架：尚未實作，一律拒絕；production 行為不變。
+     * M7 HOME 入場：從同艙已確認的 COMPLETE 投影 B 啟動回程走廊（plan Task 5 :308、:315、:317；spec §4.1、§6、§7）。T7 才接正式入口，T5～T6 只由 testmod 呼叫。
+     * <ol>
+     * <li>任何 claim、ticket、reservation 或 ARMING 之前依序：B 的 latch（v1.6 A）→ 平台的原生玩家 checkpoint 能力（{@link PlayerCheckpointStore#unsupportedReason}）→
+     *     B 的資格與投影權威（exact live B、COMPLETE projection、結構、封艙、供電、cohort、跨 session 玩家）——controller C11。</li>
+     * <li>同一個 server-thread 步驟暫占（{@link #claimProvisional}，從這一刻起 A 也 busy），再取得 A 的 START_CHECK 票（≤200 ticks，{@code HomeRootTickets}）。</li>
+     * <li>回 {@link StartResult#STAGING}：受理、等待 A FULL（controller C5）。之後由 {@link #tick} 在票 FULL 的 tick 續行（{@link #continueHomeStarts}）；
+     *     票期到、{@code /reload}、停服都由暫占與票的既有 owner 釋放，不寫 ARMING。</li>
+     * </ol>
+     * 回 {@link StartResult#REJECTED} 時沒有任何副作用（沒有暫占、票、reservation、journal 或玩家移動）。
      */
     public StartResult startHome(ServerWorld entry,ChamberControllerBlockEntity controller,List<UUID> requested) {
-        return StartResult.REJECTED;
+        var owner=entry.getServer();
+        if(owner==null || owner!=server || !owner.isOnThread() || requested.isEmpty() || requested.size()>25
+                || new HashSet<>(requested).size()!=requested.size()) return StartResult.REJECTED;
+        // C11（plan :317、:547）：latch → 平台 checkpoint 能力 → 暫占；三者都在任何 claim、ticket、reservation 或 ARMING 之前。
+        if(controller.rearmRequiresPlayerClose()) return StartResult.REJECTED;
+        if(!checkpointCapable()) return StartResult.REJECTED;
+        var check=homeEntryCheck(entry,controller,requested);
+        if(check==null) return StartResult.REJECTED;
+        var chamber=check.endpoint().chamberUuid();
+        var sid=UUID.randomUUID();
+        if(!claimProvisional(owner,chamber,sid)) return StartResult.REJECTED;
+        try {
+            var lease=dev.quantumchamber.collapse.HomeRootTickets.acquire(owner,sid,check.root(),dev.quantumchamber.collapse.HomeRootTickets.Purpose.START_CHECK);
+            if(lease.isEmpty()) { cancelProvisional(owner,chamber,sid); return StartResult.REJECTED; }
+            ((Provisional)sessions.get(chamber)).home=new HomeStart(entry,controller,check.endpoint(),check.root(),List.copyOf(requested),lease.get());
+            return StartResult.STAGING;
+        } catch(RuntimeException failure) {
+            try { cancelProvisional(owner,chamber,sid); } catch(RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("HOME 入場的 START_CHECK 未能開始，拒絕：chamber={} session={}",chamber,sid,failure);
+            return StartResult.REJECTED;
+        }
+    }
+    /**
+     * B 的資格與投影權威（spec §4.1 第 1～3 步；不含 latch 與平台檢查，那兩項只在 {@link #startHome} 的固定順序裡）。不合格或讀不到時回 null，沒有副作用。
+     * 資格預覽用 {@link ChamberActivationService#evaluateEntryReadiness}（controller C2：既有的 {@code evaluateReadiness} 不改、仍拒絕 PROJECTION）。
+     */
+    private HomeEntryCheck homeEntryCheck(ServerWorld entry,ChamberControllerBlockEntity controller,List<UUID> requested) {
+        try {
+            journal.requireHealthy();
+            if(controller.activationBlocked()) return null;
+            var endpoint=dev.quantumchamber.collapse.HomeEndpointAuthority.resolveEntry(entry,controller).orElse(null);
+            if(endpoint==null || exactEntry(endpoint)!=entry) return null;
+            var preview=new ChamberActivationService().evaluateEntryReadiness(entry,controller);
+            if(!preview.accepted() || !new HashSet<>(preview.participantUuids()).equals(new HashSet<>(requested))
+                    || !ChamberActivationService.entryPowered(entry,controller.getPos())) return null;
+            if(!journal.participantsAvailable(requested)) return null;
+            var root=new ChamberOriginAuthority(endpoint.chamberUuid(),net.minecraft.world.World.OVERWORLD.getValue(),
+                    dev.quantumchamber.universe.DimensionRole.OVERWORLD,endpoint.controllerPos(),endpoint.facing(),ChamberInstanceKind.ORIGIN);
+            return new HomeEntryCheck(endpoint,root);
+        } catch(RuntimeException unreadable) { return null; }
+    }
+    /** exact live B：Entry 的 world key 存在，而且是該宇宙目前的 active world；否則 null。 */
+    private ServerWorld exactEntry(HomeSessionRecord.EntryEndpoint endpoint) {
+        var world=server.getWorld(RegistryKey.of(RegistryKeys.WORLD,endpoint.worldKey()));
+        return world!=null && dev.quantumchamber.universe.UniverseLifecycleService.resolveActive(server,endpoint.universeId()).orElse(null)==world ? world : null;
+    }
+    /**
+     * START_CHECK 的續行（controller C5）：在 {@link #tick} 裡、暫占的 200 tick（與票期同一個起點）之內，A 的票 FULL 的那個 tick 進該 SID 的 operation guard，
+     * 核 A（{@code checkRoot}，含即時電位）並重驗 B、cohort、藥效、電位、latch 與平台，之後凍結快照、租走廊、checked ARMING（{@link #admitHomeStart}）；
+     * 成功才取得 Entry=B 來源票、排入 HOME 幾何。檢查結果只用一次；不合格時只釋放暫占與票。
+     */
+    private void continueHomeStarts(MinecraftServer owner) {
+        var pages=CorridorPageManager.forServer(owner);
+        for(var entry : List.copyOf(sessions.entrySet())) {
+            if(!(entry.getValue() instanceof Provisional p) || !p.valid || p.home==null || pages.operationInProgress(p.sid)) continue;
+            var start=p.home;
+            var chamber=entry.getKey();
+            boolean full;
+            try { full=start.lease().full(); }
+            catch(RuntimeException failure) { p.home=null; rejectHomeStart(owner,chamber,p.sid,"A 的 START_CHECK 票讀取失敗",failure); continue; }
+            if(!full || !p.valid) continue;
+            p.home=null;
+            HomeRuntime admitted;
+            try { admitted=pages.exclusiveOperation(p.sid,() -> admitHomeStart(owner,chamber,p,start)); }
+            catch(RuntimeException failure) { rejectHomeStart(owner,chamber,p.sid,"HOME 入場前的重驗或 checked ARMING 丟出例外",failure); continue; }
+            if(admitted==null) continue;
+            try { homeSourceTicket(admitted); pages.prepareHome(admitted.prepared); }
+            catch(RuntimeException failure) { failHome(admitted,failure); }
+        }
+    }
+    private void rejectHomeStart(MinecraftServer owner,UUID chamber,UUID sid,String reason,RuntimeException failure) {
+        org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("{}，拒絕 HOME 入場：chamber={} session={}",reason,chamber,sid,failure);
+        try { cancelProvisional(owner,chamber,sid); }
+        catch(RuntimeException cleanup) { org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("HOME 入場的暫占取消待重試：session={}",sid,cleanup); }
+    }
+    /**
+     * spec §4.1 第 5～7 步，在該 SID 的 operation guard 內：A 的檢查（enabled、身分、結構、即時電位）→ 重驗 → 凍結快照與走廊 reservation → checked ARMING
+     * （{@code admitHome}）。成功時以 runtime 取代暫占；不合格時只釋放暫占與票（沒有 reservation）；ARMING 沒有 checked 時保留暫占記號與 reservation，
+     * 交 {@link #finishHomeAbandoned} 等 journal 確認沒有殘留（spec §6 :184）。
+     */
+    private HomeRuntime admitHomeStart(MinecraftServer owner,UUID chamber,Provisional p,HomeStart start) {
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        var sid=p.sid;
+        if(!ownsProvisional(owner,chamber,sid)) return null;
+        var root=dev.quantumchamber.collapse.HomeEndpointAuthority.checkRoot(owner,start.root(),true);
+        if(root!=dev.quantumchamber.collapse.HomeEndpointAuthority.RootStatus.READY) {
+            logger.info("HOME 入場的原艙檢查未通過（{}），拒絕啟動：chamber={} session={}",root,chamber,sid);
+            cancelProvisional(owner,chamber,sid); return null;
+        }
+        var check=start.controller().rearmRequiresPlayerClose() ? null : homeEntryCheck(start.world(),start.controller(),start.requested());
+        if(check==null || !check.endpoint().equals(start.endpoint()) || !check.root().equals(start.root()) || !checkpointCapable()) {
+            logger.info("HOME 入場在 A 檢查之後重驗 B／cohort／藥效／電位／平台未通過，拒絕啟動：chamber={} session={}",chamber,sid);
+            cancelProvisional(owner,chamber,sid); return null;
+        }
+        var pages=CorridorPageManager.forServer(owner);
+        QuantumEffectTransaction effects;
+        CorridorPageManager.PreparedMappings prepared;
+        try {
+            effects=new QuantumEffectTransaction(start.requested().stream().map(id -> owner.getPlayerManager().getPlayer(id)).toList());
+            prepared=pages.reserveHomeInitial(sid,start.root(),start.endpoint(),start.world(),Set.of(0L));
+        } catch(IllegalArgumentException | IllegalStateException refused) {
+            logger.info("HOME 入場的快照或走廊 reservation 被拒，拒絕啟動：chamber={} session={}：{}",chamber,sid,refused.getMessage());
+            cancelProvisional(owner,chamber,sid); return null;
+        }
+        HomeSessionRecord arming;
+        try {
+            arming=new HomeSessionRecord(sid,chamber,start.root(),start.endpoint(),effects.snapshots(),prepared.target().instances().stream()
+                    .map(view -> new SessionRecoveryRecord.SpaceLease(view.ref().slotId(),view.bounds())).toList(),SessionState.ARMING,UNSELECTED);
+        } catch(IllegalArgumentException invalid) {
+            pages.abandonHomeReservation(sid); cancelProvisional(owner,chamber,sid);
+            logger.warn("HOME 入場的 ARMING 列不合法，拒絕啟動：chamber={} session={}",chamber,sid,invalid);
+            return null;
+        }
+        var admitted=journal.admitHome(owner,arming);
+        if(!admitted.committed()) {
+            logger.warn("HOME 入場的 ARMING 未能 checked 落盤（{}），保留暫占與 reservation，未確認的寫入收斂後才解除：chamber={} session={}",
+                    admitted.status(),chamber,sid,admitted.failure().orElse(null));
+            // 釋放 START_CHECK 票；reservation 還在，所以暫占記號保留（鎖）。寫出結果不明（pending 保留這次嘗試）時，第一次核對排在退避之後，
+            // 不在同一個 tick 立刻重寫；沒有任何殘留（寫出前就被拒）時 finishHomeAbandoned 立即解除。
+            cancelProvisional(owner,chamber,sid);
+            var backoff=new dev.quantumchamber.collapse.CollapseBackoff();
+            backoff.failed(owner.getTicks());
+            homeAbandons.put(sid,new HomeAbandon(chamber,backoff));
+            return null;
+        }
+        if(!finishProvisional(owner,chamber,sid)) { p.valid=false; dev.quantumchamber.collapse.HomeRootTickets.release(owner,sid); }
+        var runtime=new HomeRuntime(start.world(),start.controller(),new ChamberFrame(start.endpoint().controllerPos(),start.endpoint().facing()),
+                effects,prepared,arming);
+        sessions.put(chamber,runtime);
+        logger.info("HOME 入場已 checked ARMING（Entry=B）：chamber={} session={} participants={}",chamber,sid,arming.participants().size());
+        return runtime;
+    }
+    private static final HomeSessionRecord.Home UNSELECTED=new HomeSessionRecord.Home(new HomeSessionRecord.Unselected(),-1,-1,-1,List.of(),List.of(),
+            Optional.empty(),-1,new HomeSessionRecord.None(),Optional.empty());
+    /**
+     * 初始 ARMING 沒有 checked 的 HOME 入場：journal 的 current、flushed、pending 與隔離都已沒有這個 SID（未確認的嘗試已收斂）之後，才歸還走廊 reservation 並解除暫占。
+     * 還有殘留而 current 不帶這列時（寫出結果不明，pending 保留這次嘗試），依 per-SID 退避（200→12000 ticks）做 checked 寫出：先核對磁碟上的權威，再覆寫可能已落地、
+     * 未確認的 ARMING；隔離的列交 recovery 收斂。
+     */
+    private void finishHomeAbandoned(MinecraftServer owner) {
+        if(homeAbandons.isEmpty()) return;
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        var pages=CorridorPageManager.forServer(owner);
+        for(var entry : List.copyOf(homeAbandons.entrySet())) {
+            var sid=entry.getKey(); var abandon=entry.getValue();
+            if(homeResidue(sid) && !journal.allSessions().containsKey(sid) && !journal.quarantinedSessions().contains(sid)
+                    && abandon.backoff().ready(owner.getTicks())) {
+                try { journal.flush(owner); abandon.backoff().reset(); }
+                catch(RuntimeException failure) {
+                    abandon.backoff().failed(owner.getTicks());
+                    warnHome(sid,"HOME 入場未確認的 ARMING 尚未收斂（checked 寫出失敗），保留暫占與 reservation，退避後重試",failure);
+                }
+            }
+            if(homeResidue(sid) || recovery.convergencePending(sid)) continue;
+            try { pages.abandonHomeReservation(sid); }
+            catch(RuntimeException failure) { warnHome(sid,"HOME 入場的 reservation 尚未歸還，下一 tick 重試",failure); continue; }
+            homeAbandons.remove(sid); homeWarnings.remove(sid);
+            try { cancelProvisional(owner,abandon.chamber(),sid); }
+            catch(RuntimeException failure) { logger.warn("HOME 入場的暫占取消待重試：session={}",sid,failure); }
+            logger.info("HOME 入場未確認的 ARMING 已收斂、沒有殘留，解除 reservation 與暫占：chamber={} session={}",abandon.chamber(),sid);
+        }
+    }
+    private boolean homeResidue(UUID sid) {
+        return journal.allSessions().containsKey(sid) || journal.allFlushedSessions().containsKey(sid)
+                || journal.pendingSessions().containsKey(sid) || journal.quarantinedSessions().contains(sid);
+    }
+    private List<HomeRuntime> homeRuntimes() {
+        return sessions.values().stream().filter(HomeRuntime.class::isInstance).map(HomeRuntime.class::cast).toList();
+    }
+    /**
+     * HOME runtime 的每 tick（比照 legacy 迴圈）：ARMING 在幾何就緒時入場，資格失效即整組返還；SUPERPOSITION 在 B 身分或凍結 cohort 藥效失效時整組返還
+     * （牛奶、到期、離線，spec §2「取消與藥效」）。選定之後屬 T5-4／T6，這裡只同步狀態。
+     */
+    private void tickHomeRuntimes(MinecraftServer owner) {
+        var pages=CorridorPageManager.forServer(owner);
+        for(var runtime : homeRuntimes()) {
+            var sid=runtime.initial.sessionUuid();
+            if(pages.operationInProgress(sid)) continue;
+            var durable=journal.allFlushedSessions().get(sid) instanceof HomeSessionRecord home ? home : null;
+            if(durable!=null && durable.home().selection() instanceof HomeSessionRecord.Selected) { runtime.state=durable.state(); continue; }
+            if(durable!=null && durable.state()==SessionState.RETURNING) runtime.state=SessionState.RETURNING;
+            if(runtime.state==SessionState.RETURNING) { retryHomeReturning(owner,runtime,durable); continue; }
+            if(pages.homeFailed(sid)) { failHome(runtime,new IllegalStateException("HOME 走廊 space 已失敗")); continue; }
+            if(runtime.state==SessionState.SUPERPOSITION) {
+                try {
+                    if(!entryAuthority(runtime) || !pages.homeCohortHasBuff(sid))
+                        throw homeBuffLapsed(runtime) ? new CohortBuffLapsed("凍結 cohort 有成員的 QuantumState 已到期或被解除")
+                                : new IllegalStateException("活動中的 B 身分或完整 cohort 效果失效");
+                } catch(RuntimeException failure) { failHome(runtime,failure); }
+                continue;
+            }
+            if(runtime.state!=SessionState.ARMING) continue;
+            try {
+                if(!homeEligible(runtime)) throw homeBuffLapsed(runtime) ? new CohortBuffLapsed("準備期間凍結 cohort 有成員的 QuantumState 已到期或被解除")
+                        : new IllegalStateException("準備期間 B 身分／cohort／全員資格改變");
+                if(!pages.homeReady(runtime.prepared)) continue;
+                enterHome(runtime,pages);
+            } catch(IOException | RuntimeException failure) { failHome(runtime,failure); }
+        }
+    }
+    /** RETURNING 的列已 checked 移除、走廊已記完成收據：消費收據（X5，completedReleases 上限 64）、釋放 runtime 與 Entry=B 來源票。 */
+    private void completeHomeReturns(MinecraftServer owner) {
+        var pages=CorridorPageManager.forServer(owner);
+        for(var runtime : homeRuntimes()) {
+            var sid=runtime.initial.sessionUuid();
+            if(runtime.state!=SessionState.RETURNING || !pages.releaseComplete(sid) || journal.allSessions().containsKey(sid)
+                    || journal.allFlushedSessions().containsKey(sid)) continue;
+            pages.acknowledgeRelease(sid);
+            releaseHomeRuntime(runtime);
+            homeReturnRetries.remove(sid); homeWarnings.remove(sid);
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").info("HOME 未選定的整組返回 B 完成，解除占用：chamber={} session={}",runtime.initial.chamberUuid(),sid);
+        }
+    }
+    private void releaseHomeRuntime(HomeRuntime runtime) {
+        sessions.remove(runtime.initial.chamberUuid(),runtime);
+        var ticket=homeTickets.remove(runtime.initial.sessionUuid());
+        if(ticket!=null) ticket.world().getChunkManager().removeTicket(SOURCE_TICKET,ticket.chunk(),2,runtime.initial.sessionUuid());
+    }
+    /** Entry=B 的來源票（spec §7 :203：B 的來源票由原 owner 持有；比照 legacy 的 {@code sourceTicket}，票在 B 的 Controller chunk）。 */
+    private void homeSourceTicket(HomeRuntime runtime) {
+        var sid=runtime.initial.sessionUuid();
+        if(homeTickets.containsKey(sid)) return;
+        var chunk=new ChunkPos(runtime.frame.controllerPos());
+        runtime.entryWorld.getChunkManager().addTicket(SOURCE_TICKET,chunk,2,sid);
+        homeTickets.put(sid,new HomeTicket(runtime.entryWorld,chunk));
+    }
+    /** 只核對凍結的 Entry 權威（exact live B、Controller 實例、PROJECTION、投影端點 VALID），不把供電、cohort 或藥效當成返還目的的身分。 */
+    private boolean entryAuthority(HomeRuntime runtime) {
+        var endpoint=runtime.initial.entryEndpoint();
+        var controller=runtime.controller;
+        var pos=endpoint.controllerPos();
+        if(exactEntry(endpoint)!=runtime.entryWorld || controller.isRemoved() || controller.getWorld()!=runtime.entryWorld
+                || !controller.getPos().equals(pos) || controller.instanceKind()!=ChamberInstanceKind.PROJECTION) return false;
+        var chunk=runtime.entryWorld.getChunkManager().getWorldChunk(pos.getX()>>4,pos.getZ()>>4);
+        if(chunk==null || chunk.getBlockEntity(pos)!=controller) return false;
+        var block=chunk.getBlockState(pos);
+        if(!block.isOf(dev.quantumchamber.registry.ModBlocks.CHAMBER_CONTROLLER) || !block.equals(controller.getCachedState())
+                || block.get(ChamberControllerBlock.FACING)!=endpoint.facing()) return false;
+        try { return dev.quantumchamber.collapse.HomeEndpointAuthority.inspectEntry(server,endpoint)==dev.quantumchamber.collapse.HomeEndpointAuthority.EntryStatus.VALID; }
+        catch(RuntimeException unreadable) { return false; }
+    }
+    private boolean homeEligible(HomeRuntime runtime) {
+        if(!entryAuthority(runtime) || runtime.controller.activationBlocked()
+                || !ChamberActivationService.entryPowered(runtime.entryWorld,runtime.frame.controllerPos())) return false;
+        var preview=new ChamberActivationService().evaluateEntryReadiness(runtime.entryWorld,runtime.controller);
+        return preview.accepted() && new HashSet<>(preview.participantUuids()).equals(homeIds(runtime.initial))
+                && runtime.initial.participants().stream().allMatch(person -> {
+                    var player=server.getPlayerManager().getPlayer(person.playerUuid());
+                    return player!=null && player.getServerWorld()==runtime.entryWorld && !player.isSpectator()
+                            && player.hasStatusEffect(ModEffects.QUANTUM_STATE);
+                });
+    }
+    /** B 權威仍有效，且至少一位在線、存活的凍結參與者已沒有 QuantumState（自然到期或被牛奶解除）。 */
+    private boolean homeBuffLapsed(HomeRuntime runtime) {
+        return entryAuthority(runtime) && runtime.initial.participants().stream().anyMatch(person -> {
+            var player=server.getPlayerManager().getPlayer(person.playerUuid());
+            return player!=null && !player.isRemoved() && player.isAlive() && !player.hasStatusEffect(ModEffects.QUANTUM_STATE);
+        });
+    }
+    /**
+     * HOME 入場（plan :317）：checked ARMING → 逐人原生移動 → 重驗位置與 cohort 效果 → 逐人 {@link PlayerCheckpointStore#saveAndVerify} → 重驗位置、exact B 與效果 →
+     * checked SUPERPOSITION（restore CAS，operation guard 內）→ 發布 mapping（{@code commitHomeInitial}）。任一步失敗都交 {@link #failHome}：依 ARMING 的進度把已移動的人
+     * 原生移回 exact B 的原位，再 checked RETURNING。
+     */
+    private void enterHome(HomeRuntime runtime,CorridorPageManager pages) throws IOException {
+        var target=server.getWorld(SuperpositionWorld.KEY);
+        var sid=runtime.initial.sessionUuid();
+        var entrance=pages.entrance(sid);
+        var view=runtime.prepared.target().instances().getFirst();
+        var poses=new LinkedHashMap<UUID,CorridorPageManager.PhysicalPose>();
+        var basis=new CorridorBasis(runtime.frame.outwardFacing(),SessionSemantics.LATERAL_BUFF_MAINTAINED);
+        for(var person : runtime.initial.participants()) {
+            var local=basis.toCorridorPosition(ChamberSpaceCoordinates.localPosition(runtime.frame,person.sourcePosition()));
+            var logical=new CorridorPageManager.LogicalPose(local.x,local.y,local.z,
+                    basis.toCorridorVector(ChamberSpaceCoordinates.localVector(runtime.frame,person.sourceVelocity())),
+                    basis.toCorridorYaw(localYaw(runtime.frame,person.yaw())),person.pitch());
+            var pose=pages.toPhysical(view.ref(),logical);
+            var player=server.getPlayerManager().getPlayer(person.playerUuid());
+            if(player==null || !ChamberOccupantService.contains(ChamberGeometry.interiorBox(entrance),
+                    player.getBoundingBox().offset(pose.position().subtract(player.getPos())))) throw new IllegalStateException("HOME 入場完整 bbox 超出入口");
+            poses.put(person.playerUuid(),pose);
+        }
+        for(var move : poses.entrySet()) {
+            if(!entryAuthority(runtime)) throw new IllegalStateException("HOME 入場移動前 B 身分失效");
+            runtime.effects.verifyCurrent(server);
+            var pose=move.getValue();
+            runtime.moveAttempted.add(move.getKey());
+            if(!transfers.move(server.getPlayerManager().getPlayer(move.getKey()),target,pose.position(),pose.velocity(),pose.yaw(),pose.pitch()))
+                throw new IllegalStateException("HOME 部分移動失敗，尚未提交 cohort");
+        }
+        checkHomeTargets(runtime,target,entrance,poses);
+        runtime.effects.verifyCurrent(server);
+        for(var person : runtime.initial.participants()) PlayerCheckpointStore.saveAndVerify(server,
+                server.getPlayerManager().getPlayer(person.playerUuid()),Optional.empty());
+        checkHomeTargets(runtime,target,entrance,poses);
+        if(!entryAuthority(runtime)) throw new IllegalStateException("HOME 發布前 B 身分失效");
+        runtime.effects.verifyCurrent(server);
+        var initial=runtime.initial;
+        var active=new HomeSessionRecord(sid,initial.chamberUuid(),initial.rootAnchor(),initial.entryEndpoint(),initial.participants(),initial.spaceLeases(),
+                SessionState.SUPERPOSITION,initial.home());
+        pages.exclusiveOperation(sid,() -> {
+            var result=journal.commitHomeRestore(server,initial,active);
+            if(!result.committed()) throw new IllegalStateException("HOME checked SUPERPOSITION 尚未確認："+result.status(),result.failure().orElse(null));
+            return null;
+        });
+        pages.commitHomeInitial(sid,homeIds(initial));
+        runtime.state=SessionState.SUPERPOSITION;
+    }
+    private void checkHomeTargets(HomeRuntime runtime,ServerWorld target,ChamberFrame entrance,Map<UUID,CorridorPageManager.PhysicalPose> poses) {
+        for(var person : runtime.initial.participants()) {
+            var player=server.getPlayerManager().getPlayer(person.playerUuid()); var pose=poses.get(person.playerUuid());
+            if(player==null || player.getServerWorld()!=target || target.getEntity(person.playerUuid())!=player || player.isSpectator()
+                    || player.getPos().squaredDistanceTo(pose.position())>=1e-12 || player.getVelocity().squaredDistanceTo(pose.velocity())>=1e-12
+                    || Math.abs(MathHelper.wrapDegrees(player.getYaw()-pose.yaw()))>=1e-4 || Math.abs(player.getPitch()-pose.pitch())>=1e-4
+                    || !ChamberOccupantService.contains(ChamberGeometry.interiorBox(entrance),player.getBoundingBox()))
+                throw new IllegalStateException("HOME 全群 actual world／pose／bbox 尚未確認");
+        }
+    }
+    /**
+     * HOME 入場或走廊的失敗（比照 legacy {@code fail}）：ARMING（或從未 checked）時把本 session 移動過、或目前在走廊的參與者原生移回 exact B 的快照原位
+     * （last_checkpoint_fails_after_native_moves）；之後 checked RETURNING，只回 B。HOME 的 RestoreEntryEffectOnReturn 固定 0，不還原入場藥效。
+     */
+    private void failHome(HomeRuntime runtime,Exception failure) {
+        var sid=runtime.initial.sessionUuid();
+        var durable=journal.allFlushedSessions().get(sid) instanceof HomeSessionRecord home ? home : null;
+        boolean rollback=durable==null || durable.state()==SessionState.ARMING;
+        runtime.state=SessionState.RETURNING;
+        if(rollback && entryAuthority(runtime)) {
+            var corridor=server.getWorld(SuperpositionWorld.KEY);
+            for(var person : runtime.initial.participants()) {
+                var player=server.getPlayerManager().getPlayer(person.playerUuid());
+                if(player!=null && !runtime.moveAttempted.contains(person.playerUuid()) && player.getServerWorld()!=corridor) continue;
+                if(player!=null && (!transfers.move(player,runtime.entryWorld,person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch())
+                        || !ChamberOccupantService.contains(ChamberGeometry.interiorBox(runtime.frame),player.getBoundingBox())))
+                    failure.addSuppressed(new IllegalStateException("rollback pose 尚未確認："+person.playerUuid()));
+            }
+        } else if(rollback) {
+            failure.addSuppressed(new IllegalStateException("B 權威已失效，禁止向保存 pose 移動；保留 pending"));
+        }
+        try { homeReturning(sid); } catch(RuntimeException persistence) { failure.addSuppressed(persistence); }
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        if(failure instanceof CohortBuffLapsed && failure.getSuppressed().length==0)
+            logger.info("凍結 cohort 的 QuantumState 已失效，依規則整組返回 B（正常結束，非故障、不退款）：session={}，原因={}",sid,failure.getMessage());
+        else logger.warn("HOME 入場交易保留 RETURNING（返回 B）：session={}",sid,failure);
+    }
+    /** 未選定的 ARMING／SUPERPOSITION 以 checked restore CAS 轉 RETURNING（operation guard 內）；已是 RETURNING、已選定或已移除時不寫。 */
+    private void homeReturning(UUID sid) {
+        var durable=journal.allFlushedSessions().get(sid) instanceof HomeSessionRecord home ? home : null;
+        if(durable==null || durable.state()==SessionState.RETURNING || durable.home().selection() instanceof HomeSessionRecord.Selected) return;
+        if(!journal.recoveryWritesSafe()) throw new IllegalStateException("未 checked authority 尚未確認，不可經返還落盤");
+        var next=new HomeSessionRecord(sid,durable.chamberUuid(),durable.rootAnchor(),durable.entryEndpoint(),durable.participants(),durable.spaceLeases(),
+                SessionState.RETURNING,durable.home());
+        CorridorPageManager.forServer(server).exclusiveOperation(sid,() -> {
+            var result=journal.commitHomeRestore(server,durable,next);
+            if(!result.committed()) throw new IllegalStateException("HOME RETURNING 尚未 checked："+result.status(),result.failure().orElse(null));
+            return null;
+        });
+    }
+    /**
+     * runtime 已要求返還、checked 列卻仍是 ARMING／SUPERPOSITION（上一次寫不出）：依 per-SID 退避重試。B 的 Controller 沒有供電協調器會再呼叫 returnToOrigin，
+     * 所以由這裡重試；有未確認的寫入（pending）時先做一次 checked 寫出讓它收斂。
+     */
+    private void retryHomeReturning(MinecraftServer owner,HomeRuntime runtime,HomeSessionRecord durable) {
+        if(durable==null || durable.state()==SessionState.RETURNING || durable.home().selection() instanceof HomeSessionRecord.Selected) return;
+        var sid=runtime.initial.sessionUuid();
+        var backoff=homeReturnRetries.computeIfAbsent(sid,ignored -> new dev.quantumchamber.collapse.CollapseBackoff());
+        if(!backoff.ready(owner.getTicks())) return;
+        try {
+            if(!journal.pendingSessions().isEmpty()) journal.flush(owner);
+            homeReturning(sid);
+            backoff.reset(); homeWarnings.remove(sid);
+        } catch(RuntimeException failure) {
+            backoff.failed(owner.getTicks());
+            warnHome(sid,"HOME 返還的 RETURNING 尚未 checked，依退避重試",failure);
+        }
+    }
+    private void warnHome(UUID sid,String message,RuntimeException failure) {
+        var key=message+"｜"+FailureText.dedupeKey(failure);
+        if(key.equals(homeWarnings.put(sid,key))) return;
+        org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("{}：session={}：{}",message,sid,FailureText.describe(failure),failure);
+    }
+    /**
+     * C4：未選定的走廊取消沿用 gateway 的 {@link #returnToOrigin}，B（PROJECTION）的 Controller 走這個 HOME 分支：以投影索引辨識 exact B 的 Chamber，
+     * 未選定的 ARMING／SUPERPOSITION checked 轉 RETURNING（只回 B）；回傳是否已沒有這座艙的旅程。已選定的 HOME 列屬 T5-4，這裡不動。
+     */
+    private boolean returnToEntry(ServerWorld world,ChamberControllerBlockEntity controller) {
+        var id=ChamberCollapsePort.projections().entryChamber(world,controller);
+        if(id.isEmpty()) return false;
+        var chamber=id.get();
+        HomeSessionRecord row=null;
+        for(var value : journal.allFlushedSessions().values()) if(value instanceof HomeSessionRecord home && home.chamberUuid().equals(chamber)
+                && home.entryEndpoint().worldKey().equals(world.getRegistryKey().getValue()) && home.entryEndpoint().controllerPos().equals(controller.getPos())) row=home;
+        var runtime=sessions.get(chamber) instanceof HomeRuntime home ? home : null;
+        if(row==null && runtime==null) return !globalChamberBusy(server,chamber);
+        if(row==null || row.home().selection() instanceof HomeSessionRecord.Selected
+                || CorridorPageManager.forServer(server).operationInProgress(row.sessionUuid())) return false;
+        if(row.state()==SessionState.ARMING || row.state()==SessionState.SUPERPOSITION) {
+            try { homeReturning(row.sessionUuid()); }
+            catch(RuntimeException failure) { warnHome(row.sessionUuid(),"HOME 走廊取消的 RETURNING 尚未 checked，稍後重試",failure); }
+            if(runtime!=null) runtime.state=SessionState.RETURNING;
+        }
+        return false;
+    }
+    private static Set<UUID> homeIds(HomeSessionRecord record) {
+        return record.participants().stream().map(SessionRecoveryRecord.Participant::playerUuid).collect(java.util.stream.Collectors.toSet());
     }
     @Override public StartResult start(ServerWorld source,ChamberControllerBlockEntity controller,List<UUID> requested) {
         var owner=source.getServer();
@@ -454,6 +908,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         lastTick=owner.getTicks();
         for (var entry:List.copyOf(sessions.entrySet())) if(entry.getValue() instanceof Provisional p && (!p.valid || owner.getTicks()-p.claimedAt>=200))
             cancelForEvent(owner,entry.getKey(),p);
+        // M7 HOME（T5-2）：START_CHECK 的續行與 HOME runtime；legacy 的迴圈只看 SuperpositionSession。
+        continueHomeStarts(owner);
+        tickHomeRuntimes(owner);
         for(var runtime : activeSessions()) {
             if(CorridorPageManager.forServer(owner).operationInProgress(runtime.initial.sessionUuid())) continue;
             var durable=journal.flushedRecords().get(runtime.initial.sessionUuid());
@@ -485,6 +942,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             } catch(IOException | RuntimeException failure) { fail(runtime,failure); }
         }
         reposition.tick(owner); recovery.tick(owner); finishAbandoned();
+        finishHomeAbandoned(owner); completeHomeReturns(owner);
         // 只有 DORMANT 的 MEASURED 在保留式清理完成後釋放 runtime 與來源 ticket。COLLAPSING 的清理收尾走 CorridorPageManager 延伸後的同一路徑，
         // runtime 與來源 ticket 保留到塌縮流程的終局或進入 SEALED 才釋放（spec §5：releaseAfterTerminal、releaseOnSealed）。
         for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.MEASURED
@@ -601,6 +1059,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     }
     @Override public boolean returnToOrigin(ServerWorld source,ChamberControllerBlockEntity controller) {
         requireServer(source.getServer());
+        // M7 HOME（T5-2，controller C4）：B 的 Controller（PROJECTION）走 HOME 分支；legacy 路徑不變。
+        if(controller.instanceKind()==ChamberInstanceKind.PROJECTION) return returnToEntry(source,controller);
         var runtime=runtime(controller.chamberUuid()); var durable=record(controller.chamberUuid());
         var known=tickets.entrySet().stream().filter(entry -> entry.getValue().record().chamberUuid().equals(controller.chamberUuid()))
                 .findFirst().orElse(null);
@@ -759,6 +1219,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         for(var entry : tickets.entrySet()) entry.getValue().world().getChunkManager()
                 .removeTicket(SOURCE_TICKET,entry.getValue().chunk(),2,entry.getKey());
         tickets.clear();
+        for(var entry : homeTickets.entrySet()) entry.getValue().world().getChunkManager()
+                .removeTicket(SOURCE_TICKET,entry.getValue().chunk(),2,entry.getKey());
+        homeTickets.clear();
     }
     private void detach(MinecraftServer owner) {
         if(server!=owner) return;
@@ -766,6 +1229,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         if(recovery!=null) recovery.detach(owner);
         recovery=null; reposition=null; sessions.clear(); tickets.clear(); journal=null; server=null; lastTick=Integer.MIN_VALUE; checkpointWarning=null;
         abandonWarnings.clear(); abandonPending.clear(); retiredInitial.clear();
+        homeTickets.clear(); homeAbandons.clear(); homeReturnRetries.clear(); homeWarnings.clear();
     }
     private void requireServer(MinecraftServer owner) {
         if(owner!=server || server==null || !owner.isOnThread()) throw new IllegalStateException("session 必須在 attached server thread");

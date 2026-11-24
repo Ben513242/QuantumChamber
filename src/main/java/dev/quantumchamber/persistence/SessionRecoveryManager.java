@@ -44,6 +44,10 @@ public final class SessionRecoveryManager {
     // 所以只留最近 CORRECTION_INTERVAL_TICKS 內修正過的玩家；斷線或 session 結束後最多再留一個間隔。
     private final Map<UUID,Integer> corrections=new HashMap<>();
     private final SessionTransferService transfers=new SessionTransferService();
+    // M7 HOME（T5-2）：未選定 RETURNING 的返回 B。與 legacy 的同名 map 分開（legacy 的每 tick 以 flushedRecords() 修剪，不含 HOME 列）。
+    private final Map<UUID,Integer> homeReturnTicks=new HashMap<>();
+    private final Map<UUID,String> homeFailures=new HashMap<>();
+    private final Map<UUID,Set<UUID>> homeMoveWarnings=new HashMap<>(),homeLandingWarnings=new HashMap<>();
 
     /** 凍結中的位置修正：同一玩家在這麼多 server ticks 內最多送一次。 */
     public static final int CORRECTION_INTERVAL_TICKS=10;
@@ -79,6 +83,10 @@ public final class SessionRecoveryManager {
                 if(journal.collapseView(sid).filter(view -> freezes(view,player)).isPresent()) return true;
             } else if(staged!=null && freezes(staged,player) || checked!=null && freezes(checked,player)) return true;
         }
+        // M7 HOME（T5-2）：未選定的 RETURNING 只凍結尚未返還的參與者（current 或 flushed 任一份）。選定之後的 HOME 狀態屬 T5-4。
+        for(var rows : List.of(journal.allSessions(),journal.allFlushedSessions()))
+            for(var row : rows.values()) if(row instanceof HomeSessionRecord home && home.state()==SessionState.RETURNING
+                    && home.participants().stream().anyMatch(person -> person.playerUuid().equals(player) && !person.returned())) return true;
         return false;
     }
 
@@ -106,7 +114,7 @@ public final class SessionRecoveryManager {
     /** JOIN 只排下一 tick，不把 server.execute 視為登入完成。 */
     public void onJoin(UUID player,MinecraftServer owner) {
         requireServer(owner);
-        if(recordFor(player)!=null) joinTicks.put(player,owner.getTicks()+1);
+        if(recordFor(player)!=null || homeRecordFor(journal,player)!=null) joinTicks.put(player,owner.getTicks()+1);
     }
 
     public void onDisconnect(UUID player,MinecraftServer owner) {
@@ -131,6 +139,7 @@ public final class SessionRecoveryManager {
         for(var id : Set.copyOf(disconnected)) {
             try {
                 var record=recordFor(id); if(record!=null) markReturning(record);
+                var home=homeRecordFor(journal,id); if(home!=null) markHomeReturning(home);
                 disconnected.remove(id); disconnectWarnings.remove(id);
             } catch(RuntimeException failure) {
                 if(disconnectWarnings.add(id)) org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("斷線返還尚未落盤，保留重試：{}",id,failure);
@@ -176,6 +185,7 @@ public final class SessionRecoveryManager {
                             FailureText.describe(failure),failure);
             }
         }
+        if(recoverHomeRows(owner,pages,now)) rollForwardOutstanding=true;
         // M7 HOME 列（root latch、CLOSE latch 與其他 roll-forward）不在上面的 legacy 迴圈：寫出失敗後同樣只由這裡重試同一份寫出，
         // 沿用同一個 journal 退避（同一個 tick 只算一次失敗）。HomeRootFence 與 HomeClosure 在未確認時只排隊／收斂，不自行重寫。
         if(retryHomeRollForward(owner,now)) rollForwardOutstanding=true;
@@ -305,7 +315,9 @@ public final class SessionRecoveryManager {
         requireServer(owner); joinTicks.clear(); disconnected.clear(); disconnectWarnings.clear(); failures.clear(); returnTicks.clear(); moveWarnings.clear();
         landingWarnings.clear();
         corrections.clear(); converging.clear(); convergenceFailures.clear(); convergenceWarning=null; convergenceWarningText=null;
-        journalRetry.reset(); journalRetryFailedTick=Integer.MIN_VALUE; homeRetryWarning=null; if(active==this) active=null;
+        journalRetry.reset(); journalRetryFailedTick=Integer.MIN_VALUE; homeRetryWarning=null;
+        homeReturnTicks.clear(); homeFailures.clear(); homeMoveWarnings.clear(); homeLandingWarnings.clear();
+        if(active==this) active=null;
     }
 
     private void recover(SessionRecoveryRecord initial) throws IOException {
@@ -439,5 +451,142 @@ public final class SessionRecoveryManager {
                 ? new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch(),
                     person.quantumStateSnapshot(),true) : person).toList();
         return record.withProgress(people,record.spaceLeases(),record.state(),record.restoreEntryEffectOnReturn());
+    }
+
+    // ---- M7 HOME（T5-2）：未選定的 RETURNING 只回 exact B ----
+
+    /**
+     * 未選定 HOME RETURNING 的返還（spec §6 :186、§9 :227、§10 :297）：與 legacy 迴圈同樣在入場／rollback 的下一個 tick 才開始；只處理走廊 space 仍在、
+     * checked 與 current 一致、沒有待確認 roll-forward 的列（開服接手屬 T5-5）。寫出失敗時與 legacy 共用 journal 退避。
+     * @return 本 tick 有 HOME 返還進度的 roll-forward 尚未確認
+     */
+    private boolean recoverHomeRows(MinecraftServer owner,CorridorPageManager pages,int now) {
+        var flushed=journal.allFlushedSessions();
+        homeReturnTicks.keySet().retainAll(flushed.keySet()); homeFailures.keySet().retainAll(flushed.keySet());
+        homeMoveWarnings.keySet().retainAll(flushed.keySet()); homeLandingWarnings.keySet().retainAll(flushed.keySet());
+        boolean outstanding=false;
+        for(var row : flushed.values()) {
+            if(!(row instanceof HomeSessionRecord home) || home.state()!=SessionState.RETURNING
+                    || !(home.home().selection() instanceof HomeSessionRecord.Unselected)) continue;
+            var sid=home.sessionUuid();
+            if(pages.operationInProgress(sid) || !pages.hasReservation(sid) || journal.rollForwardPending(sid)
+                    || journal.quarantinedSessions().contains(sid) || !home.equals(journal.allSessions().get(sid))) continue;
+            if(now<=homeReturnTicks.computeIfAbsent(sid,ignored -> now)) continue;
+            try { recoverHome(home); homeFailures.remove(sid); }
+            catch(IOException | RuntimeException failure) {
+                if(journal.rollForwardPending(sid)) {
+                    outstanding=true;
+                    if(journalRetryFailedTick!=now) { journalRetry.failed(now); journalRetryFailedTick=now; }
+                }
+                var key=FailureText.dedupeKey(failure);
+                if(!key.equals(homeFailures.put(sid,key)))
+                    org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("HOME 返回 B 保留 pending，下一 tick 重試：session={}：{}",sid,FailureText.describe(failure),failure);
+            }
+        }
+        return outstanding;
+    }
+
+    /**
+     * 把未返還的參與者原生移回 exact B 的艙內、checkpoint，再逐人 checked 記 Returned；之後送回走廊裡的受管實體，全員返還後交走廊收尾（HOME checkpoint 與 checked 移除）。
+     * exact B 不可用（世界或宇宙不是 live、端點核對不是 VALID）時不動任何人、保持托管，絕不改送 A、spawn 或其他宇宙（spec §9.2 :271）。
+     * HOME 的 RestoreEntryEffectOnReturn 固定 0：一律保留目前藥效（不退款、不還原入場快照）。
+     */
+    private void recoverHome(HomeSessionRecord initial) throws IOException {
+        var world=exactEntry(initial);
+        if(world==null || !entryValid(initial)) return;
+        var sid=initial.sessionUuid();
+        var frame=new ChamberFrame(initial.entryEndpoint().controllerPos(),initial.entryEndpoint().facing());
+        var positions=new LinkedHashMap<UUID,Vec3d>();
+        initial.participants().forEach(person -> positions.put(person.playerUuid(),person.sourcePosition()));
+        var slots=ChamberReturnPlacement.plan(frame,List.copyOf(positions.keySet()),positions,position -> landingClear(world,position));
+        var record=initial;
+        for(var person : initial.participants()) {
+            if(person.returned() || joinTicks.containsKey(person.playerUuid())) continue;
+            var player=server.getPlayerManager().getPlayer(person.playerUuid());
+            if(player==null || player.isRemoved()) continue;
+            if(!inside(player,world,frame) && !landingClear(world,slots.get(person.playerUuid())))
+                warnOnce(homeLandingWarnings,sid,person.playerUuid(),"B 艙內沒有無碰撞的返還落點，沿用預設地板落點");
+            var marker=new PlayerRecoveryCheckpoint(sid,PlayerRecoveryCheckpoint.AppliedPolicy.KEEP_CURRENT);
+            var access=(PlayerRecoveryCheckpointAccess)player;
+            boolean applyMarker=shouldApplyMarker(marker,access.quantumchamber$getRecoveryCheckpoint());
+            if(!inside(player,world,frame) && !transfers.move(player,world,slots.get(person.playerUuid()),Vec3d.ZERO,person.yaw(),person.pitch())
+                    || !inside(player,world,frame)) {
+                if(!inside(player,world,frame)) warnOnce(homeMoveWarnings,sid,person.playerUuid(),"返回 B 的移動尚未確認，保留 pending 並於下一 tick 重試");
+                continue;
+            }
+            if(!entryValid(record)) continue;
+            if(applyMarker) access.quantumchamber$setRecoveryCheckpoint(marker);
+            PlayerCheckpointStore.saveAndVerify(server,player,Optional.of(marker));
+            if(!inside(player,world,frame) || !entryValid(record)) continue;
+            var next=returnedHome(record,person.playerUuid());
+            var result=journal.commitHomeRollForward(server,record,next);
+            // 寫出未確認：current 帶著這筆進度，只由 journal 退避重試同一份寫出（retryHomeRollForward），這裡不從 flushed 疊寫。
+            if(result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) return;
+            if(!result.committed()) throw new IllegalStateException("HOME 返還進度尚未 checked："+result.status(),result.failure().orElse(null));
+            record=next;
+            var warned=homeMoveWarnings.get(sid); if(warned!=null) warned.remove(person.playerUuid());
+        }
+        var pages=CorridorPageManager.forServer(server);
+        var pins=pages.returnEntityPins(sid);
+        if(pins.isEmpty()) return;
+        var corridor=server.getWorld(SuperpositionWorld.KEY);
+        for(var id : pins.get()) {
+            var entity=corridor.getEntity(id);
+            if(entity==null || entity instanceof ServerPlayerEntity) return;
+            var position=ChamberSpaceCoordinates.position(frame,3.5,1,3.5);
+            if(!ChamberOccupantService.contains(ChamberGeometry.interiorBox(frame),entity.getBoundingBox().offset(position.subtract(entity.getPos())))
+                    || !entryValid(record) || !transfers.move(entity,world,position,Vec3d.ZERO,entity.getYaw(),entity.getPitch())) return;
+            world.getEntity(id).removeCommandTag("quantumchamber_session:"+sid);
+        }
+        if(record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned)) pages.releaseHome(sid);
+    }
+
+    /** exact live B：Entry 的 world key 存在，而且是該宇宙目前的 active world；否則 null（不猜另一個 B）。 */
+    private ServerWorld exactEntry(HomeSessionRecord row) {
+        var world=server.getWorld(RegistryKey.of(RegistryKeys.WORLD,row.entryEndpoint().worldKey()));
+        return world!=null && dev.quantumchamber.universe.UniverseLifecycleService.resolveActive(server,row.entryEndpoint().universeId()).orElse(null)==world
+                ? world : null;
+    }
+
+    private boolean entryValid(HomeSessionRecord row) {
+        try { return dev.quantumchamber.collapse.HomeEndpointAuthority.inspectEntry(server,row.entryEndpoint())
+                == dev.quantumchamber.collapse.HomeEndpointAuthority.EntryStatus.VALID; }
+        catch(RuntimeException unreadable) { return false; }
+    }
+
+    /** 依玩家找仍佔用他的 HOME 列（{@link SessionRecoveryState#occupies}，flushed）；由於唯一性規則最多一筆。 */
+    static HomeSessionRecord homeRecordFor(SessionRecoveryState journal,UUID player) {
+        for(var row : journal.allFlushedSessions().values())
+            if(row instanceof HomeSessionRecord home && SessionRecoveryState.occupies(home,player)) return home;
+        return null;
+    }
+
+    /** 斷線：未選定的 ARMING／SUPERPOSITION 以 checked restore CAS 轉 RETURNING（只回 B）；RETURNING 已在返還；選定之後屬 T5-4。 */
+    private void markHomeReturning(HomeSessionRecord home) {
+        if(home.state()!=SessionState.ARMING && home.state()!=SessionState.SUPERPOSITION
+                || !(home.home().selection() instanceof HomeSessionRecord.Unselected)) return;
+        var sid=home.sessionUuid();
+        if(!home.equals(journal.allSessions().get(sid))) throw new IllegalStateException("HOME 列有未確認的寫入，斷線返還稍後重試：session="+sid);
+        CorridorPageManager.forServer(server).exclusiveOperation(sid,() -> {
+            var result=journal.commitHomeRestore(server,home,new HomeSessionRecord(sid,home.chamberUuid(),home.rootAnchor(),home.entryEndpoint(),
+                    home.participants(),home.spaceLeases(),SessionState.RETURNING,home.home()));
+            if(!result.committed()) throw new IllegalStateException("HOME 斷線返還尚未 checked："+result.status(),result.failure().orElse(null));
+            return null;
+        });
+    }
+
+    static HomeSessionRecord returnedHome(HomeSessionRecord record,UUID player) {
+        if(record.state()!=SessionState.RETURNING) throw new IllegalArgumentException("只有返還中的 HOME 列可更新玩家返還進度");
+        if(record.participants().stream().noneMatch(person -> person.playerUuid().equals(player))) throw new IllegalArgumentException("玩家不屬於凍結 cohort");
+        var people=record.participants().stream().map(person -> person.playerUuid().equals(player)
+                ? new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch(),
+                    person.quantumStateSnapshot(),true) : person).toList();
+        return new HomeSessionRecord(record.sessionUuid(),record.chamberUuid(),record.rootAnchor(),record.entryEndpoint(),people,record.spaceLeases(),
+                record.state(),record.home());
+    }
+
+    private static void warnOnce(Map<UUID,Set<UUID>> warned,UUID session,UUID player,String message) {
+        if(warned.computeIfAbsent(session,ignored -> new HashSet<>()).add(player))
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("{}：session={} player={}",message,session,player);
     }
 }

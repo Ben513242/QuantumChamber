@@ -98,6 +98,45 @@ public final class ChamberActivationService {
         return new ArmAttemptResult(false, readiness, participantUuids, failuresFor(snapshot));
     }
 
+    /**
+     * M7 spec §4.1 第 1 步：投影端 B 的資格預覽（T5-2；controller C2：既有 {@link #evaluateReadiness} 不改，持續拒絕 PROJECTION，這裡以加法另開）。
+     * 只讀，不配發 UUID、不新增或修改 Registry record。核對 exact world 與 Controller 實例、{@code PROJECTION}、完整結構、封艙與 cohort 資格；
+     * 投影艙沒有停用開關，enabled 一律為真。B 的投影權威（COMPLETE projection ledger、catalog）與即時供電（{@link #entryPowered}）由呼叫端另核。
+     */
+    public ArmAttemptResult evaluateEntryReadiness(ServerWorld world, ChamberControllerBlockEntity controller) {
+        Objects.requireNonNull(world, "world");
+        Objects.requireNonNull(controller, "controller");
+        if (world.getServer().getWorld(world.getRegistryKey()) != world || controller.getWorld() != world
+                || controller.isRemoved() || !world.isChunkLoaded(controller.getPos())
+                || world.getBlockEntity(controller.getPos()) != controller
+                || !world.getBlockState(controller.getPos()).equals(controller.getCachedState())
+                || controller.instanceKind() != ChamberInstanceKind.PROJECTION) {
+            return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.INVALID_STRUCTURE);
+        }
+        ChamberFrame frame = new ChamberFrame(controller.getPos(), facing(controller));
+        ChamberStructureResult structure = detector.validate(new WorldChamberBlockView(world), frame);
+        if (!structure.valid()) {
+            return rejected(ChamberState.INVALID, List.of(), ArmAttemptResult.Failure.INVALID_STRUCTURE);
+        }
+        List<ServerPlayerEntity> participants = occupants.findParticipants(world, frame);
+        List<UUID> participantUuids = participants.stream().map(ServerPlayerEntity::getUuid).toList();
+        List<ChamberActivationSnapshot.ParticipantEligibility> eligibility = participants.stream()
+                .map(player -> new ChamberActivationSnapshot.ParticipantEligibility(
+                        player.getUuid(), player.hasStatusEffect(ModEffects.QUANTUM_STATE)))
+                .toList();
+        ChamberActivationSnapshot snapshot = new ChamberActivationSnapshot(true, structure.valid(), structure.sealed(), eligibility);
+        ChamberState readiness = evaluator.evaluate(snapshot);
+        if (readiness == ChamberState.READY) {
+            return new ArmAttemptResult(true, readiness, participantUuids, Set.of());
+        }
+        return new ArmAttemptResult(false, readiness, participantUuids, failuresFor(snapshot));
+    }
+
+    /** M7 spec §4.1 第 1 步：Controller 的供電鄰域（水平正負三格的 chunk）都已 FULL，而且此刻有紅石輸入。只查詢、不載入。 */
+    public static boolean entryPowered(ServerWorld world, net.minecraft.util.math.BlockPos controllerPos) {
+        return ChamberRedstoneService.powerNeighborhoodLoaded(world, controllerPos) && world.isReceivingRedstonePower(controllerPos);
+    }
+
     private static Direction facing(ChamberControllerBlockEntity controller) {
         DirectionProperty property = ChamberControllerBlock.FACING;
         return controller.getCachedState().get(property);

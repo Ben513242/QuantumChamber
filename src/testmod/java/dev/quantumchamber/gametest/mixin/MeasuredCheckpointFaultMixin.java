@@ -15,11 +15,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  */
 @Mixin(MeasuredWorldSaveCheckpoint.class)
 abstract class MeasuredCheckpointFaultMixin {
-    @Inject(method="save",at=@At("HEAD"),remap=false)
+    // M7 T5-2 起 save 有 HOME overload（HomeSessionRecord）；只注入舊列的 overload，明寫完整 descriptor（X6）。
+    @Inject(method="save(Lnet/minecraft/server/MinecraftServer;Ldev/quantumchamber/persistence/SessionRecoveryRecord;)V",at=@At("HEAD"),remap=false)
     private static void quantumchamberTest$fault(MinecraftServer server,SessionRecoveryRecord record,CallbackInfo callback) {
         M4CandidateDoorGameTests.beforeMeasuredCheckpoint(server,record);
     }
-    @Inject(method="save",at=@At("RETURN"),remap=false)
+    @Inject(method="save(Lnet/minecraft/server/MinecraftServer;Ldev/quantumchamber/persistence/SessionRecoveryRecord;)V",at=@At("RETURN"),remap=false)
     private static void quantumchamberTest$accepted(MinecraftServer server,SessionRecoveryRecord record,CallbackInfo callback) {
         M4CandidateDoorGameTests.afterMeasuredCheckpoint(server,record);
     }

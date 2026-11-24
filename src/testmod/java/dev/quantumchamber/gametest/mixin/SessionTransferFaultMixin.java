@@ -40,11 +40,12 @@ abstract class SessionTransferFaultMixin {
         SessionTransferFault.moved(player,world,position,callback.getReturnValue());
         dev.quantumchamber.gametest.M2CorridorGameTests.afterRemapMove(player,world,position,velocity,yaw,pitch,callback.getReturnValue());
     }
-    @Inject(method="commitInitial",at=@At("HEAD"),remap=false,require=0)
+    // M7 T5-2（X6）：HOME 的發布是另一個方法（commitHomeInitial），這裡明寫舊列 commitInitial 與 journal flush 的完整 descriptor，之後新增 overload 也不會誤注入。
+    @Inject(method="commitInitial(Ljava/util/UUID;Ljava/util/Set;)V",at=@At("HEAD"),remap=false,require=0)
     private void quantumchamberTest$publish(UUID sid,Set<UUID> cohort,CallbackInfo callback) {
         SessionTransferFault.beforePublish(this,sid,cohort);
     }
-    @Inject(method="flush",at=@At("RETURN"),remap=false,require=0)
+    @Inject(method="flush(Lnet/minecraft/server/MinecraftServer;)V",at=@At("RETURN"),remap=false,require=0)
     private void quantumchamberTest$rollback(MinecraftServer server,CallbackInfo callback) {
         SessionTransferFault.afterFlush((SessionRecoveryState)(Object)this,server);
     }
