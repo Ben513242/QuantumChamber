@@ -677,6 +677,125 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
         } catch (ReflectiveOperationException failure) { throw new GameTestException("HOME runtime 反射建立失敗：" + failure); }
     }
 
+    // ---- T5-3：HOME 換頁與容量 pending ----
+
+    /**
+     * 正式 reposition 為 HOME 走廊換頁（plan :319「remap／頁面伸展同一 HOME mode」、:325「換頁無第二扇」）：玩家走到 page 1，正式 tick 準備新實例、搬移、提交並退休舊實例。
+     * 新實例以同一個 HOME mode 建造：帶 home_marker 的 bulkhead 恰為一扇 25 格 HOME 門，其餘 bulkhead 只有入口 replica 的正門（沒有 legacy 每站兩側的一般側門）；舊實例清空，
+     * 沒有第二扇。列仍是原 SID、未選定的 SUPERPOSITION，租約只剩新實例。最後以正式取消返回 B 收尾。RED：正式 reposition 只看 legacy 列，HOME 不換頁
+     * （{@code HOME_REMAP_NOT_ATTEMPTED}）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_corridor_remap_door_windows", tickLimit = 3000)
+    public void home_remap_builds_no_second_home_door(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            e.requireStarted();
+            var label = "home_remap_builds_no_second_home_door";
+            e.awaitSuperposition(label, row -> {
+                var sid = row.sessionUuid();
+                var player = e.player(0);
+                var before = e.pages.currentMappings(sid);
+                c.assertTrue(before.epoch() == 1 && before.instances().size() == 1 && row.spaceLeases().size() == 1, "前提：入場後一個實例、一筆租約：" + before);
+                var oldView = before.instances().getFirst();
+                e.assertSingleHomeDoor(sid, oldView, "前提（換頁前）");
+                e.walkHome(sid, player, 96.5);
+                M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
+                    var view = e.pages.currentMappings(sid).instances().getFirst();
+                    var after = e.homeRow();
+                    c.assertTrue(after.sessionUuid().equals(sid) && after.state() == SessionState.SUPERPOSITION && after.home().equals(row.home())
+                            && after.spaceLeases().size() == 1 && after.spaceLeases().getFirst().slotId() == view.ref().slotId(),
+                            "換頁後原 SID、未變的 Selection、租約只剩新實例：" + after);
+                    c.assertTrue(player.getServerWorld() == e.corridor() && Math.abs(e.logicalZ(sid, player) - 96.5) < 1e-6, "玩家以同一個邏輯座標搬到新實例");
+                    e.assertSingleHomeDoor(sid, view, "SECOND_HOME_DOOR（換頁後）");
+                    c.assertTrue(e.bulkheads(oldView.bounds()).isEmpty() && e.allAir(oldView.bounds()), "OLD_HOME_DOOR_LEFT：舊實例已清空，沒有第二扇 HOME 門");
+                    c.assertTrue(e.pages.selectableDoors(sid).isEmpty(), "HOME 換頁後仍不發布候選門");
+                    c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
+                    e.awaitReleased(sid, label + "/cancel", null, () -> {
+                        c.assertTrue(e.inB(player), "取消後回到 exact B");
+                        e.finish();
+                    });
+                }), e.step(() -> {
+                    throw new GameTestException("HOME_REMAP_NOT_ATTEMPTED：正式 tick 沒有為 HOME 走廊換頁：epoch=" + e.pages.currentMappings(sid).epoch() + " row=" + e.homeRow());
+                }));
+            });
+        });
+    }
+
+    /**
+     * 接近 16 MiB 的混合 journal，由正式 {@code SuperpositionSessionManager.tick → CorridorRepositionService.tick} 驅動 HOME 換頁（plan :325）：容量拒絕是可重試的 pending——
+     * 不送 RETURNING、撤回本次多保留的 slot，保留原 mapping、原 SID、未變的 Selection 與 CLOSE 空間；容量恢復之後重試並完成。合法 journal 下未選定 HOME 列的換頁已含在
+     * admission 的預留內（見 {@link M7CapacityFixture#inflateInMemory}），所以「共享預留不符」以 testmod 反射在記憶體暫時加大壓力列來模擬（磁碟上的 journal 全程合法）；
+     * 還原之後的換頁是在恰好 16 MiB 的合法壓力下完成。RED：正式 reposition 只看 legacy 列，HOME 不換頁（{@code HOME_REMAP_NOT_ATTEMPTED}）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_corridor_remap_capacity_windows", tickLimit = 3000)
+    public void formal_tick_capacity_pending_preserves_home_mapping(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            e.requireStarted();
+            var label = "formal_tick_capacity_pending_preserves_home_mapping";
+            e.awaitSuperposition(label, row -> {
+                var sid = row.sessionUuid();
+                var player = e.player(0);
+                var mapping = e.pages.currentMappings(sid);
+                var oldView = mapping.instances().getFirst();
+                var capture = new LogCapture("quantumchamber");
+                hooks.add(capture::close);
+                // 合法的壓力列：padding 同時扣掉壓力列與這一列 HOME 的完成預留，整份 journal 恰在 16 MiB 預留不變量的邊界上。
+                // 失敗路徑的收尾排在 HomeEntry.close 最前面（先還原膨脹、再釋出壓力列），早於任何返還請求的 journal 寫出。
+                var pressure = M7CapacityFixture.admitBeside(e.server, row);
+                e.beforeClose(() -> M7CapacityFixture.releaseIfPresent(e.server, pressure));
+                var inflation = M7CapacityFixture.inflateInMemory(e.server, pressure, 4096);
+                boolean[] restored = {false};
+                Runnable restore = () -> { if (!restored[0]) { restored[0] = true; inflation.run(); } };
+                e.beforeClose(restore);
+                var closeReserve = M7CapacityFixture.remaining(row);
+                var rowSlots = slots(row);
+                e.walkHome(sid, player, 96.5);
+                e.hold(20, () -> {
+                    var current = e.homeRow();
+                    if (!row.equals(current) || !row.equals(e.journal.allSessions().get(sid)))
+                        throw new GameTestException("CAPACITY_SENT_RETURNING：容量不足時 HOME 列必須保持原 SUPERPOSITION、原 SID、未選定與原租約：" + current);
+                    var spaceSlots = e.spaceSlots(sid);
+                    if (!rowSlots.equals(spaceSlots))
+                        throw new GameTestException("REMAP_RESERVE_NOT_WITHDRAWN：容量拒絕必須撤回多保留的 slot：space=" + spaceSlots + " row=" + rowSlots);
+                    if (!mapping.equals(e.pages.currentMappings(sid)) || player.getServerWorld() != e.corridor())
+                        throw new GameTestException("容量不足時保留原 mapping、玩家留在走廊：" + e.pages.currentMappings(sid));
+                }, () -> {
+                    var attempts = capture.matching(Level.INFO, "HOME 換頁的 journal 預留不足", sid.toString());
+                    c.assertTrue(!attempts.isEmpty(), "HOME_REMAP_NOT_ATTEMPTED：容量不足期間正式 tick 沒有嘗試 HOME 換頁（沒有容量 pending 的紀錄）");
+                    c.assertTrue(attempts.size() == 1, "同一段容量 pending 只記一則 INFO：" + attempts.size());
+                    c.assertTrue(M7CapacityFixture.remaining(e.homeRow()) == closeReserve && e.pages.hasReservation(sid)
+                            && gate().globalChamberBusy(e.server, e.chamber), "CLOSE 空間（完成預留）、走廊 reservation 與占用都不變");
+                    restore.run();
+                    M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
+                        var after = e.homeRow();
+                        c.assertTrue(after.sessionUuid().equals(sid) && after.state() == SessionState.SUPERPOSITION && after.home().equals(row.home()),
+                                "容量恢復之後以原 SID、未變的 Selection 完成換頁：" + after);
+                        c.assertTrue(M7CapacityFixture.remaining(after) == closeReserve, "換頁前後 CLOSE 空間（完成預留）相同");
+                        c.assertTrue(Math.abs(e.logicalZ(sid, player) - 96.5) < 1e-6, "玩家以同一個邏輯座標搬到新實例");
+                        M7CapacityFixture.release(e.server, pressure);
+                        c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
+                        e.awaitReleased(sid, label + "/cancel", null, () -> {
+                            c.assertTrue(e.inB(player), "取消後回到 exact B");
+                            e.finish();
+                        });
+                    }), e.step(() -> {
+                        throw new GameTestException("HOME_REMAP_NOT_RETRIED：容量恢復之後 HOME 換頁沒有重試完成：epoch=" + e.pages.currentMappings(sid).epoch()
+                                + " row=" + e.homeRow() + " space=" + e.spaceSlots(sid));
+                    }));
+                });
+            });
+        });
+    }
+
+    private static Set<Integer> slots(HomeSessionRecord row) {
+        var slots = new TreeSet<Integer>();
+        row.spaceLeases().forEach(lease -> slots.add(lease.slotId()));
+        return slots;
+    }
+
     /** 這座艙在 gateway 的 owner 型別（{@code Provisional}／{@code HomeRuntime}／{@code SuperpositionSession}），沒有時為 null。只讀反射。 */
     static String ownerType(UUID chamber) {
         var owner = ((Map<?, ?>) M4CandidateTestAccess.get(gate(), "sessions")).get(chamber);
@@ -713,6 +832,10 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
         private Runnable release = () -> { };
         private final Runnable predicateCleanup;
         private boolean closed;
+        /** T5-3：{@link #close} 最先執行的收尾（後登記先執行），排在任何 journal 寫出（失敗路徑的返還請求）之前；例如還原記憶體中膨脹的壓力列。 */
+        private final ArrayDeque<Runnable> beforeClose = new ArrayDeque<>();
+
+        void beforeClose(Runnable cleanup) { beforeClose.push(Objects.requireNonNull(cleanup, "cleanup")); }
 
         HomeEntry(TestContext c, int count, M2CorridorGameTests.TestHooks hooks, boolean powerA) {
             this.c = c; this.hooks = hooks;
@@ -877,6 +1000,80 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             return cells;
         }
 
+        /**
+         * T5-3：把玩家以原生移動推進到目前（唯一）實例的邏輯 z（走廊中心 lateral 3.5、地板上 1）；之後的換頁由正式 tick 完成。只用 {@code currentMappings}／{@code toPhysical}，
+         * 不經 HOME 的 durable 核對，所以在 RED（HOME 沒有換頁分支）時也能執行。
+         */
+        void walkHome(UUID sid, ServerPlayerEntity player, double z) {
+            var view = pages.currentMappings(sid).instances().getFirst();
+            var target = pages.toPhysical(view.ref(), new CorridorPageManager.LogicalPose(3.5, 1, z, Vec3d.ZERO, 0, 0));
+            var box = player.getBoundingBox().offset(target.position().subtract(player.getPos()));
+            c.assertTrue(corridor().isSpaceEmpty(player, box), "HOME 走廊長走終點有完整原生 collision 空間：" + target.position());
+            c.assertTrue(new dev.quantumchamber.transfer.SessionTransferService().move(player, corridor(), target.position(), target.velocity(), target.yaw(), target.pitch()),
+                    "真 native pose 推進，換頁由正式 tick 完成");
+        }
+
+        /** 玩家目前所在實例的邏輯 z（以 bounds 找到唯一包含玩家的實例）。 */
+        double logicalZ(UUID sid, ServerPlayerEntity player) {
+            for (var view : pages.currentMappings(sid).instances()) {
+                var b = view.bounds();
+                var p = player.getPos();
+                if (p.x >= b.getMinX() && p.x < b.getMaxX() + 1 && p.y >= b.getMinY() && p.y < b.getMaxY() + 1 && p.z >= b.getMinZ() && p.z < b.getMaxZ() + 1)
+                    return pages.toLogical(view.ref(), new CorridorPageManager.PhysicalPose(p, player.getVelocity(), player.getYaw(), player.getPitch())).logicalZ();
+            }
+            throw new GameTestException("玩家不在任何目前實例內：" + player.getPos());
+        }
+
+        /** 走廊 Space 目前持有的 slot（testmod 反射讀 {@code Space.leases}）。 */
+        Set<Integer> spaceSlots(UUID sid) {
+            var space = M4CandidateTestAccess.space(pages, sid);
+            if (space == null) return Set.of();
+            var slots = new TreeSet<Integer>();
+            for (var key : ((Map<?, ?>) M4CandidateTestAccess.get(space, "leases")).keySet()) slots.add((Integer) key);
+            return slots;
+        }
+
+        /** 一次換頁已完成：mapping 前進到 epoch 2 的唯一新實例，舊實例已退休（checked 列與 Space 都只剩新實例的租約）。 */
+        boolean remappedOnce(UUID sid, CorridorPageManager.MappingView oldView) {
+            var current = pages.currentMappings(sid);
+            var row = homeRow();
+            if (row == null || current.epoch() != 2 || current.instances().size() != 1) return false;
+            var slot = current.instances().getFirst().ref().slotId();
+            return slot != oldView.ref().slotId() && row.spaceLeases().size() == 1 && row.spaceLeases().getFirst().slotId() == slot
+                    && row.equals(journal.allSessions().get(sid)) && spaceSlots(sid).equals(Set.of(slot));
+        }
+
+        /** {@code bounds} 內的 bulkhead → 是否帶 home_marker（實際讀世界）。 */
+        Map<BlockPos, Boolean> bulkheads(net.minecraft.util.math.BlockBox bounds) {
+            var cells = new LinkedHashMap<BlockPos, Boolean>();
+            for (var pos : BlockPos.iterate(bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(), bounds.getMaxX(), bounds.getMaxY(), bounds.getMaxZ())) {
+                var state = corridor().getBlockState(pos);
+                if (state.isOf(ModBlocks.QUANTUM_BULKHEAD)) cells.put(pos.toImmutable(), state.get(QuantumBulkheadBlock.HOME_MARKER));
+            }
+            return cells;
+        }
+
+        boolean allAir(net.minecraft.util.math.BlockBox bounds) {
+            for (var pos : BlockPos.iterate(bounds.getMinX(), bounds.getMinY(), bounds.getMinZ(), bounds.getMaxX(), bounds.getMaxY(), bounds.getMaxZ()))
+                if (!corridor().getBlockState(pos).isAir()) return false;
+            return true;
+        }
+
+        /**
+         * {@code view} 以 HOME mode 建造：帶 home_marker 的 bulkhead 恰 25 格（一扇 HOME 門），不帶 marker 的 bulkhead 恰為入口 replica 的正門 25 格
+         * （legacy mode 會在每一站兩側都放一般 bulkhead；第二扇 HOME 門會讓 marker 變成 50 格）。
+         */
+        void assertSingleHomeDoor(UUID sid, CorridorPageManager.MappingView view, String label) {
+            var cells = bulkheads(view.bounds());
+            var markers = cells.entrySet().stream().filter(Map.Entry::getValue).map(Map.Entry::getKey).toList();
+            var plain = cells.entrySet().stream().filter(entry -> !entry.getValue()).map(Map.Entry::getKey).collect(java.util.stream.Collectors.toSet());
+            var entrance = pages.entrance(sid);
+            var frontDoor = new HashSet<BlockPos>();
+            for (int x = 1; x <= 5; x++) for (int y = 1; y <= 5; y++) frontDoor.add(ChamberSpaceCoordinates.block(entrance, x, y, 0));
+            c.assertTrue(markers.size() == 25 && plain.equals(frontDoor), label + "：實例內只能有一扇 25 格 HOME 門，其他 bulkhead 只有入口正門：marker="
+                    + markers.size() + " plain=" + plain.size() + " frontDoor=" + frontDoor.size() + " plainOutsideDoor=" + plain.stream().filter(pos -> !frontDoor.contains(pos)).limit(5).toList());
+        }
+
         /** 入口 replica 兩側牆的連接開口（lateral：x 0、6，y 1..5，深度 1..5），以 production 的入口 frame 推導。 */
         List<BlockPos> overlayCells(UUID sid) {
             var entrance = pages.entrance(sid);
@@ -969,6 +1166,10 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             if (closed) return;
             closed = true;
             predicateCleanup.run();
+            while (!beforeClose.isEmpty()) {
+                try { beforeClose.pop().run(); }
+                catch (RuntimeException | Error failure) { LOG.warn("M7_GT_BEFORE_CLOSE 收尾丟出例外", failure); }
+            }
             try { closeOutResidue(); }
             finally {
                 try { release.run(); }
