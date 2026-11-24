@@ -121,6 +121,14 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
+**2026-11-24 最新：Codex 交回，Claude 接手為 controller（使用者原話：「codex回報換你繼續做」）。** controller 讀法（不是使用者逐字裁示，已告知使用者，使用者回覆「好」）：恢復一般 T5-0 工作，含門故障夾具的正式 test-only 修正；不改 production、斷言、票期與時限；修正後此門案例再有任何非預期失敗即停並問使用者，共用冷載計數維持 2/3。夾具設計見 M7 SDD `t50-door-fixture-design.md`。T5-0 仍 OPEN，T5～T8 未啟；交接檔仍是 [`docs/handoffs/2026-11-19-m7-codex-t5-handoff.md`](docs/handoffs/2026-11-19-m7-codex-t5-handoff.md)（第 10 節有 Codex 期間的完整紀錄）。
+
+**2026-11-20 D1已完成並停止；T5-0仍OPEN，T5～T8未啟動。** 已push候選e3ce6e174be4438322d9e21f51762a6eb259ae7a，原席先審39023E…A912E新增C0/I0/M0；唯一Win1GT+6JUnit與唯一同SHA CI44693421016 attempt1均通過，CI completed/success/10job全success（台北15:55:46，terminal SHA AFD77297AACE03BBCEF05F8E832D969F7459197DE182110A6A3D9F890F6E9177）。三組marker均captured/觀測error0，故障時真票仍活且同END無票，本輪未重現舊Ubuntu；不能回填舊deadline/現場票，不宣告修復或結案。結果S/t50-diagnostic-once-results.md SHA D3048F5806310F8E4AECC939DED8A4C2C3A3626A821F45B3A57F9624162D7BB9；CI對照998F5E…7907017、原Zip雙hash已匹配。Win1/1與CI1/1全用，原3/3等FAIL/計數保。停止新增驗證/修正/commit/push；三狀態文件保未提交結果更新，避免第二CI；後續另待user裁示。
+
+**2026-11-20 D1同候選已push，唯一CI44693421016在途；本輪Win1/1與CI1/1已用。** 遠端feature e3ce6e174be4438322d9e21f51762a6eb259ae7a已讀回，main2255027/m6peeled535未動；新run push/head同e3ce、created07:13:50Z、in_progress，不是舊run rerun。只收此run完整終局與Win/Ubuntu目標marker，完成立即停，不修行為/斷言/時限、不加測/再push/再run/進T5。三狀態文件僅工作區事實更新不提交推第二CI。原3/3、舊FAIL與未驗全保。
+
+**2026-11-20 D1原席C0/I0/M0、唯一Win定向已完成，待同SHA唯一CI。** 候選e3ce6e174be4438322d9e21f51762a6eb259ae7a，review39023E120696F5192C5E7F621B7A4A4ACA44B12E3FCCAB1B9554FA38882A912E；Win#1根S/c-t50-d1-door-c0808e9f，1GT+入口既有6JUnit PASS、marker1/captured/errors0。首票46/deadline246、blocks47、entities/checkpoint138才ready；真fault138仍持同票，END138無票。root已核原JSON/原XML與hash；成功Win對照不證原Ubuntu已修。新Win報告5DB05C0B…A33B38B。準備推同e3ce一次新SHA既有CI；本機次數1/1已用，不再跑。CI判讀完成即停，不T50closed/T5，原FAIL/3/3等保。
+
 **2026-11-20 D1觀測候選已編譯，待原席審查；Win/新CI執行次數仍0。** 本輪僅M7HomeEntryTicketGameTests加175行、既有DoorWriteFault接縫加4行optional scope observer、README一句；production/inventory/workflow/斷言/時序/時限無差異。報告S/t50-diagnostic-once-report.md SHA A7A69126E23BED1E26C2E900A8067CA18540F0F8104EAE38665143351585D8F0。編譯c-t50-d1-compile-8dba38ce exit0，原sourceUnchanged=false因PWSH自動Matches覆寫，原件保，獨立source-readback三hash一致（root已核），靜態記錄器事件1、不重編。原席C/I0前不runtime；本輪一次單門Win＋一次同SHA既有CI後停，非修復/結案，3/3保。
 
 **2026-11-20 使用者已只授權T5-0單輪D1診斷，完成即停，不是恢復一般實作。** 原題/選項逐字見M7 note最新「D1受限診斷授權」與S/user-t50-diagnostic-authorization-20261120.md。只補活票/租期/ready/樣本觀測，原席C/I0後一次Windows門案定向＋新SHA既有CI一次；不改production/行為/斷言/時限、不rerun舊CI、不進T5。舊44680282020 attempt1已completed/failure，10job9success/UbuntuM7唯一failure，terminal SHA D437F89FC989AF832D99D035A7B92465DA00692DE773D51170686ECA658553BC。HEAD19e9、source未改、三狀態docs dirty；原3/3等計數與FAIL保，D1不因碰巧PASS宣稱修復。brief S/t50-diagnostic-once-brief.md，原implementer/原reviewer，先只寫觀測與靜態編譯，未審前不runtime。
