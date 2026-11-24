@@ -279,6 +279,13 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             throw new IllegalStateException("未知preset通知的exact session/controller owner不符");
         runtime.controller.requireCandidateRetryLow();
     }
+    /**
+     * M7 HOME 入場：從同艙已確認的 COMPLETE 投影 B 啟動回程走廊（plan Task 5 :308，T7 才接正式入口）。
+     * <p>T5-2 RED 腳手架：尚未實作，一律拒絕；production 行為不變。
+     */
+    public StartResult startHome(ServerWorld entry,ChamberControllerBlockEntity controller,List<UUID> requested) {
+        return StartResult.REJECTED;
+    }
     @Override public StartResult start(ServerWorld source,ChamberControllerBlockEntity controller,List<UUID> requested) {
         var owner=source.getServer();
         var chamber=controller.chamberUuid();

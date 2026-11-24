@@ -124,7 +124,18 @@
       "quantumchamber:m1_empty|m7homespikegametests.candidate_and_remap_capacity_retry_keeps_published_team",
       "quantumchamber:m1_empty|m7rearmgametests.prepare_participant_close_requires_player_reclose_windows",
       "quantumchamber:m1_empty|m7rearmgametests.passage_participant_close_requires_player_reclose_windows",
-      "quantumchamber:m1_empty|m7sealreleasegametests.rebuilt_chamber_prepare_participant_close_still_cancels_windows"
+      "quantumchamber:m1_empty|m7sealreleasegametests.rebuilt_chamber_prepare_participant_close_still_cancels_windows",
+      "quantumchamber:m1_empty|m7homecorridorgametests.home_entry_commits_superposition_with_entry_b",
+      "quantumchamber:m1_empty|m7homecorridorgametests.cancel_or_restart_returns_to_b",
+      "quantumchamber:m1_empty|m7homecorridorgametests.start_home_refuses_latched_entry",
+      "quantumchamber:m1_empty|m7homecorridorgametests.last_checkpoint_fails_after_native_moves",
+      "quantumchamber:m1_empty|m7homecorridorgametests.milk_or_buff_lapse_returns_whole_cohort_to_b_without_refund",
+      "quantumchamber:m1_empty|m7homecorridorgametests.offline_participant_returns_to_b_after_join",
+      "quantumchamber:m1_empty|m7homecorridorgametests.returning_waits_for_exact_b_without_fallback",
+      "quantumchamber:m1_empty|m7homecorridorgametests.returning_checkpoint_failure_keeps_row_and_lock",
+      "quantumchamber:m1_empty|m7homecorridorgametests.unchecked_home_arming_keeps_chamber_busy_until_converged",
+      "quantumchamber:m1_empty|m7homecorridorgametests.start_check_released_on_reload_and_timeout",
+      "quantumchamber:m1_empty|m7homecorridorgametests.start_home_checkpoint_unavailable_has_no_side_effects"
     ],
     "native": [
       "close-ordinary-before-close",
