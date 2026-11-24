@@ -18,6 +18,8 @@ jobs:
           - os: ubuntu-latest
             platform: Ubuntu
     runs-on: ${{ matrix.os }}
+    # 使用者 2026-11-24：先以 Windows 為主、暫時取消雙平台驗證；Ubuntu 照跑但不擋 workflow（結果照錄）。
+    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
     timeout-minutes: 90
     env:
       M7_PLATFORM: ${{ matrix.platform }}
@@ -282,6 +284,8 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    # 使用者 2026-11-24：先以 Windows 為主、暫時取消雙平台驗證；Ubuntu 照跑但不擋 workflow（結果照錄）。
+    continue-on-error: true
     # job 層級的上限也涵蓋沒有個別 timeout 的 Build step。
     timeout-minutes: 90
     steps:
