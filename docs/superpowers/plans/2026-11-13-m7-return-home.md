@@ -607,3 +607,63 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
 - 完成原Step0剩項再T5本體。B2b5-M1採owning scripts/verification/m7-ci-gametest.ps1，明確納入清單；支持普通@Test修飾詞、其餘無可靠exact模型的動態宣告具名拒絕，補class層正負例，不默默漏類、不另建平行JUnit scanner。第9純onEntryStopped API例留T6真caller/guard；真stop/RESTART_VERIFY真重啟新列/Ubuntu relatch mutation明列未驗，不自增原生表。
 - 交接CI44480505340原FAIL保留；budget案責任分區如M7note現行節：不改400/300/200或600/90，只見同SID合時正式CLOSE_CONVERGE後fixture助B ready；所有budget/票/door/busy/receipt原斷言及獨立native cold-B兩路徑保。僅該失敗案健康settled checked CLOSE ownedSID可test-only重置退避後由正式owner清理，原錯仍丟；交獨立review核有無缺口，不預壓finding。
 - T5-0整體review BASE c533193，含原b0ea0f8/c749739未審批次；第三批具名RED→GREEN→各mutation逐位元還原→新pin必要focused兩輪，一席C/I0後完整holder自然ENDALL0與逐項採計，再push/同SHA requiredCI/結案docs一席。不自放寬門檻，既有source未涉的證據不盲重跑。spec v1.6與第8行pin未動，既有被引用行號不位移。
+
+## 2026-11-24 T5 切片與追加（controller）
+
+本節全部是 controller 的決定，不是使用者裁示；「Windows 優先」一項的依據是使用者 2026-11-24 的指示，落實方式是 controller 的決定。來源是 M7 SDD 的 `t5-slice-plan.md`（只讀規劃員的方案，檔尾是 controller 的採用決定）與 `user-windows-first-ruling-20261124.md`；T5-0 的結案紀錄見 M7 note「最新：T5-0 結案（2026-11-24）」節。記號同上方「檔案責任圖」（`S/`＝`scripts/verification/`）。本節不勾、也不改上方任何一行；T5-0（T5 Step 0）沒有專屬核取框，:548 屬 T5-5。
+
+### T5 切片與對應的既有核取行
+
+順序 T5-1 → T5-2 → T5-3 → T5-4 → T5-5。完整 run-all 只在 T5-5 之後跑一次，中間各段做 focused、審查與 push CI。換頁排在選門之前，因為 `same_key_new_generation_or_player_never_selects` 需要 HOME remap 產生的新 generation。
+
+| 段 | 名稱 | 對應的既有核取行（括號內是該行屬於本段的部分） |
+| --- | --- | --- |
+| T5-1 | HOME 門模型與單門幾何（純函式與資源） | :313（`home_station_one_has_25_cells_in_four_orientations`）、:319（幾何 builder 的 HOME 模式、`home_marker`、`MembraneStateTest` 全狀態 oracle）、:325（四朝向 25∩入口 25=0）、:329（變異 station1→0） |
+| T5-2 | HOME 入場與未選定返 B | :315 全部；:317（startup restore 除外）；:313（`cancel_or_restart_returns_to_b` 的取消部分）；:323 末句（未選 RETURNING 走無歷史 checked remove）；:325（`MeasuredWorldSaveCheckpoint.ready/save(MinecraftServer,HomeSessionRecord)`、離線 JOIN 僅回 B）；:547（`startHome` 的 latch）；:308 的產出 `startHome`、`finishHomeReturn` |
+| T5-3 | HOME 換頁與容量 pending | :319（remap／頁面伸展同一 HOME mode）；:325（`formal_tick_capacity_pending_preserves_home_mapping`、換頁無第二扇、正式 remap 時舊候選 append 嘗試侵占新舊 lease 預留） |
+| T5-4 | 唯一 HOME 選擇與保留式返 B | :321；:323（末句除外）；:313（`same_key_new_generation_or_player_never_selects`）；:319（refreshCandidates／interaction 同一 HOME mode、一般門不產生候選）；:325（真互動成功、A SOURCE fast path 與舊 profile 仍可選、延遲中各種變更零 selection、兩人同 tick、A 停用前後只回 B）；:548 需要的 COLLAPSING 返還引擎（開服重驗在 T5-5） |
+| T5-5 | 開服接手、corridor-recovery 原生鏈、完整回歸與 T5 結案 | :317（startup restore）；:327；:325（未選重啟僅回 B）；:313（`cancel_or_restart_returns_to_b` 的 restart 部分）；:548（T5 Step 0 第 6 點）；:331 |
+
+- 規劃員方案以「:313 第二項／第三項」稱呼後兩個 RED；上表直接寫案名，以免和 :313 的文字順序混淆。
+- :319 的「overlay 同一 HOME mode」在方案沒有分到哪一段：由 T5-1 Step 0 確認歸屬（幾何 overlay 屬 T5-1，若涉 Space 接線則交 T5-2）。
+
+### C8 擴檔（:302、:304 沒有列的檔）
+
+- T5-2：`P/chamber/ChamberActivationService.java`（B 資格預覽；controller 採用「優先不改既有方法、保持拒絕 PROJECTION，新 API 以加法實作」，位置由 T5-2 implementer 依讀碼決定並記錄）、`P/persistence/MeasuredRecoveryPhase.java`、`G/mixin/MeasuredCheckpointFaultMixin.java` 與 `G/mixin/SessionTransferFaultMixin.java`（新增 overload 時，同一個 commit 補完整 descriptor）、`src/testmod/java/dev/quantumchamber/persistence/M7CapacityFixture.java`。
+- T5-3：`src/testmod/java/dev/quantumchamber/persistence/M7CapacityFixture.java`（容忍一列活的 HOME 列並計入 padding）。
+- T5-4：`P/persistence/MeasuredRecoveryPhase.java`；hook 安裝點（`P/collapse/CollapseService.java` 或 `P/collapse/HomeRootFence.java`）；注入用的 `G/mixin/*` 與 `src/testmod/resources/quantumchamber-test.mixins.json`。
+- T5-5：`G/M7HomeClosurePhases.java`（`rows()`）；視需要 `G/mixin/M7HomeCorridorWindowMixin.java` 與 `src/testmod/resources/quantumchamber-test.mixins.json`；`S/run-all.ps1`、`.github/workflows/build.yml`、`S/README.md`（原生列數、phase 數與 CI 分片）。
+
+### C9 追加 mutation（:329、:547 以外）
+
+- T5-1：marker=true 的 variant 指回舊模型。
+- T5-2：`finishHomeReturn` 之前省略 checkpoint；`unsupportedReason` 移到 claim 之後（以 Windows 模擬版殺）。
+- T5-3：HOME 容量拒絕改送 RETURNING，或不撤回多保留的 slot。
+- T5-4：選門後不釋放 SELECT_CHECK 票。
+- T5-5：attach 對 HOME 列不取 B 來源票（或取在 Root 世界）；attach 把 HOME MEASURED 轉成 RETURNING。
+
+### C1～C7、C10～C13、X1、X2、U1、U2
+
+- C10：T5 Step 0 第 7 點（B2a-M3）、第 8 點（Phase A M6）、第 9 點（同 SID guard、`onEntryStopped`）交 T6。
+- C11：`startHome` 的檢查順序是 latch → `PlayerCheckpointStore.unsupportedReason` → claim；兩者都在任何 claim、ticket、reservation 或 ARMING 之前（:317、:547）。
+- X1：spec §6 :186 的 RETURNING checkpoint 只對 HOME 實作。
+- X2：T5 不新增玩家可見文字（訊息 key 屬 T7）。
+- C1：RED commit 只加 no-op 腳手架或 stub（例如 T5-1 的 `M7HomeDoorLayoutTest`、T5-2 的 `startHome` 回 REJECTED），以取得具名 RED。
+- C2：見上方 C8 的 T5-2 第一項。
+- C3：`finishHomeReturn` 的守門採一次性 proof（比照 `HomeClosureProof`）；public `terminateHome` 是否收窄，由 T5-2 implementer 評估並列入審查。
+- C4：未選定的取消入口沿用 gateway 的 `returnToOrigin`。
+- C5：非同步 START_CHECK 的回傳與續行，由 T5-2 implementer 設計並記錄。
+- C6：root 票的注入用 testmod mixin。
+- C7：原生列的組成與 CI 結構到 T5-5 再定。
+- C12：T5 的返還引擎涵蓋 COLLAPSING（與 MEASURED 同路徑，開服重驗在 T5-5）。
+- C13：HOME 以加法分支實作。
+- U1：M7Runtime 上限 600 秒；T5-2 之後實量本機與 CI 的 M7 gate 耗時，超過約 450 秒先報使用者，不自行放寬。
+- U2（T5 新案的止損計數）見 M7 note 上述結案節「計數」。
+- 原件：SDD `t5-slice-plan.md`，SHA-256 `A2B7575DE2EA374498CA4166A4D9477301A9C0A7A6C4FC61F47B118111C8A8E2`。
+
+### Windows 優先（依使用者 2026-11-24 指示；落實方式是 controller 的決定）
+
+- 使用者原話與 controller 執行說明見 M7 note 上述結案節「止損與使用者裁示」第 5 點與 SDD 原文檔。
+- Task 5～8 中要求 Ubuntu 證據的項目（:317 的 Ubuntu 拒絕前後零副作用、:395 的兩平台各自 M7 全 GameTest 與 Ubuntu `formal_projection_checkpoint_unavailable_has_no_side_effects`、:397 與 :408 的兩平台 JUnit／GameTest），改以 Windows 上的模擬驗證（例如 `CheckpointPlatformFault`），Ubuntu 只照錄；結案 docs 標「Ubuntu 未採計（暫停雙平台驗證）」。
+- 不新增 Ubuntu 專屬的測試案例；既有 Ubuntu 案照留、照跑、不擋。CI 的結案判定逐 job 看 Windows 各 job。
+- M7 結束前是否補一次雙平台驗證，之後另問使用者。

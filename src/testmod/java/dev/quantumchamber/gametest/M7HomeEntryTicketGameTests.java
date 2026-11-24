@@ -37,7 +37,7 @@ import net.minecraft.world.chunk.WorldChunk;
  * M7 T4B（spec v1.6 C、V14）：回程收尾時替 B 取有界票。HOME 列的 CloseIntent=CLOSE 已 checked、exact live B world 存在，但 B 的 home chunks 沒有載入、B 無人無票時，
  * 回程終局 owner 以 ≤4 refs 的 B 收尾票有界載入 B，再照 §5.3 的順序收尾。fixture 沿 {@link M7HomeClosureGameTests.Projection}（A 原艙＋同艙 COMPLETE 的 B 投影），
  * 建好之後放掉測試票，等 B 的 home chunks 全部卸載才開始。B 收尾票 owner（{@code dev.quantumchamber.collapse.HomeEntryTickets}）以反射讀取：T4 沒有這個類，RED 時讀成「沒有票」。
- * 冷 B 案（B 未載入時由正式 B 收尾票載入 B）在放掉測試票之前先生成 B 地形（{@link #whenPregeneratedBUnloaded}），取票當下 B 仍是未載入，正式票從磁碟載入 B。
+ * 冷 B 案（B 未載入時由正式 B 收尾票載入 B；共 7 案，{@code close_ticket_never_full_releases_and_backs_off} 除外）在放掉測試票之前先生成 B 地形（{@link #whenPregeneratedBUnloaded}），取票當下 B 仍是未載入，正式票取得後不必在票期內現場 worldgen（各案由誰載入 B，見 {@code scripts/verification/README.md} 的冷 B 說明：部分案例另有 fixture 助載或 FakeBackend 前段）。
  */
 public final class M7HomeEntryTicketGameTests implements FabricGameTest {
     private static SuperpositionSessionManager gate() { return (SuperpositionSessionManager) ChamberSessions.gateway(); }

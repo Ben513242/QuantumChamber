@@ -121,7 +121,15 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-24 最新：Codex 交回，Claude 接手為 controller（使用者原話：「codex回報換你繼續做」）。** controller 讀法（不是使用者逐字裁示，已告知使用者，使用者回覆「好」）：恢復一般 T5-0 工作，含門故障夾具的正式 test-only 修正；不改 production、斷言、票期與時限；修正後此門案例再有任何非預期失敗即停並問使用者，共用冷載計數維持 2/3。夾具設計見 M7 SDD `t50-door-fixture-design.md`。T5-0 仍 OPEN，T5～T8 未啟；交接檔仍是 [`docs/handoffs/2026-11-19-m7-codex-t5-handoff.md`](docs/handoffs/2026-11-19-m7-codex-t5-handoff.md)（第 10 節有 Codex 期間的完整紀錄）。
+**2026-11-24 最新：T5-0 結案，下一步 T5-1。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-0 結案（2026-11-24）」節；T5 的切法見 M7 SDD `t5-slice-plan.md` 與 plan 檔尾「2026-11-24 T5 切片與追加（controller）」節。
+- 範圍 `c533193..98036e8`，production 最後一筆 `19d6e3b`。完整回歸：`6db3ce6` 的 `run-all-bc6ed335…` 自然 `END ALL exit=0`，採計 26 項全過。之後各筆只改 testmod、README、workflow 與文件，依 B+C 採計（controller 依既有規則與使用者 Windows 優先指示的判定）。
+- `98036e8` 已 push，`git ls-remote` 讀回相同。CI 45342810380（attempt 1，push，completed／success，2026-11-24 台北 15:34:21）十個 job 全部 success：Windows 8 個 job 全 success，依此結案；Ubuntu 兩個 job 也 success，只照錄、不採計。原件 M7 SDD `ci-45342810380-98036e8/terminal-run.json`。
+- 結案判定（controller 依 B+C 與 Windows 優先規則）：production 完整回歸 `6db3ce6`，加上之後 test、workflow、docs 各一席審查與定向，加上這個 run 的 Windows 各 job 全 success。結案 docs commit 的 CI 終局先記在 SDD `STATUS.md`，下次文件提交再收錄。
+- 使用者 2026-11-24 的裁示：冷 B 案選「測試先生成 B 地形（建議）」；先以 Windows 為主（常駐規則見下方「Windows 優先驗證（使用者 2026-11-24）」段）。題目、選項與原話見 note 該節「止損與使用者裁示」。
+- 止損：任何冷 B 案或門故障案再有非預期失敗，即停下問使用者；T5 新案各自起算，同一 fixture 第三次非預期失敗才停（controller 的決定）。都只計 Windows。
+- 下一步：T5-1（HOME 門模型與單門幾何）→ T5-2～T5-5（controller 的排序）。開始 T5 的依據是使用者原話「好，CI 綠了就繼續做 T5」；「CI 綠」以 Windows 各 job success 判定，這是 controller 的讀法。main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-24：Codex 交回，Claude 接手為 controller（使用者原話：「codex回報換你繼續做」）。** controller 讀法（不是使用者逐字裁示，已告知使用者，使用者回覆「好」）：恢復一般 T5-0 工作，含門故障夾具的正式 test-only 修正；不改 production、斷言、票期與時限；修正後此門案例再有任何非預期失敗即停並問使用者，共用冷載計數維持 2/3。夾具設計見 M7 SDD `t50-door-fixture-design.md`。T5-0 仍 OPEN，T5～T8 未啟；交接檔仍是 [`docs/handoffs/2026-11-19-m7-codex-t5-handoff.md`](docs/handoffs/2026-11-19-m7-codex-t5-handoff.md)（第 10 節有 Codex 期間的完整紀錄）。
 
 **2026-11-20 D1已完成並停止；T5-0仍OPEN，T5～T8未啟動。** 已push候選e3ce6e174be4438322d9e21f51762a6eb259ae7a，原席先審39023E…A912E新增C0/I0/M0；唯一Win1GT+6JUnit與唯一同SHA CI44693421016 attempt1均通過，CI completed/success/10job全success（台北15:55:46，terminal SHA AFD77297AACE03BBCEF05F8E832D969F7459197DE182110A6A3D9F890F6E9177）。三組marker均captured/觀測error0，故障時真票仍活且同END無票，本輪未重現舊Ubuntu；不能回填舊deadline/現場票，不宣告修復或結案。結果S/t50-diagnostic-once-results.md SHA D3048F5806310F8E4AECC939DED8A4C2C3A3626A821F45B3A57F9624162D7BB9；CI對照998F5E…7907017、原Zip雙hash已匹配。Win1/1與CI1/1全用，原3/3等FAIL/計數保。停止新增驗證/修正/commit/push；三狀態文件保未提交結果更新，避免第二CI；後續另待user裁示。
 
@@ -237,6 +245,17 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
   - 同一 CI run 中只要有其他任何失敗，照原規則停下回報；
   - 符合範圍時，該次 CI 不阻擋 task 結案，但結案 docs 要逐筆列出被忽略的 run id、job、step 與簽章，不能寫成 CI 全綠。
 - T4A 結案沒有動用這條讀法（44281662893 十個 job 全部 success；44259424086 在裁示之前，且同 run 另有 Ubuntu 失敗，不符合範圍）。
+
+**Windows 優先驗證（使用者 2026-11-24）：** 13:44 使用者原話（主 chat，非選項題）：「我想要先以windows系統為主，先暫時逐步取消雙平台驗證，不然進度會一直被拖延」。14:02，controller 說明 Ubuntu 受控拒絕的回歸風險之後，使用者原話：「接收風險反正未來只在windows遊玩且本reop開源，所以就讓其他人解決Ubuntu linux問題吧」。原文檔：M7 SDD `user-windows-first-ruling-20261124.md`。
+- controller 的執行說明（不是使用者裁示），各項出處標在行末：
+  - CI 的 Ubuntu 兩個 job（`build`、`m7-validation (ubuntu-latest, Ubuntu)`）照跑但不擋 workflow（job 層 `continue-on-error`，`98036e8` 起）；Windows 各 job 不變。（第一步；原文檔記為已在回覆告知使用者，可更正）
+  - 結案只要求本機 Windows 門檻與 CI 的 Windows 各 job success；Ubuntu 失敗時不寫「CI 全綠」，也不因此停下或重開 task。（第一步，同上）
+  - plan／spec 要求 Ubuntu 證據的項目，結案 docs 標「Ubuntu 未採計（暫停雙平台驗證）」。（第一步，同上）
+  - 止損計數只算 Windows 的非預期失敗。（第一步，同上）
+  - Ubuntu 失敗不再調查或修正；結案 docs 只用一行記 Ubuntu 的結果（成功，或失敗的案名）。（14:02 追加的 controller 說明）
+  - 不新增 Ubuntu 專屬的測試案例，平台相依的行為以 Windows 上的模擬（例如 `CheckpointPlatformFault`）驗證；既有 Ubuntu 案照留、照跑、不擋。（14:02 追加；第一步原寫 Ubuntu 專屬行為的測試照寫、照跑，14:02 追加改為不新增）
+  - 目前不從 CI 移除 Ubuntu job，使用者要求時再移除。（14:02 追加）Ubuntu 若持續只產生雜訊，是否完全移除、M7 結束前要不要補一次雙平台驗證，之後另問使用者。（原文檔「之後的步驟」）
+  - 判讀 CI 時逐 job 看 Windows 各 job（`m7-validation (windows-latest, Windows)`、`m6-native`、四片 `m7-home-native`、`m7-home-native-aggregate`、`windows-native`）的 conclusion，不看 run 層的 conclusion：Ubuntu job 失敗時，run 仍可能是 success。（不在原文檔；冷 B 審查第 7 節的建議，controller 採用）
 
 **（歷史）2026-11-18：T4 Phase B 與 P1／P2 完成，各段審查清零（B2b-5 C0/I0/M2）；下一步 T4 完整回歸與同 SHA CI。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「T4 Phase B 與 P1／P2 完成，待完整回歸與同 SHA CI」節。
 - HEAD `e28784c`（已 push）；`926425c` 的 CI 44117707536 與 `e28784c` 的 CI 44198806056，十個 job 都全部 success（都是過程中的 CI，T4 結案以最終 SHA 為準）。Phase B 拆成 B0、B1、B2a、B2b-1～B2b-5，P1、P2 是期間插入的 production 修正輪；這個切分是 controller 的決定，不是使用者裁示。

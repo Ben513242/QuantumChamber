@@ -1,6 +1,6 @@
 # QuantumChamber
 
-> **M7（正規回程）已開工（2026-11-13）：** 分支 `codex/m7-return-home`，尚未合併 main。本分支已完成 T1～T4、T4A 與 T4B（回程終局與重啟防線、參與者關門取消後要親手關門才再出發、永久封存的艙可停用斷電後拆除、回程收尾時以有界票載入投影端）；投影艙仍不能啟動，也還沒有正規回程（T5～T7 待實作）。範圍見 [M7 實作紀錄](docs/implementation-notes/2026-11-13-m7-return-home.md)。
+> **M7（正規回程）已開工（2026-11-13）：** 分支 `codex/m7-return-home`，尚未合併 main。本分支已完成 T1～T4、T4A、T4B 與 T5-0（回程終局與重啟防線、參與者關門取消後要親手關門才再出發、永久封存的艙可停用斷電後拆除、回程收尾時以有界票載入投影端；T5-0 是 T5 的前置整理，以 CI 45342810380 的 Windows 各 job 結案），T5 進行中；投影艙仍不能啟動，也還沒有正規回程（T5 其餘部分～T7 待實作）。範圍見 [M7 實作紀錄](docs/implementation-notes/2026-11-13-m7-return-home.md)。T5 起（2026-11-24）只以 Windows 驗證，Ubuntu CI 照跑但不採計；Linux／Ubuntu 上的問題歡迎他人處理。
 
 > **M6 已整合（2026-11-12）：** annotated tag `m6` 指向 `53573fc`；main 之後只以文件與驗證腳本修正快轉到 `2255027`，兩者已推送。平行宇宙只有主世界，Nether／End 共用原版。完整證據、已知限制與實際 refs 見 [M6 實作紀錄](docs/implementation-notes/2026-10-24-m6-universe-generation.md) 與 [M6 人工 smoke](docs/manual-acceptance/2026-10-24-m6-manual-smoke.md)。
 

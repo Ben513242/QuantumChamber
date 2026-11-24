@@ -1,8 +1,200 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 最新：T5-0 結案（2026-11-24）
+
+狀態：T5-0 已結案。`98036e8` 的 CI 45342810380 的 Windows 各 job 都 success（Ubuntu 兩個 job 也 success，依 Windows 優先只照錄、不採計）。
+
+下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`，V 指 `.superpowers/verification/`，兩者都 gitignored。本節的事實讀自 S 的 `STATUS.md`（2026-11-24 各段與 2026-11-20 Codex 各段）、`t5-0-report.md`、`t5-0-codex-report.md`、`t5-0-codex-review.md`、`t5-0-ci-fix2-report.md`、`t5-0-ci-fix2-review.md`、`t50-diagnostic-once-results.md`、`t50-door-fixture-design.md`、`t50-door-fixture-report.md`、`t50-door-fixture-review.md`、`t50-cold-b-pregen-report.md`、`t50-cold-b-pregen-review.md`、`t5-slice-plan.md`、三份使用者原文檔與六個 `ci-*` 原件目錄，V 的 `run-all-bc6ed3352e204d2d87167eb1b2fecbfa`，以及 git 的唯讀查詢（含 `git ls-remote origin`）。下方「Codex 交回，Claude 接手」「D1受限診斷授權」「Codex 接手 T5-0」三節是過程紀錄，本節是彙整。
+
+- **結案判定**（controller 依 B+C 與 Windows 優先規則的判定，不是使用者裁示）：production 完整回歸 `6db3ce6`（`run-all-bc6ed335…` `END ALL exit=0`），加上之後 test、workflow、docs 各批的一席審查與定向，加上 `98036e8` 的 CI 45342810380 的 Windows 各 job 全 success。依下方「止損與使用者裁示」第 5 點的 controller 執行說明，CI 只要求 Windows 各 job success，Ubuntu 兩個 job 照錄。
+  - code pin：production 最後一筆是 `19d6e3b`。`git diff --stat 6db3ce6..98036e8 -- src/main` 為空，之後各筆只改 testmod、README、workflow 與文件。
+  - `git ls-remote origin` 讀回 `codex/m7-return-home` 是 `98036e8d97127217694ebf0c63a3033aa0eac445`，main 是 `2255027`。
+  - 完整回歸：`6db3ce6` 的 `V/run-all-bc6ed335…` 自然 `END ALL exit=0`，採計 26 項全過（見下方「完整回歸」）。
+  - 審查（每次都是一席，spec＋quality 同席）：首審 `c533193..df017d2` C0／I2／M2，fix1 原席複審 C0／I0／M0；fix2 C0／I0／M1；D1 C0／I0／M0；門故障夾具 C0／I0／M2；冷 B 先生成＋workflow C0／I0／M2。
+  - CI：結案前的五次 CI 有四次 FAIL（原判保留，都沒有 rerun），D1 那次十個 job 全 success；結案 CI 45342810380（`98036e8`）十個 job 全 success。見下方「CI 歷程」。
+  - T5-0 結案不代表 T5 完成。main 合併、tag、人工代操作、worktree 退役仍各自另問使用者。
+
+### commit
+
+| commit | 內容 |
+| --- | --- |
+| `b0ea0f8` | 第一批（Claude）：原生 SelfTest 預算改每次呼叫 1000 個＋120 秒，補 B 收尾票判定的負控 |
+| `c749739` | 第二批（Claude）：連坐缺口兩處、fixture checked 寫入失敗記 cause、T4B 審查 M-2 的門故障新案、M-7 判斷式收尾、CI 規模段時限 |
+| `8f3c977` | docs：交給 Codex |
+| `3ee0bef` | 第三批 RED（Codex）：T4B 審查 M-1、M-3 的具名 RED（`src/main` 不變） |
+| `19d6e3b` | 第三批 GREEN：`HomeClosure` 停止守門與 FULL 端點釋票、`SessionRecoveryState.java:1027` 註解、B2b5-M1（`m7-ci-gametest.ps1`）；**production 最後一筆** |
+| `df017d2` | docs：定向終局 |
+| `6849c84` | fix1（test）：首審 I-1、I-2、M-1、M-2 |
+| `6db3ce6` | docs：複審清零與完整回歸起點（完整回歸的 HEAD） |
+| `19e9aac` | fix2（test）：門故障案在正式票之後才準備投影端 |
+| `e3ce6e1` | D1（test）：門故障瞬間的票與就緒觀測，只記錄 |
+| `73f26e8` | docs：D1 結果同步、Codex 交回 Claude |
+| `e5690ef` | 門故障夾具（test）：助載時同步載入半徑 2，補故障瞬間持票見證 |
+| `1c61292` | docs：README :849 不把未斷言的性質寫成已驗證（門夾具審查 M-2，controller 修） |
+| `81ff022` | 冷 B 先生成（test）：7 個冷 B 案取票前先生成 B 地形、時序 marker；門夾具審查 M-1 |
+| `98036e8` | workflow：Ubuntu 兩個 job 照跑但不擋 |
+
+- 範圍 `c533193..98036e8`，共 15 筆。`3ee0bef`、`19d6e3b`、`6849c84`、`19e9aac`、`e3ce6e1` 同時帶 AGENTS、本 note 或交接檔的狀態更新（Codex 期間的做法）。
+
+### 各批要點
+
+- 第一批（`b0ea0f8`，S `t5-0-report.md`）：依使用者 2026-11-19 11:5x 的 SelfTest 上限裁示，每次 `-VerifySummary -SelfTest`／`-VerifyAggregate -SelfTest` 呼叫最多 1000 個負控、120 秒，超過分別是 `M7_HOME_SELFTEST_BUDGET`、`M7_HOME_SELFTEST_TIME`；補 `M7_HOME_REOPEN_B_TICKET`、`entryTicketLease` 的負控。新數：單份完整 404、family 三份 434、門態五份 454。變異 MA～MH 八個都以具名錯因殺掉、逐位元還原。
+- 第二批（`c749739`）：`sharedEntry` 外層失敗走既有正式收尾；M4 readback probe 的 journal 寫入改走正式 schema5 路徑；fixture checked 寫入失敗記 `TESTMOD_FIXTURE_WRITE_FAILED … cause=…` 再原樣丟出；T4B 審查 M-2 的新案 `close_ticket_released_when_the_door_write_fails_and_backs_off`（`backOff` 單點變異以 `HANDOFF_FAIL_TICKET_HELD` 殺掉）；M-7：`until` 的判斷式丟出時先跑該 context 的收尾；CI 規模段兩個 step 加 `if: ${{ !cancelled() }}` 與 20／10 分時限。
+- Codex 接手（2026-11-20）後，交接 HEAD `8f3c977` 的 CI 44480505340 Windows budget 案失敗（見下方「CI 歷程」）。Codex 期間的 controller 決定（不是使用者裁示）：budget 案只在合時、同 SID、exact B 的正式 `CLOSE_CONVERGE` 票已在 tick 結束時觀察到之後，才由 fixture 補 B ready；原時限、額度與斷言不變（S `t5-0-codex-report.md`）。
+- 第三批（`3ee0bef` RED → `19d6e3b` GREEN）：T4B 審查 M-1、M-3。
+  - RED：root `S/c-t50-red-ef21bd4f` 3 案恰 2 FAIL（`RESTART_ROOT_STOP_WRONG_TICKET`、`CLOSE_FULL_INVALID_TICKET_RETAINED`），production 未改。
+  - GREEN：`restartVerifies` 排除已有 stopReason 的列；票 FULL 而且端點決定性非 VALID 時，兩種票用途都在同一個 tick 釋票、以正確原因 WARN 並退避（UNKNOWN 仍有界等待）；到上限的 ERROR 提示補 B 端點合法性。小集合 5/5；直接變異 M1、M3 各只有目標案 FAIL，`HomeClosure.java` 還原後 SHA-256 `5EBDE4E8…386AD`。
+  - 同一筆另含 `SessionRecoveryState.java:1027` 註解的歸屬（改標為 controller 的判讀，不是使用者裁示）與 B2b5-M1：`m7-ci-gametest.ps1` 核每個 `M7*Test.java` 都列入 Main 或 Scale，未支援的宣告形式以 `M7_JUNIT_DECLARATION_FORM` 拒絕。
+  - 乾淨 `19d6e3b` 定向兩輪：Main JUnit 53／GameTest 55、Scale 11、default 5、M5 2，VerifyOnly＋SelfTest 15／13 例。
+- fix1（`6849c84`）：首審 I-1（fixture checked 提交失敗時保留 cause）、I-2（判斷式清理的 close 失敗仍執行 hooks）、M-1（執行負控之前就核 1000 上限）、M-2（README 實測值）。首個 GREEN `S/c-t50-f1-green-4ee63593` 因新 oracle 期待簡名 `IOException`（實際是 `java.io.IOException`）非預期 FAIL，原判保留；只校正 oracle 後新 nonce 2/2 PASS。Main covering JUnit 53／GameTest 57、SelfTest 15。
+- fix2（`19e9aac`）：CI 44674890854 的門故障案失敗之後，改成在 tick 結束時實際看到同 SID exact `CLOSE_CONVERGE` 首票、正確 refs 之後才由 fixture 保持 B；門故障、同 SID WARN 與下一個 tick 的退避一起成立才驗退避，其他原因的退避具名 FAIL。既有 `backOff` 單點變異恰一個目標 FAIL、逐位元還原；Main 53／57、SelfTest 15。
+- D1（`e3ce6e1`）：使用者授權的單輪診斷（見下方「止損與使用者裁示」第 1 點），只加觀測 marker `M7_T50_DOOR_DIAG_V1`，原斷言與期限不變；Windows 1/1、CI 1/1 已用。三組有效對照（本機 Windows、CI Windows、CI Ubuntu）助載之後 entity／checkpoint 就緒分別晚 91、96、167 tick，故障距期限分別尚有 108、103、32 tick。舊 Ubuntu 失敗沒有重現，不能回填舊現場或歸因平台（S `t50-diagnostic-once-results.md`）。
+- 門故障夾具（`e5690ef`）：設計 S `t50-door-fixture-design.md` 讀碼推論，正式 B 收尾票是 level 31（ENTITY_TICKING），entity 要等每個 home chunk 周圍 5×5 全部 FULL 才載入；原夾具只到 level 33，外圈要在正式票之後現場 worldgen。
+  - 修正：助載的同一個 test callback 以同步 `getChunk`（不消耗 tick）把半徑 2 載到 FULL；加兩項見證（助載後半徑 2 全 FULL；門寫入失敗的瞬間仍持同一份首票、tick 小於期限）與夾具前提的錯因。
+  - 負控 NC-A（撤同步載入）、NC-B（半徑 1）、NC-C／C′（租期到期之後才故障）、NC-D（`backOff` 不釋票）都以預期錯因失敗、逐位元還原。entity 就緒相對首票：無同步載入 +79、半徑 1 +35、半徑 2 一律 +2 tick。
+  - 乾淨 `e5690ef`：門 batch 5/5、整檔 10/10、Main JUnit 53／GameTest 57、SelfTest 15。
+  - `1c61292` 是 controller 依審查 M-2 改 README :849 一句。
+- 冷 B 先生成（`81ff022`）：依使用者所選「測試先生成 B 地形（建議）」（見下方「止損與使用者裁示」第 4 點）。
+  - 7 個冷 B 案在 B 就緒、放掉測試票之前，以同步 `getChunk` 把 B 各 home chunk 周圍半徑 2 的聯集載到 FULL 並自檢（否則 `PREGEN_REGION_NOT_FULL`），之後照原流程等 B 卸載；另加時序 marker `M7_T50_COLD_B_V1`，只記錄、不參與判定。同一筆修門夾具審查 M-1：`HANDOFF_FAIL_ENTITY_REGION_NOT_FULL_AT_ASSIST` 只在助載發生過時命名。
+  - A/B 對照（commit 前各一次）：首票到 checkpoint 前置就緒，有先生成時 `restart_verify` 1、`close_loads` 10 tick，撤除先生成時 56、42 tick；兩變體四案都通過，這是機制對照，不是 pass／fail 判定。負控（只載半徑 1）以 `PREGEN_REGION_NOT_FULL` 失敗、逐位元還原。
+  - 乾淨 `81ff022`：整檔兩輪各 10/10、Main JUnit 53／GameTest 57、SelfTest 15；全部 marker 的 `homeFullAtFirstLeaseEnd` 都是 0（取票那個 tick 結束時 B 的 home chunks 0 格 FULL）。
+- workflow（`98036e8`）：`m7-validation` 加 `continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}`、`build` 加 `continue-on-error: true`；`m6-native`、四片 `m7-home-native`、`m7-home-native-aggregate`、`windows-native` 不變，也沒有 job 以 `needs` 依賴這兩個 job（冷 B 審查第 7 節）。
+
+### 冷 B 先生成的範圍（審查 M-1、M-2）
+
+- 7 案取票當下 B 都仍是「未載入」；之後誰載入 B 各不相同（冷 B 審查 M-1，實作報告第 1 節）：
+  - 由正式票獨力載入：`close_loads_unloaded_b_with_bounded_ticket`、`restart_verify_ticket_loads_b_for_unreadable_seal`、`close_ticket_releases_the_root_ticket_first`；`close_ticket_released_on_reload_and_stop` 的前兩份票是 FakeBackend，換回原生 backend 後的第三份原生票獨力載入。
+  - 有 fixture 助載：`close_ticket_budget_exhausted_warns_and_retries`、`close_ticket_releases_at_full_with_invalid_entry` 在看到正式票之後由 fixture `holdChunks` 助載。
+  - FakeBackend 前段：`restart_seal_with_root_stop_freezes_close_before_loading_b` 的首票是 FakeBackend（不加票），之後 B 由 fixture `holdChunks` 載入。這一案與 `close_ticket_releases_at_full_with_invalid_entry` 的先生成只是統一前提，對判定沒有作用。
+  - 先生成保證的是所需地形已生成、不必在 200 tick 票期內現場 worldgen；嚴格說不一定從磁碟讀，剛卸載的 chunk 可能還在卸載佇列或 IO 快取。本筆已依此改寫 `scripts/verification/README.md` 的對應說明。fixture 類別 Javadoc（`M7HomeEntryTicketGameTests.java:40`）本筆由 controller 改寫（只改註解）：舊句「正式票從磁碟載入 B」改為註明冷 B 共 7 案、`close_ticket_never_full_releases_and_backs_off` 除外，並寫「正式票取得後不必在票期內現場 worldgen」，指向 README 的逐案說明。
+- `close_ticket_never_full_releases_and_backs_off` 不納入先生成，是 controller 的決定。
+  - controller 當時記的理由有兩處：原文檔 controller 執行說明的「`never_full` 以 FakeBackend 永不 FULL，不在內」，以及 S `STATUS.md` 2026-11-24 14:3x 段的「同型風險主要在 Ubuntu，依 Windows 優先不擋；列觀察，controller 決定」。
+  - 冷 B 審查 M-2 事後依讀碼指出排除可以成立的依據：它換回原生 backend 之前已把退避歸零，第一份原生票到期後只退避 200 再重取，`CLOSE_TICKS` 600 內能容忍一次到期；`close_ticket_released_on_reload_and_stop` 收尾前已用掉 200 的退避，一次到期就超過 600，所以後者納入。「以 FakeBackend 永不 FULL」不是這個依據。
+  - 它仍是 GameTest 中唯一在票期內現場 worldgen 的冷 B 收尾，也就是 Windows GameTest 上唯一同型的殘留曝險；原生 `restart-close-unloaded-b` 是另一條票期內可能現場 worldgen 的路徑，依裁示不改。它在 Windows 上非預期失敗時，依止損停下問使用者，不當成與冷載無關。
+
+### 完整回歸
+
+- root `V/run-all-bc6ed3352e204d2d87167eb1b2fecbfa`，HEAD `6db3ce681bb9a960df7c34a126444c3c843795bd`（console 第 2 行 `STATUS ` 之後為空），holder `S/c-t50-full-434bb30749704defa932f6165b595858` outer 0。console 第 444 行 `END ALL exit=0 HEAD=6db3ce68…`（2026-11-20 12:27:36 台北）。只跑一次，沒有重跑。
+- `summary.json` SHA-256 `3B8EDB79B5C363C41C8646E148D7D1CC1FCF62E6E62DCC3636179065B9B43780`，status PASS。console 第 442 行（逐字）：`SUMMARY default=166/166 windows=76 legacy=1/1 m5=60/60 m6=35/35 m6pace=22.1 normal=13/13 perTest=43+13+1 junit=1199 failures=0 errors=0 skipped=2 windowsCheckpoint=17 release=639entries/592classes sources=276 testmodHits=0 mainOnly=PASS m3=4+5 recovery=25 m5collapse=69 m6native=DIAGNOSTIC:2,FUNCTIONAL:25 ci=win:PASS,ubuntu:PASS m7native=COMPLETE:47 m7scale=PASS:11`。
+  - skipped 2 都是 `NonWindowsPlayerCheckpointStoreTest`，在 Windows 跳過的既有案；M7 集合 zero skip。
+  - M7 gate `M7_VERIFIED PASS platform=Windows junit=53 gametest=57`（launched 與 VerifyOnly 兩行）；規模段 `M7_SCALE_VERIFIED PASS … junit=11`。
+  - M7 原生 `M7_HOME_VERIFIED_COMPLETE PASS rows=47 phases=94 negativeChecks=404 selfTestSeconds=2.2`；M6 native `chains=9 phases=27 negativeChecks=479`。
+- 採計：controller（Codex）以唯讀腳本逐項核對，26 項全 true（`ACCEPT_FAILS=0`）；改用舊的 46／92／376 對同一個 root 核對，恰 5 項 false（`ACCEPT_FAILS=5 native.rows,native.phases,native.verifyLine,native.neg,summaryLine.native`）。原件 S `c-t50-accept-8dd3f3a05704471a9778ead6de9c596f`。
+
+### CI 歷程
+
+| run | head | 結論 | 失敗的 job 與案 | 處置 |
+| --- | --- | --- | --- | --- |
+| 44480505340 | `8f3c977` | attempt 1 failure，10 job 中 9 success | `m7-validation (windows-latest, Windows)` 的「執行 M7 獨立 GameTest」：`close_ticket_budget_exhausted_warns_and_retries`（`BUDGET_RETRY_NOT_CLOSED`） | 原判保留、不 rerun；budget 案的 fixture 責任分區（見「各批要點」） |
+| 44674890854 | `6db3ce6` | attempt 1 failure，9 success | Windows 同一 step：`close_ticket_released_when_the_door_write_fails_and_backs_off`（`HANDOFF_FAIL_TICKET_HELD`；`doorWriteFaultHit=false`、`oneDoorWarn=false`：首份票租期到期的退避被判斷式當成門故障） | 原判保留、不 rerun；fix2 `19e9aac` |
+| 44680282020 | `19e9aac` | attempt 1 failure，9 success（Windows M7 success） | `m7-validation (ubuntu-latest, Ubuntu)` 的同一 step：同一門故障案（53 案 1 FAIL；只有 `leaseHeldBeforeTheFailure=false`） | 原判保留、不 rerun；同夾具 3/3 止損，停下問使用者 → D1 |
+| 44693421016 | `e3ce6e1` | attempt 1 success，十個 job 全 success | — | D1 診斷；未重現，不因此宣告修復或結案 |
+| 45331322846 | `1c61292` | attempt 1 failure；Windows 各 job 與 Ubuntu `build` success | Ubuntu 同一 step（53 案 2 FAIL）：`restart_verify_ticket_loads_b_for_unreadable_seal`（`verifiedWithARestartVerifyTicket=false`）、`close_loads_unloaded_b_with_bounded_ticket`（`CLOSE_PENDING_WITHOUT_B_TICKET`）；門故障案 PASS | 原判保留、不 rerun；共用冷載超過 2/3，停下問使用者 → 冷 B 先生成 |
+| 45342810380 | `98036e8` | attempt 1，event push，completed／success；十個 job 全部 completed／success，沒有 failed step；最後更新 2026-11-24T07:34:21Z（台北 15:34:21） | — | 結案 CI。Windows 8 個 job（`m7-validation (windows-latest, Windows)`、`windows-native`、`m6-native`、`m7-home-native` 的 passable／ordinary／sealed／restart-receipt 四片、`m7-home-native-aggregate`）都 success；Ubuntu 2 個 job（`m7-validation (ubuntu-latest, Ubuntu)`、`build`）也 success，依 Windows 優先只照錄、不採計 |
+
+- terminal 原件：S `ci-44480505340-codex-0befa5f8a4734cff83d2016383ae9418/run.json`、`ci-44674890854-6db/terminal-run.json`（SHA-256 `F67FFC2A…CFADBE7`）、`ci-44680282020-19e9/terminal-run.json`（`D437F89F…8553BC`）、`ci-44693421016-d1-e3ce/terminal-run.json`（`AFD77297…6E9177`）、`ci-45331322846-1c61/terminal-run.json`，45331322846 的 Ubuntu GameTest XML SHA-256 `ead3938e…5d9af5`；結案 CI 是 `ci-45342810380-98036e8/terminal-run.json`（SHA-256 `6b2225097710bdee0446f64a53f0afff50c80e23f78b835ace533f36f7bc442b`），event 另以 `gh run view` 讀回。
+- 45331322846 依下方第 5 點的 controller 執行說明：Windows 各 job 都 success，Ubuntu M7 的 2 FAIL 照錄、不擋；T5-0 改以 `98036e8` 的 Windows 各 job 判定是否結案，結果是 45342810380 的 Windows 各 job 全 success。
+- 沒有動用 M5 熔岩偶發的讀法。
+
+### 止損與使用者裁示
+
+1. **D1 受限診斷（2026-11-20）**：同門夾具達保守計數 3/3 後停下。原文檔 S `user-t50-diagnostic-authorization-20261120.md`，題目原文：
+
+   > 同門夾具已按保守計數達 3/3 止損。是否只授權補活票／租期／ready 與樣本觀測，原席審查後跑一次 Windows 定向＋新 SHA 的既有 CI，完成即停？不改 production、行為、斷言或時限，舊 CI 不 rerun。
+
+   使用者所選選項原文：
+
+   > 允許一次受限診斷（建議）
+
+   controller 執行邊界（不是使用者裁示，原文檔同名段）：只開一次診斷窗口，不重置 3/3 或其他計數，不授權正式修正或 T5～T8；即使碰巧通過也不宣告修復或 T5-0 結案。D1 已完成即停（見下方「D1受限診斷授權」節）。
+2. **Claude 接手（2026-11-24 11:3x）**：使用者原話「codex回報換你繼續做」。controller 讀法（不是使用者逐字裁示）見下方「Codex 交回，Claude 接手」節：恢復一般 T5-0 工作，含門故障夾具的正式 test-only 修正；不改 production、斷言、票期 200 與時限；修正後此門案例再有任何非預期失敗即停並問使用者；共用冷載計數維持 2/3。
+3. **CI 綠了就繼續（2026-11-24 13:1x）**：使用者原話「好，CI 綠了就繼續做 T5」（S `STATUS.md` 13:1x 段）。controller 執行（不是使用者裁示）：CI 全綠 → T5-0 結案 docs（一席審查）→ 派 T5；CI 若有非預期失敗仍照止損停報。`1c61292` 的 CI 45331322846 FAIL，所以停下（第 4 點）。之後「CI 綠」依第 5 點的 controller 執行說明，以 Windows 各 job success 判定。
+4. **冷 B 先生成（2026-11-24，原文檔標 13:4x）**：CI 45331322846 的 Ubuntu 兩個冷 B 案失敗，共用冷載超過 2/3，停下詢問。以 AskUserQuestion 提問，題目與選項由 controller 撰寫，原文檔 S `user-t50-cold-b-pregen-ruling-20261124.md`。題目（header「冷 B 測試」）原文：
+
+   > T5-0 的 CI 又失敗了：Ubuntu 上另外兩個「冷 B」測試沒過（門故障案這次通過）。原因和門故障案一樣：B 周圍的地形是取票後才現場生成，測試裡 200 tick 票期只有約 2 秒，Ubuntu 生成太慢。正式遊玩時玩家去過 B，地形通常已生成；票期約 10 秒。要怎麼處理？
+
+   選項原文：
+   1. 「測試先生成 B 地形（建議）」：「只改測試：這些冷 B 案在測試開始時先把 B 周圍 5×5 生成好並卸載，取票時 B 仍是未載入，正式票仍要自己載入 B，只是從磁碟讀、不必現場生成（貼近正式遊玩）。不改正式程式、斷言、票期與時限；審查、定向驗證、CI，再有非預期失敗就停下問你。」
+   2. 「先只讀調查再決定」：「不改任何檔，先把這次兩案的原件與所有冷 B 案的時序查清楚，帶著證據和修法選項回來再問你。較慢。」
+   3. 「先停在這裡」：「不修、不重跑，T5-0 維持未結案，T5 不開始，等你另行指示。」
+
+   使用者選擇：「測試先生成 B 地形（建議）」。
+
+   controller 執行說明（不是使用者裁示，原文檔同名段）：範圍是所有「B 未載入時由正式 B 收尾票載入 B」的 GameTest 冷 B 案，`never_full` 不在內，原生 `restart-close-unloaded-b` 不改；先生成之後取票當下 B 仍必須符合「未載入」判定；修正後，任何冷 B 案或門故障案在 candidate commit 之後再有非預期失敗，立即停下問使用者。
+
+   另外（S `STATUS.md` 2026-11-24 14:3x 段與實作報告第 9 節）：implementer 依上述定義把派工清單沒列的 `close_ticket_released_on_reload_and_stop` 也納入，controller 接受，實際 7 案。選項說明的「正式票仍要自己載入 B，只是從磁碟讀」與實際不完全相符，見上方「冷 B 先生成的範圍」。
+5. **Windows 優先（2026-11-24 13:44、14:02）**：原文檔 S `user-windows-first-ruling-20261124.md`。13:44 使用者原話（主 chat，非選項題）：
+
+   > 我想要先以windows系統為主，先暫時逐步取消雙平台驗證，不然進度會一直被拖延
+
+   14:02，controller 說明 Ubuntu 受控拒絕的回歸風險之後，使用者原話：
+
+   > 接收風險反正未來只在windows遊玩且本reop開源，所以就讓其他人解決Ubuntu linux問題吧
+
+   controller 執行說明（不是使用者裁示），各項出處標在行末：
+   - Ubuntu 兩個 job（`build`、`m7-validation` 的 Ubuntu 那一格）照跑但不擋 workflow（job 層 `continue-on-error`，`98036e8`）；Windows 各 job 不變。（第一步；原文檔記為已在回覆告知使用者，可更正）
+   - 結案：本機 Windows 門檻照舊；CI 只要求 Windows 各 job success。Ubuntu 失敗時不寫「CI 全綠」，也不因 Ubuntu 失敗停下或重開 task。（第一步，同上）
+   - plan／spec 要求 Ubuntu 證據的項目，結案 docs 標「Ubuntu 未採計（暫停雙平台驗證）」。（第一步，同上）
+   - 止損計數（門案例、共用冷載）只計 Windows 的非預期失敗。（第一步，同上）
+   - Ubuntu 失敗不再調查或修正；結案 docs 只用一行記 Ubuntu 的結果（成功，或失敗的案名）。（14:02 追加的 controller 說明）
+   - 之後不新增 Ubuntu 專屬的測試案例，平台相依的行為以 Windows 上的模擬（例如 `CheckpointPlatformFault`）驗證；既有 Ubuntu 案照留、照跑、不擋。（14:02 追加；第一步原寫 Ubuntu 專屬行為的測試照寫、照跑，14:02 追加改為不新增）
+   - README 補一句 Linux／Ubuntu 未驗證、歡迎他人處理。（14:02 追加；本筆依結案 docs 審查 M-4 改寫為「T5 起（2026-11-24）只以 Windows 驗證」，controller 的決定）
+   - 目前不從 CI 移除 Ubuntu job，使用者要求時再移除。（14:02 追加）Ubuntu 若持續只產生雜訊，是否完全移除、M7 結束前要不要補一次雙平台驗證，之後另問使用者。（原文檔「之後的步驟」）
+   - 判讀 CI 逐 job 看 conclusion，不看 run 層的 conclusion：Ubuntu job 失敗時 run 仍可能是 success。（不在原文檔；冷 B 審查第 7 節的建議，controller 採用）
+
+### 採計方式（controller 的判定，不是使用者裁示）
+
+- production 的完整回歸採 `6db3ce6`。`19d6e3b..6db3ce6` 沒有 `src/main` 變更，所以這次完整回歸涵蓋 production 最後一筆 `19d6e3b`。
+- `6db3ce6` 之後：`19e9aac`、`e3ce6e1`、`e5690ef`、`81ff022` 只改 testmod 與 README，`73f26e8`、`1c61292` 只改文件，`98036e8` 只改 workflow。依 B+C 採計：各批一席審查（fix2、D1、門故障夾具、冷 B 先生成＋workflow，結果見本節開頭）、各自的 Windows 定向（見「各批要點」）、`98036e8` 的 Windows CI（45342810380 的 Windows 8 個 job 全 success）；不新跑本機完整回歸。
+- 這是 controller 依既有 B+C 規則與使用者 Windows 優先指示的判定。
+- Ubuntu 未採計（暫停雙平台驗證）：`98036e8` 的 Ubuntu 兩個 job 結果照錄：45342810380 的 `m7-validation (ubuntu-latest, Ubuntu)` 與 `build` 都 success。
+- 本筆結案 commit 除文件外，含 `M7HomeEntryTicketGameTests.java:40` 這一行 testmod 註解（controller 改寫，見上方「冷 B 先生成的範圍」）。這行註解依 B+C 採結案 docs 的一席審查（S `t5-0-closeout-docs-review.md`）加這個 commit 的同 SHA Windows CI，不另跑定向；T5-0 的判定仍以 `98036e8` 的 Windows CI 為準。
+
+### 殘留與交接（controller 的決定，不是使用者裁示）
+
+- fix2 審查的 Minor：`RemovalWatch` 只記曾經移除，沒有記首次 checked 移除的 server tick，不能單靠最後的查詢排除未來 owner 在 retryAt 之前提早收尾（本輪沒有觀察到）→ T8 整分支審查。
+- production 觀察（門夾具設計第 6 節）：票 FULL 不等於 checkpoint ready；正式票 level 31，entity 載入要等 5×5 全部 FULL，所以 5×5 的 worldgen 須在租期內完成（正式伺服器 20 TPS 下租期約 10 秒；玩家曾在 B 時外圈通常已生成）→ T8 整分支審查評估。
+- 未驗：真停服（停服釋票只以反射呼叫 `closeAll(server, true)` 驗證）、RESTART_VERIFY 的真重啟（只在 GameTest 以反射注入開服集合驗證）。Step 0 relatch 變異在 Ubuntu 分支會不會被殺：依 Windows 優先不再追，Ubuntu 未採計（暫停雙平台驗證）。
+- 觀察：`quantumchamber-jars` artifact 只由不擋的 Ubuntu `build` 上傳（`build.yml:582–588`），Ubuntu build 失敗時可能缺席或殘缺（冷 B 審查第 10 節）。
+- 觀察：`scripts/verification/README.md` 其他段落仍以兩平台描述 CI（冷 B 審查第 10 節第 2 點）；本筆只在 M7 規模段的 CI 項補一句。
+- T4B 審查 M-3 中「同原因」的全歷史 WARN 去重仍為待辦（S `t5-0-codex-report.md`），T5 切片方案沒有列入。
+- 限制（冷 B 審查第 3 節）：先生成的自檢 `PREGEN_REGION_NOT_FULL` 只守半徑，不守有沒有呼叫；撤除先生成的變異不會讓任何案例失敗，只在 marker 記 `pregen.ran=false`。
+- 限制（冷 B 審查第 6、7 節）：Ubuntu 的 M7 Main step 沒有 step 時限，卡住時整個 run 可能拖到 job 的 90 分；job 層 timeout 與 `continue-on-error` 的互動、run 層 conclusion 怎麼呈現，審查標為低確定。依 Windows 優先只觀察。
+- plan :319 的「overlay 同一 HOME mode」在 T5 切片方案沒有分到哪一段：由 T5-1 Step 0 確認歸屬（幾何 overlay 屬 T5-1，若涉 Space 接線則交 T5-2）。
+- T5 Step 0 清單（下方「最新：T4B CLOSED（2026-11-19）」節「殘留交 T5 Step 0」）的處置：
+  - SelfTest 負控上限：`b0ea0f8`、`6849c84`（首審 M-1）。
+  - T4B 審查 M-1、M-3：`3ee0bef`、`19d6e3b`。M-2：`c749739`，門故障案的夾具之後經 `19e9aac`、`e5690ef`、`81ff022` 修正。M-7：`c749739`、`6849c84`（首審 I-2）。
+  - fixture checked 寫入失敗記 cause：`c749739`、`6849c84`（首審 I-1）。
+  - 既有第 1 點（連坐缺口兩處）、第 3 點（B2b5-M2）：`c749739`；第 2 點（B2b5-M1）、第 4 點（`:1027` 註解歸屬）：`19d6e3b`；第 5 點併入 SelfTest 上限。
+  - 第 6 點 → T5-5；第 7、8 點 → T6（T5 切片方案 C10，controller 採用）；第 9 點 → T6（Codex 期間 controller 的決定，見下方「Codex 接手 T5-0」節）；第 10 點 → T5-2～T5-4 全段的約束（新 GameTest 不得斷言絕對世界數）。
+  - 門夾具審查 M-1 原排 T5 Step 0，已併入 `81ff022`；M-2 由 controller 在 `1c61292` 修正。
+
+### 計數
+
+- AccessDenied：production pin `19d6e3b` 的完整回歸（HEAD `6db3ce6`）一次通過，沒有用到這個 pin 的單次重跑額度。
+- 完整回歸啟動器歷史 2/3 不變。
+- 門故障夾具：同夾具保守計數到 3/3 時停下（m7-dev1 門一開始就開著、44674890854 租期到期被誤作門故障、44680282020 持票前置未證；三次原因不同，不冒稱同一根因），之後經 D1 與 Claude 接手後的正式修正處理。共用冷載：45331322846 超過 2/3 時停下，經冷 B 裁示處理。`81ff022` 之後，任何冷 B 案或門故障案再有非預期失敗即停下問使用者；依 Windows 優先只計 Windows。
+- T5 新案（S `t5-slice-plan.md` 檔尾 U2，controller 的決定，已告知使用者）：各自起算，同一 fixture 第三次非預期失敗才停；只計 Windows。
+- 工具：fix1 首個 GREEN 的 oracle 簽章事件 1；D1 的靜態記錄器事件 1（編譯 `verified.json` 的 `sourceUnchangedDuringCompile=false` 是 PowerShell 自動變數 `Matches` 覆寫所致，原件保留，獨立讀回三個 hash 相同）。
+- 工具教訓（controller）：controller 的 CI 輪詢腳本用了本機沒有的獨立 `jq`，迴圈卡住；45342810380 實際在台北 15:34 完成，controller 15:45 才讀到。之後輪詢只用 `gh … --jq`。
+- M5 熔岩偶發：沒有動用。
+
+### plan
+
+- T5-0 沒有專屬的核取框；本筆不勾 plan 任何核取框（:548 屬 T5-5）。
+- plan 檔尾新增「2026-11-24 T5 切片與追加（controller）」節：5 段切法與對應的既有核取行號、C8 擴檔清單、C9 追加 mutation、C10、C11、X1、X2、C1、C3～C7、C12、C13、U1 的一行摘要與 `t5-slice-plan.md` 的 SHA-256，以及 Windows 優先下 Ubuntu 證據的處理。既有各行不動。
+
+### 下一步
+
+1. 本筆結案 commit 的 CI 終局先記在 S（`STATUS.md`），下次文件提交再收錄（controller 的決定）。
+2. T5-1（HOME 門模型與單門幾何），依 S `t5-slice-plan.md` 與 plan 檔尾新節。切成 T5-1～T5-5 與這個順序是 controller 依規劃員建議採用的決定，不是使用者裁示；開始 T5 的依據是使用者 13:1x 的「好，CI 綠了就繼續做 T5」，「CI 綠」以 Windows 各 job success 判定（controller 的讀法）。
+3. main 合併、tag、人工代操作、worktree 退役、PR、LICENSE 仍各自另問使用者。
 
 ## 最新：Codex 交回，Claude 接手（2026-11-24）
+
+（已被上方「最新：T5-0 結案（2026-11-24）」節接續。）
 
 - 使用者原話：「codex回報換你繼續做」。Claude 只讀核對 HEAD＝origin feature＝`e3ce6e174be4438322d9e21f51762a6eb259ae7a`、main `2255027`，之後接手為 controller。
 - controller 讀法（不是使用者逐字裁示；已在回覆告知使用者，使用者回覆「好」）：恢復一般 T5-0 工作，含門故障夾具 `close_ticket_released_when_the_door_write_fails_and_backs_off` 的正式 test-only 修正。不改 production、斷言、票期 200 與時限；修正後此門案例再有任何非預期失敗即停並問使用者；共用冷載計數維持 2/3。
