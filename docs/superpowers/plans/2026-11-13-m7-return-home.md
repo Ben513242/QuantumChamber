@@ -667,3 +667,51 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
 - Task 5～8 中要求 Ubuntu 證據的項目（:317 的 Ubuntu 拒絕前後零副作用、:395 的兩平台各自 M7 全 GameTest 與 Ubuntu `formal_projection_checkpoint_unavailable_has_no_side_effects`、:397 與 :408 的兩平台 JUnit／GameTest），改以 Windows 上的模擬驗證（例如 `CheckpointPlatformFault`），Ubuntu 只照錄；結案 docs 標「Ubuntu 未採計（暫停雙平台驗證）」。
 - 不新增 Ubuntu 專屬的測試案例；既有 Ubuntu 案照留、照跑、不擋。CI 的結案判定逐 job 看 Windows 各 job。
 - M7 結束前是否補一次雙平台驗證，之後另問使用者。
+
+### T5-1、T5-2 的追加（controller，2026-11-24）
+
+本小節是 controller 的決定，或 controller 採用的 implementer 設計與審查判定，都不是使用者裁示。兩段的結案紀錄見 M7 note「最新：T5-1、T5-2 結案（2026-11-24）」節。
+
+- 核取框：T5 各段共用上方 Task 5 的核取行。T5-5 的完整回歸與同 SHA CI 完成之前，不勾任何一行，連完全屬於 T5-2 的 :315 也不勾。
+- :308 產出的實際簽章是 `SessionRecoveryState.finishHomeReturn(MinecraftServer,HomeSessionRecord,CorridorPageManager.HomeReturnProof)`（C3）。proof 只能由 `CorridorPageManager` 在同一個 tick 內「全員已返還、走廊清空、HOME checkpoint 成功」之後建立，用一次即失效。public `terminateHome(MinecraftServer,HomeSessionRecord)` 收窄為一律拒絕，否則外部可以跳過 HOME checkpoint 移除列。
+- C2 的落點：`ChamberActivationService` 以加法新增 `evaluateEntryReadiness`、`entryPowered`；既有 `evaluateReadiness` 不變，仍拒絕 PROJECTION。
+- C6 的實際做法：T5-2 沒有新增 testmod mixin（`quantumchamber-test.mixins.json` 不在授權清單），改用既有注入點加 testmod 反射。宇宙 lifecycle 的 `ready` 與 gateway 的 `checkpointWarning` 由 hooks 還原；玩家恢復 marker 由 fix1 補上冪等的還原 hook；原艙票的 `backend` 隨 lease 關閉失效，不另還原。
+- 未確認 ARMING 的第一次核對排在 200 tick 退避之後，不在失敗的同一個 tick 補寫。照現狀採用，代價是 B 多佔約 10 秒，屬 fail-closed。延後的理由只是讓測試觀察得到持鎖，沒有安全上的好處（規格審查 M-1）。已知偶發窗口：`unchecked_home_arming_keeps_chamber_busy_until_converged` 的 40 tick hold 期間，若有其他 journal 寫出（例如 autosave，或其他 owner 的 checked flush），殘留會被合法地提前收斂，該案可能以 `UNCHECKED_ARMING_RELEASED` 偶發失敗。
+- 其他設計：
+  - `HomeRuntime` 是 `SuperpositionSessionManager` 的巢狀新型別，不改 `SuperpositionSession.initial` 的型別（implementer 設計，經規格審查接受）。
+  - HOME Space 的 `origin` 欄位放 Root（A）的權威，只用來取 chamber UUID 與朝向；入場與返還的世界一律取 `entry`。T5-3、T5-4 讀 `space.origin` 時要注意（implementer 設計，經規格審查接受）。
+  - `commitHomeInitial` 保留 legacy `commitInitial` 在 SUPERPOSITION 之後再做一輪 cohort 核對與 checkpoint（implementer 設計，經規格審查接受）。
+  - fix1 不另加「釋放 HOLD 票、真的讓 B 卸載」的案，改以來源票數的直接斷言加 mutation 驗證，避免增加冷載與耗時風險（controller 決定）。
+- legacy 方法本體：規格審查判定只加了 HOME 分派或做等價改寫，依 T5 切片方案 §5 不另跑 `m4-recovery-probe.ps1`、`m5-collapse-probe.ps1`，由 T5-5 的完整回歸涵蓋。
+- 審查 Minor、觀察與交接事項的分配（括號是來源）：
+  - T5-3 Step 0：
+    - `continueHomeStarts` 的例外若發生在 reservation 或 checked ARMING 之後，沒有收斂者（品質 M-1）。
+    - 全員已返還之後 B 不再是 exact live 時，收尾的 `ready()` 每個 tick 記一則 ERROR＋stack，沒有去重（品質 M-2）。
+    - ROLL_FORWARD_PENDING 沒有記 journal 退避，同一個 tick 會再寫一次（品質 M-8）。
+    - `startHome` 的 Javadoc「REJECTED 時沒有任何副作用」不精確（品質 M-9）。
+    - HOME 的 tick 段沒有例外隔離（品質 M-10）。
+    - （可選）unchecked 案收斂後補 `assertNoSourceTicket`（品質 fix1 複審）。
+  - T5-3 本體：`tickHome` 沒有 `retiring`／`tickRetirement`，`prepareRemap` 仍呼叫 legacy `durable()`（T5-2 交接）。
+  - T5-4 Step 0：
+    - 返還進度與未選定移除包進 session operation guard（spec §9.1），並補「guard 被占時不寫」的負控（規格 M-2）。
+    - proof 守門的負向殺手、移除恆拒的 public overload、改寫 `M7HomeAuthorityGameTests:282` 的斷言；選做：proof 綁定建立時的 tick（規格 M-3、品質 M-6）。
+    - HOME 門 key 的兩處寫死：`HomeSessionRecord.java:80`、`HomeJournalBudget.java:70`（T5-1 審查 M-2）。
+  - T5-4：
+    - HOME checkpoint overload 對 MEASURED／COLLAPSING 補測（規格 M-4）。
+    - 「不消耗 entropy／discovery」的直接斷言（規格 M-7）。
+    - `candidateDoor`／`CandidateDoorInteraction` 排除 HOME、`onUse` 先問 HOME hook。目前 `candidateDoor` 仍定位 HOME 門格，靠 `candidateSelectionRecord` 的守門擋下（T5-1 審查 M-1 的 T5-4 部分、T5-2 交接）。
+    - 走廊內死亡的重生落點（品質觀察）。
+  - T5-5：
+    - 開服後的 HOME 列沒有 runtime 也沒有 space（attach 不重建），`recoverHomeRows` 會略過。沒有 runtime 的收尾要 ack `completedReleases`：上限 64，不 ack 的話 64 趟後 `release()` 會丟例外（T5-2 交接、規格交接備註；後果見 SDD `t5-slice-plan.md` 第 1 節第 3 點）。
+    - 未確認 ARMING 的 QUARANTINED 路徑（`admitHome` CAS 不符）與寫出前被拒的路徑，沒有專屬案例（T5-2 交接）。
+  - T6：B 永久無效時，未選定 RETURNING 的出口（spec §9.2 托管）（品質觀察）。
+  - T7：
+    - STAGING 期間經 B 取消只能等 200 tick 逾時（品質觀察）。
+    - START_CHECK 逾時後的重試節奏（規格交接備註）。
+    - 建人工清單時，列入下方 T8 的 client log 檢查。
+  - T8：
+    - 人工 smoke（H05）執行時，檢查 client 進 HOME 走廊時 log 沒有 `Missing model`／`Unable to load model`（T5-1 審查 M-4）。
+    - 整合文件（發行說明）寫明 client 與 server 須同版，因為 bulkhead 的 state 數由 10 變 20（T5-1 審查 M-4）。
+    - `prepareHome` 在取得走廊票之前失敗時，艙會永久 BUSY，與 legacy 同構（品質 M-3）。
+    - HOME 與 legacy 平行重複程式的整理；`failHome` 的 WARN「HOME 入場交易保留 RETURNING」也用在 SUPERPOSITION 失敗與斷線，要依階段分開，注意測試依賴這個字串（品質 M-11）。
+- T5-1 legacy 逐格 hash 基準的出處：在未改 production 的 `a1468c3` 放暫時探針 `T51LegacyHashProbeTest`（不提交），以 `gates.ps1 -Mode M6JUnit` 印出 8 個 digest（四朝向 × 兩種語意），寫成 `J/corridor/M7HomeDoorLayoutTest.java` 的常數。探針原始碼 SHA-256 `dd14548e072e908d4b38ef756cb2a6603ec129aef0441cfb60bafcac9b39c949`，在 SDD root `t5-1-legacy-hash-probe-9f7f8e16`；SDD 是 gitignored，工作樹退役時會一起刪除。

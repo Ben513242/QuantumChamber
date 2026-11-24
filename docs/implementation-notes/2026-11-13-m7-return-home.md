@@ -1,6 +1,73 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）；T5 分 5 段，T5-1、T5-2 已依段落結案，T5 整體未完成（見「最新：T5-1、T5-2 結案（2026-11-24）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 最新：T5-1、T5-2 結案（2026-11-24）
+
+狀態：T5 分 5 段（見 plan 檔尾「2026-11-24 T5 切片與追加（controller）」節），T5-1、T5-2 已依段落結案；T5 整體未完成，完整回歸在 T5-5。
+
+下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`（gitignored）。本節的事實讀自 S 的 `STATUS.md`（2026-11-24 16:5x～21:1x 各段）、`task-5-1-brief.md`、`t5-1-report.md`、`t5-1-review.md`、`task-5-2-brief.md`、`t5-2-report.md`、`t5-2-review-spec.md`、`t5-2-review-quality.md`、`task-5-2-fix1-brief.md`、`t5-2-fix1-report.md`、`t5-2-review-quality-fix1.md`、`t5-slice-plan.md`、`t5-12-docs-review.md`、三個 `ci-*` 原件目錄，以及 git 的唯讀查詢。
+
+- **段落結案判定**（controller 的判定，不是使用者裁示）：production 完整門檻中，完整 run-all 以外的項目都要做到，也就是 RED、GREEN、mutation 逐位元還原、focused 兩輪、獨立審查 C/I 清零；再加上同 SHA CI 的 Windows 各 job success。完整 run-all 依切片方案在 T5-5 跑一次。Ubuntu 只照錄、未採計（暫停雙平台驗證）。
+- 兩段的設計決定、審查 Minor 與交接事項的分配，以及 T5-1 legacy hash 基準的出處，見 plan 檔尾「T5-1、T5-2 的追加（controller，2026-11-24）」小節。
+
+### T5-1：HOME 門模型與單門幾何
+
+- commit：`a1468c3..79c232e`，RED `7992739`、GREEN `79c232e`，8 檔。
+- 內容：
+  - `HomeDoorLayout`：`key(UUID)` 是 `DoorKey(sid,1,POSITIVE_LATERAL)`，station1 POSITIVE 側唯一 25 格。
+  - `CorridorGeometry.Builder` 的 HOME 模式：新增 package-private 五參數建構子，舊四參數建構子委派 `home=false`。
+  - `QuantumBulkheadBlock.HOME_MARKER`：預設 false，state 數由 10 變 20。
+  - `quantum_bulkhead_home.json`：只把 panel 換成 `cyan_concrete`。
+- 驗證：
+  - RED：`M7HomeDoorLayoutTest` 6 案 5 FAIL（首案 `expected: <25> but was: <8950>`）；`MembraneStateTest` 22 案 5 FAIL（缺 `home_marker`）。
+  - GREEN：6/6、22/22；mutation 2 項都被殺掉，逐位元還原。
+  - focused：JUnit 五類兩輪全過；M7 Main 一輪 `junit=59 gametest=57`＋SelfTest；default 子集一輪 8/8。
+- 審查（一席，規格＋品質）：spec ✅、quality Approved，C0／I0／M6。
+  - M-1（HOME 門不進候選）的 T5-2 部分（不發布候選、不寫 ledger）已處理；`candidateDoor`／`onUse` 的 HOME 排除屬 T5-4 原範圍。M-3（以真 Space 驗開口）、M-6（守門訊息）已在 T5-2 處理；M-2（key 寫死）交 T5-4 Step 0。
+  - M-4：T5-1 報告說 main-only 會驗 client 對 20 個 state 的載入，這個說法過度。main-only 跑的是 dedicated server，只驗 server 端的註冊與世界載入；client 端目前只靠 `MembraneStateTest` 的 JSON oracle 與人工驗收。人工 smoke 的加驗項見 plan 檔尾。
+  - M-5：RED 與 mutation root 沒有綁定 head 與 diff；還原 SHA 取的是工作樹 bytes（CRLF），報告沒有寫明；legacy 基準的出處只在 gitignored 的 SDD。T5-2 起，採計的 RED／GREEN root 都在乾淨 pin 上（記 head、dirty 為空），mutation root 另記 diff 與變異前後的檔案 SHA，並寫明取工作樹 bytes；基準出處補記在 plan 檔尾。
+- CI：`79c232e` 的 CI 45362017556 attempt 1 success（台北 17:53:59），10 個 job 全 success；原件 S `ci-45362017556-79c232e/terminal-run.json`（SHA-256 `65220a6367ee3c6e57174a6301feabe9a7eefe77774cf102193aea94163cfe17`）。
+
+### T5-2：HOME 入場與未選定返 B
+
+- commit：`79c232e..bc87df0`，共 14 檔，全在授權清單內。
+  - RED `ddb0c17`：`startHome` 一律回 REJECTED 的 stub，加 11 案 GameTest 與 inventory、entrypoint 登記。
+  - GREEN `b8511e3`：production、testmod 接線，以及 T5-1 審查 M-3、M-6 的測試修正。
+  - fix1 `bc87df0`：只改 testmod。
+- 內容：
+  - `SuperpositionSessionManager.startHome`：檢查順序是 latch → `PlayerCheckpointStore.unsupportedReason` → B 資格 → 暫占 → A 的 START_CHECK 票，受理時回 STAGING。票 FULL 的那個 tick 在 guard 內做 checkRoot（含即時電位）並重驗，接著凍結快照、租走廊、checked ARMING。逾時與 `/reload` 沿用既有暫占與票的 owner。
+  - 入場：checked ARMING → 逐人原生移動 → 重驗 → 逐人 checkpoint → 重驗 → checked SUPERPOSITION → `commitHomeInitial`。Entry=B 的來源票保留到返還完成。
+  - 未選定的取消（`returnToOrigin` 開頭的 PROJECTION 分派）、牛奶或 Buff 失效、離線，都整組回 exact B，不退款、不上 latch。exact B 不可用時留在走廊托管，不改送 A 或 spawn。
+  - 收尾：全員返還、走廊清空並逐格核對 AIR、HOME checkpoint 成功之後，才在同一個 tick 建立一次性的 `HomeReturnProof`，憑它呼叫 `finishHomeReturn`。checkpoint 或移除失敗時保留列、space 與占用，退避後重試。收尾時 ack `completedReleases`。
+  - `MeasuredWorldSaveCheckpoint.save/ready(MinecraftServer,HomeSessionRecord)`：範圍只有 exact live B 的艙體 frame 與走廊 lease，A 不入列。兩個 testmod mixin 的完整 descriptor 在同一個 commit 補上。
+  - HOME Space 不發布候選，也不寫 M4 ledger（T5-1 審查 M-1）。
+- 驗證（Windows）：
+  - RED：在乾淨的 `ddb0c17` 上，`cancel_or_restart_returns_to_b` 以「HOME_START_REJECTED」失敗。`start_home_refuses_latched_entry` 在 stub 上會通過，改以 mutation M3 代證。
+  - GREEN：乾淨 `b8511e3` 11/11；fix1 後乾淨 `bc87df0` 11/11。
+  - mutation 共 10 個，各由具名測試殺掉，逐位元還原（SHA-256 取工作樹 bytes）：
+    - M1 Entry 回傳改 Root、M2 返還給回原 Buff、M3 拿掉 latch 守門、M4 `finishHomeReturn` 前省略 checkpoint、M5 `unsupportedReason` 移到 claim 之後；
+    - fix1：MI1a 不加來源票、MI1b 票加在 A、MI1b2 A 多加一張、MI1c 不釋放票、MI4 拿掉 JOIN 當 tick 的守門。
+  - focused 兩輪（乾淨 `b8511e3`）：JUnit 七類全過；M7 Main 兩輪都是 `M7_VERIFIED PASS platform=Windows junit=59 gametest=68`，`-VerifyOnly -SelfTest` PASS。fix1 後 M7 Main 一輪同結果，SelfTest PASS。
+  - 加寬 legacy 回歸一次（乾淨 `b8511e3`）：default 全 scope 166/166、M5GameTest 60/60、M6GameTest 35/35。
+  - U1：本機 M7 Main 步驟 206／213 秒（fix1 後 199 秒）。Windows CI 的「執行 M7 獨立 GameTest」步驟（取 `startedAt`→`completedAt`）是 296 秒（`a1468c3`）、268 秒（`79c232e`）、340 秒（`bc87df0`）；Ubuntu 235 秒（`a1468c3`）、294 秒（`79c232e`）、297 秒（`bc87df0`）只照錄。都低於約 450 秒的回報門檻，但 Windows CI 已到門檻的約 76%，T5-3、T5-4 還會再加 GameTest。
+- 審查：
+  - 規格一席：spec ✅，C0／I0／M7。
+  - 品質一席：要求修改，C0／I1／M11。I-1 是 Entry=B 來源票沒有任何 oracle：fixture 自己保持 B 載入，所以拿掉票、把票放到 A、或用完不釋放，11 案都照樣通過。
+  - fix1 補上票數斷言與上述 MI 系列 mutation，並修品質 M-4、M-5、M-7；原品質席窄複審 Approved，C0／I0／M0。
+- legacy 方法本體：規格審查判定只加分派或做等價改寫，不另跑 m4-recovery／m5-collapse probe。
+- 止損計數（只計 Windows）：新案 2 個各 1 次（開發中的 oracle 修正）；工具 1 次（驅動腳本參數解析，已修，root 保留）；既有冷 B 案與門故障案 0 次；真實 AccessDenied 0 次。
+- CI：`bc87df0` 的 CI 45395450940 attempt 1 success（台北 21:15:19），10 個 job 全 success；原件 S `ci-45395450940-bc87df0/terminal-run.json`（SHA-256 `e665e4f1e26decc79d2df161c42614a6bc2499a3f3db5b9c078076cee8966821`）。
+
+### 補記
+
+- T5-0 結案 docs `a1468c3` 的 CI 45352032717 attempt 1 success（台北 16:42:17），10 個 job 全 success；原件 S `ci-45352032717-a1468c3/terminal-run.json`（SHA-256 `65198ce08cda5bf37f04cedc508167318148361f339ec87f95fdcd6d741c5334`）。
+- 本筆 docs commit 的 CI 終局先記在 S `STATUS.md`，下次文件提交再收錄。
+
+### 下一步
+
+1. T5-3（HOME 換頁與容量 pending）。開頭的 Step 0 先處理 plan 檔尾分配給 T5-3 Step 0 的 Minor；分給 T5-3 本體、T5-4、T5-5 的交接事項也列在同一處，原文見 S `t5-2-report.md`「交給 T5-3／T5-4／T5-5」。
+2. 之後依序 T5-4、T5-5（含 corridor-recovery 原生鏈與完整 run-all）。main 合併、tag、人工代操作、worktree 退役仍各自另問使用者。
 
 ## 最新：T5-0 結案（2026-11-24）
 

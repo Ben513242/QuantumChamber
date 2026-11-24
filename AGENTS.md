@@ -121,7 +121,14 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-24 最新：T5-0 結案，下一步 T5-1。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-0 結案（2026-11-24）」節；T5 的切法見 M7 SDD `t5-slice-plan.md` 與 plan 檔尾「2026-11-24 T5 切片與追加（controller）」節。
+**2026-11-24 最新：T5-1、T5-2 依段落結案，下一步 T5-3。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-1、T5-2 結案（2026-11-24）」節，以及 plan 檔尾「T5-1、T5-2 的追加（controller，2026-11-24）」小節（設計決定，以及審查 Minor 與交接事項分配到 T5-3 Step 0／T5-3／T5-4 Step 0／T5-4／T5-5／T6／T7／T8）。
+- T5-1：`a1468c3..79c232e`，CI 45362017556 的 Windows 各 job success。T5-2：`79c232e..bc87df0`（含 fix1），CI 45395450940 的 Windows 各 job success。兩次 CI 的 Ubuntu 兩個 job 也 success，只照錄、不採計。原件在 M7 SDD 的 `ci-*` 目錄。
+- 段落結案判定（controller 的判定）：完整 run-all 以外的 production 門檻都做到，加上同 SHA CI 的 Windows 各 job success；完整 run-all 在 T5-5 跑一次。T5 整體未完成，plan Task 5 的核取框在 T5-5 之前都不勾。
+- 止損不變：既有冷 B 案或門故障案再有任何非預期失敗即停下問使用者；T5 新案各自起算，同一 fixture 第三次非預期失敗才停（T5 新案的計法是 controller 的決定，已告知使用者）；只計 Windows。
+- U1：Windows CI 的 M7 獨立 GameTest 步驟最新是 340 秒（`bc87df0`），低於約 450 秒的回報門檻，但已到約 76%；超過門檻先報使用者，不自行放寬。
+- main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-24：T5-0 結案，下一步 T5-1。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-0 結案（2026-11-24）」節；T5 的切法見 M7 SDD `t5-slice-plan.md` 與 plan 檔尾「2026-11-24 T5 切片與追加（controller）」節。
 - 範圍 `c533193..98036e8`，production 最後一筆 `19d6e3b`。完整回歸：`6db3ce6` 的 `run-all-bc6ed335…` 自然 `END ALL exit=0`，採計 26 項全過。之後各筆只改 testmod、README、workflow 與文件，依 B+C 採計（controller 依既有規則與使用者 Windows 優先指示的判定）。
 - `98036e8` 已 push，`git ls-remote` 讀回相同。CI 45342810380（attempt 1，push，completed／success，2026-11-24 台北 15:34:21）十個 job 全部 success：Windows 8 個 job 全 success，依此結案；Ubuntu 兩個 job 也 success，只照錄、不採計。原件 M7 SDD `ci-45342810380-98036e8/terminal-run.json`。
 - 結案判定（controller 依 B+C 與 Windows 優先規則）：production 完整回歸 `6db3ce6`，加上之後 test、workflow、docs 各一席審查與定向，加上這個 run 的 Windows 各 job 全 success。結案 docs commit 的 CI 終局先記在 SDD `STATUS.md`，下次文件提交再收錄。
