@@ -97,6 +97,8 @@ public final class CorridorPageManager {
     private int budgetTick = Integer.MIN_VALUE, writes, lastTick = Integer.MIN_VALUE;
     private int peakCenterTickets;
     private final Set<UUID> operating = new HashSet<>();
+    // T5-3 fix2（品質 M-7）：最近一次走廊的 HOME roll-forward（換頁聯集、退休移除）寫出未確認（ROLL_FORWARD_PENDING）的 server tick；recovery 依此記 journal 退避。
+    private int homeRollForwardPendingTick = Integer.MIN_VALUE;
 
     public static CorridorPageManager forServer(MinecraftServer server) {
         if (active == null || active.server != server || server.getWorld(SuperpositionWorld.KEY) != active.world) {
@@ -918,6 +920,15 @@ public final class CorridorPageManager {
         return space!=null && space.home && space.failed;
     }
 
+    /**
+     * T5-3 fix2（品質 M-7）：{@code tick} 這個 server tick 裡，走廊的 HOME roll-forward（換頁的租約聯集、退休的舊租約移除）寫出未確認（{@code ROLL_FORWARD_PENDING}）。
+     * recovery 的 HOME 重試依此與自己的寫出失敗相同記一次 journal 退避，同一個 tick 不再重寫（比照 Step 0 M-8）。
+     */
+    public boolean homeRollForwardLeftPending(int tick) {
+        requireThread();
+        return homeRollForwardPendingTick==tick;
+    }
+
     /** 未選定 RETURNING 全員已返回 B：開始清除走廊（比照 {@link #release}）；收尾在 {@link #tickHomeRelease} 以 HOME checkpoint 與 finishHomeReturn 完成。 */
     public void releaseHome(UUID sessionUuid) {
         var space=space(sessionUuid);
@@ -1105,7 +1116,7 @@ public final class CorridorPageManager {
      * <li>寫入前就被拒（{@code REJECTED}）：本次額外租約還沒寫入 journal、建幾何或取票，完整撤回（slot、保護範圍、pending 與 instance epoch），舊 mapping、原 SID、未變的
      *     Selection 與 CLOSE 空間都保留。拒絕原因含 {@link CapacityExceeded} 時原樣丟出，交呼叫端留 pending、之後重試；其他拒絕交 HOME 故障路徑。</li>
      * <li>寫出未確認（{@code ROLL_FORWARD_PENDING}）或確認之後才失敗：current 已帶著聯集，額外 slot 留著（之後任何寫出都會帶出它），補取全部租約的票讓返還找得到 pin，
-     *     再交 HOME 故障路徑。</li>
+     *     再交 HOME 故障路徑。寫出未確認另記下本 tick（{@link #homeRollForwardLeftPending}），recovery 記 journal 退避、同一個 tick 不重寫（品質 M-7）。</li>
      * </ul>
      */
     private PreparedMappings prepareHomeRemap(Space space,long expectedCurrentEpoch,Set<Long> occupiedPages) {
@@ -1126,6 +1137,7 @@ public final class CorridorPageManager {
             var next=new HomeSessionRecord(record.sessionUuid(),record.chamberUuid(),record.rootAnchor(),record.entryEndpoint(),record.participants(),
                     List.copyOf(space.leases.values()),record.state(),record.home());
             var result=journal.commitHomeRollForward(server,record,next);
+            if (result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) homeRollForwardPendingTick=server.getTicks();
             if (!result.committed()) {
                 var cause=result.failure().orElse(null);
                 if (result.status()==SessionRecoveryState.CommitResult.Status.REJECTED) {
@@ -1273,7 +1285,10 @@ public final class CorridorPageManager {
 
     /**
      * HOME 換頁退休的舊租約（比照 {@link #tickRetirement}）：清空之後以 checked roll-forward 從 HOME 列移除該租約，確認之後才釋放票、slot 與保護範圍。
-     * 寫出未確認（{@code ROLL_FORWARD_PENDING}）時保留 slot、等 journal 退避的重試確認（{@link #settleConfirmedHomeRetirement} 補做原生釋放），不另寫。
+     * <p>寫出未確認（{@code ROLL_FORWARD_PENDING}，T5-3 fix2 品質 I-1，controller 採甲「寫出未確認即回 B」）：比照 legacy 的「舊租約移除尚未 durable」，保留 slot、
+     * 丟出「HOME 舊租約移除的寫出未確認」交 HOME 故障路徑（{@link #tick} 的 {@code fail} → {@link #failHome(Space,Exception)}，只回 B）。current 已不含該 slot，
+     * 所以這裡不另寫：記下本 tick（{@link #homeRollForwardLeftPending}，recovery 記 journal 退避、同一個 tick 不重寫，品質 M-7），之後由 journal 退避的重試、
+     * HOME 返還的重試或任何其他寫出確認；checked RETURNING 也要等確認之後才寫得出。確認之後由 {@link #settleConfirmedHomeRetirement} 補做原生釋放。
      */
     private void tickHomeRetirement(Space space,int slot) {
         var lease=space.leases.get(slot);
@@ -1286,14 +1301,18 @@ public final class CorridorPageManager {
         var next=new HomeSessionRecord(record.sessionUuid(),record.chamberUuid(),record.rootAnchor(),record.entryEndpoint(),record.participants(),
                 remaining,record.state(),record.home());
         var result=journal.commitHomeRollForward(server,record,next);
-        if (result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) return;
+        if (result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) {
+            homeRollForwardPendingTick=server.getTicks();
+            throw new IllegalStateException("HOME 舊租約移除的寫出未確認（ROLL_FORWARD_PENDING），保留舊 slot 並返回 B：slot="+slot,result.failure().orElse(null));
+        }
         if (!result.committed()) throw new IllegalStateException("HOME 舊租約移除尚未 checked："+result.status(),result.failure().orElse(null));
         releaseRetiredHomeSlot(space,slot);
     }
 
     /**
-     * 換頁退休的租約移除寫出未確認、之後由 journal 退避的重試（或任何其他寫出）確認時：checked 列已沒有該 slot，補做原生釋放，讓 Space 與 checked 列一致。
-     * 只處理已清空、仍在退休中、checked 與 current 一致而且已不含該 slot 的租約。
+     * 換頁退休的租約移除寫出未確認、已交 HOME 故障路徑（回 B）之後，由 journal 退避的重試、HOME 返還的重試或任何其他寫出確認時：checked 列已沒有該 slot，補做原生釋放
+     * （票、slot 與保護範圍），讓 Space 與 checked 列一致。沒有這一步時 {@link #homeDurable} 永久不符，返還的 pins、收尾每 tick 丟例外，艙永久 BUSY。
+     * 在 {@link #tickHome} 開頭、故障與收尾分支之前執行；只處理已清空、仍在退休中、checked 與 current 一致而且已不含該 slot 的租約。
      */
     private void settleConfirmedHomeRetirement(Space space) {
         if (!space.home || space.retiring.isEmpty() || space.operations!=0) return;

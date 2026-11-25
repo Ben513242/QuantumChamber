@@ -188,7 +188,7 @@ public final class SessionRecoveryManager {
         if(recoverHomeRows(owner,pages,now)) rollForwardOutstanding=true;
         // M7 HOME 列（root latch、CLOSE latch 與其他 roll-forward）不在上面的 legacy 迴圈：寫出失敗後同樣只由這裡重試同一份寫出，
         // 沿用同一個 journal 退避（同一個 tick 只算一次失敗）。HomeRootFence 與 HomeClosure 在未確認時只排隊／收斂，不自行重寫。
-        if(retryHomeRollForward(owner,now)) rollForwardOutstanding=true;
+        if(retryHomeRollForward(owner,pages,now)) rollForwardOutstanding=true;
         // 已沒有尚未確認的 roll-forward（本 tick 的寫出已確認，或其他寫出、原生 autosave 已帶出）：清除 journal 的退避。
         if(!rollForwardOutstanding) { journalRetry.reset(); journalRetryFailedTick=Integer.MIN_VALUE; }
     }
@@ -196,13 +196,16 @@ public final class SessionRecoveryManager {
     /**
      * HOME 列的 roll-forward 尚未確認時，在 journal 退避允許的 tick 重試寫出同一份 current（審查 T4a I-1）。寫出失敗沿用 {@link #journalRetry}
      * 的退避（200→12000 ticks），WARN 以 {@link FailureText#dedupeKey} 去重並附 cause；寫出確認後清除去重鍵。
+     * <p>T5-3 fix2（品質 M-7）：本 tick 走廊的 HOME roll-forward（換頁聯集、退休移除，都在 recovery 之前執行）寫出未確認時，與這裡的寫出失敗相同記一次 journal 退避，
+     * 同一個 tick 不再重寫（比照 Step 0 M-8 的 {@link #recoverHomeRows}）。legacy 的 RETRY_FLUSH 已在這之前跑完，不受影響。
      * @return 呼叫前仍有待確認的 HOME roll-forward（本 tick 是否寫出成功都算，與 legacy 的 RETRY_FLUSH 一致）
      */
-    private boolean retryHomeRollForward(MinecraftServer owner,int now) {
+    private boolean retryHomeRollForward(MinecraftServer owner,CorridorPageManager pages,int now) {
         var pending=new ArrayList<UUID>();
         for(var row : journal.allSessions().values())
             if(row instanceof HomeSessionRecord && journal.rollForwardPending(row.sessionUuid())) pending.add(row.sessionUuid());
         if(pending.isEmpty()) { homeRetryWarning=null; return false; }
+        if(pages.homeRollForwardLeftPending(now) && journalRetryFailedTick!=now) { journalRetry.failed(now); journalRetryFailedTick=now; }
         if(!journalRetry.ready(now)) return true;
         try {
             journal.flush(owner);
