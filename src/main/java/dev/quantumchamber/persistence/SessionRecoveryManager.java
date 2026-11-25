@@ -530,7 +530,9 @@ public final class SessionRecoveryManager {
             PlayerCheckpointStore.saveAndVerify(server,player,Optional.of(marker));
             if(!inside(player,world,frame) || !entryValid(record)) continue;
             var next=returnedHome(record,person.playerUuid());
-            var result=journal.commitHomeRollForward(server,record,next);
+            var expected=record;
+            // T5-4 Step 0（T5-2 規格 M-2，spec §9.1）：返還進度的 checked 寫入在該 SID 的 session operation guard 內（呼叫前 recoverHomeRows 已核對 guard 未被占）。
+            var result=CorridorPageManager.forServer(server).exclusiveOperation(sid,() -> journal.commitHomeRollForward(server,expected,next));
             // 寫出未確認：current 帶著這筆進度，只由 journal 退避重試同一份寫出（retryHomeRollForward），這裡不從 flushed 疊寫。
             if(result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) return;
             if(!result.committed()) throw new IllegalStateException("HOME 返還進度尚未 checked："+result.status(),result.failure().orElse(null));

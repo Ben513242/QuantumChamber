@@ -19,8 +19,18 @@ public final class CorridorRepositionService {
     /** M7 T5-3：HOME 列的換頁 predicate（正式 gateway 只在 HOME runtime 已入場、未選定時為真）；舊建構子一律不管 HOME。 */
     private final Predicate<HomeSessionRecord> managedHomeSession;
     private final Map<UUID,Tracking> tracking=new HashMap<>();
-    /** HOME 換頁目前處於容量 pending 的 SID（INFO 每段只記一次；換頁成功或列消失時清除）。 */
+    /**
+     * HOME 換頁目前處於容量 pending 的 SID（INFO 每段只記一次）。一段 pending 在換頁成功、玩家走回原頁（occupied 回到目前的頁）、列不再可換頁或消失時結束，
+     * 結束時清除這裡與 {@link #homeCapacityRetry}（T5-4 Step 0，T5-3 品質 M-2）。
+     */
     private final Set<UUID> homeCapacityPending=new HashSet<>();
+    /**
+     * HOME 換頁容量 pending 的重試退避（T5-4 Step 0，T5-3 品質 M-2）：SID →｛目前延遲, 下一次可以重試的 server tick｝。每次嘗試都要整份 journal 編碼、壓縮與量測，
+     * 所以不每 tick 重試：第一次拒絕之後等 {@value #HOME_CAPACITY_RETRY_MIN_TICKS} tick，之後加倍、上限 {@value #HOME_CAPACITY_RETRY_MAX_TICKS} tick。
+     * 節奏沿用同一個走廊 owner 的 HOME 收尾退避（{@code CorridorPageManager} 的 20→1200），不用 journal 的 200→12000：玩家停在頁邊界等待，容量恢復後最多再等 1 分鐘。
+     */
+    private final Map<UUID,int[]> homeCapacityRetry=new HashMap<>();
+    private static final int HOME_CAPACITY_RETRY_MIN_TICKS=20, HOME_CAPACITY_RETRY_MAX_TICKS=1200;
     private final SessionTransferService transfers=new SessionTransferService();
 
     public CorridorRepositionService(MinecraftServer server,Predicate<SessionRecoveryRecord> managedActiveSession) {
@@ -37,6 +47,7 @@ public final class CorridorRepositionService {
         // M7 T5-3：追蹤以 allFlushedSessions() 為準（含 HOME 列）；舊列照原路徑與原 predicate，HOME 列在下面以 typed 分派走自己的路徑。
         tracking.keySet().retainAll(journal.allFlushedSessions().keySet());
         homeCapacityPending.retainAll(journal.allFlushedSessions().keySet());
+        homeCapacityRetry.keySet().retainAll(journal.allFlushedSessions().keySet());
         for(var record : journal.flushedRecords().values()) if(record.state()==SessionState.SUPERPOSITION && managedActiveSession.test(record)) {
             if(CorridorPageManager.forServer(server).operationInProgress(record.sessionUuid())) continue;
             try { advance(record); }
@@ -58,8 +69,11 @@ public final class CorridorRepositionService {
      */
     private void tickHome(SessionRecoveryState journal) {
         for(var row : journal.allFlushedSessions().values()) {
-            if(!(row instanceof HomeSessionRecord home) || home.state()!=SessionState.SUPERPOSITION
-                    || !(home.home().selection() instanceof HomeSessionRecord.Unselected) || !managedHomeSession.test(home)) continue;
+            if(!(row instanceof HomeSessionRecord home)) continue;
+            if(home.state()!=SessionState.SUPERPOSITION || !(home.home().selection() instanceof HomeSessionRecord.Unselected) || !managedHomeSession.test(home)) {
+                endHomeCapacityPending(home.sessionUuid());
+                continue;
+            }
             var pages=CorridorPageManager.forServer(server);
             if(pages.operationInProgress(home.sessionUuid())) continue;
             try { advanceHome(home); }
@@ -128,19 +142,30 @@ public final class CorridorRepositionService {
             var logical=pages.toLogical(entry.getValue(),pose(entity));
             occupied.add((long)Math.floor(logical.logicalZ()/96.0));
         }
-        if(occupied.isEmpty() || occupied.equals(state.occupied)) return;
+        if(occupied.isEmpty() || occupied.equals(state.occupied)) { endHomeCapacityPending(sid); return; }
+        // T5-4 Step 0（T5-3 品質 M-2）：容量 pending 的退避期間不重試（每次嘗試都整份量測 journal）；occupied 照常每 tick 計算，玩家走回原頁時上面就結束這段 pending。
+        var retry=homeCapacityRetry.get(sid);
+        if(retry!=null && server.getTicks()<retry[1]) return;
         state.targetPages=Set.copyOf(occupied);
         try {
             state.pending=pages.prepareRemap(sid,pages.currentMappings(sid).epoch(),state.targetPages);
-            homeCapacityPending.remove(sid);
-        } catch(dev.quantumchamber.persistence.HomeJournalBudget.CapacityExceeded retry) {
+            endHomeCapacityPending(sid);
+        } catch(dev.quantumchamber.persistence.HomeJournalBudget.CapacityExceeded refused) {
             // spec §5.1：容量不足是可重試的 pending，不轉 RETURNING。PageManager 已撤回本次多保留的 slot，舊 mapping、原 SID、未變的 Selection 與 CLOSE 空間都保留；
-            // 下一個 tick 再算一次 occupied 並重試。同一段 pending 只記一則 INFO。
+            // 退避之後再算一次 occupied 並重試。同一段 pending 只記一則 INFO。
             state.targetPages=Set.of();
+            int delay=retry==null ? HOME_CAPACITY_RETRY_MIN_TICKS : Math.min(retry[0]*2,HOME_CAPACITY_RETRY_MAX_TICKS);
+            homeCapacityRetry.put(sid,new int[]{delay,server.getTicks()+delay});
             if(homeCapacityPending.add(sid))
-                org.slf4j.LoggerFactory.getLogger("quantumchamber").info("HOME 換頁的 journal 預留不足，保留原映射、原 SID 與 CLOSE 空間，下一 tick 重試（不轉 RETURNING）：session={}：{}",
-                        sid,retry.getMessage());
+                org.slf4j.LoggerFactory.getLogger("quantumchamber").info("HOME 換頁的 journal 預留不足，保留原映射、原 SID 與 CLOSE 空間，退避後重試（不轉 RETURNING）：session={}：{}",
+                        sid,refused.getMessage());
         }
+    }
+
+    /** 一段 HOME 換頁容量 pending 結束：清除 INFO 去重鍵與重試退避（換頁成功、玩家走回原頁、列不再可換頁）。 */
+    private void endHomeCapacityPending(UUID sid) {
+        homeCapacityPending.remove(sid);
+        homeCapacityRetry.remove(sid);
     }
 
     private static void requireHomeBuff(UUID sid,CorridorPageManager pages) {

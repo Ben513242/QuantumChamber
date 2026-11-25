@@ -4,7 +4,6 @@ import java.io.*;
 import java.util.*;
 import net.minecraft.nbt.*;
 import net.minecraft.util.math.BlockBox;
-import dev.quantumchamber.corridor.DoorKey;
 import dev.quantumchamber.superposition.SessionState;
 import static dev.quantumchamber.persistence.HomeSessionRecord.*;
 import static dev.quantumchamber.superposition.SessionState.*;
@@ -67,7 +66,7 @@ public final class HomeJournalBudget {
         if(r.home().closeIntent() instanceof Close || r.state()==RETURNING
                 || r.state()==SEALED && r.home().sealedReason().orElseThrow()!=Seal.AUTHORITY_UNREADABLE) return result;
         var cohort=r.participants().stream().map(SessionRecoveryRecord.Participant::playerUuid).toList();
-        var selection=new Selected(new DoorKey(r.sessionUuid(),1,DoorKey.DoorWallSide.POSITIVE_LATERAL),cohort.getFirst(),0);
+        var selection=new Selected(dev.quantumchamber.corridor.HomeDoorLayout.key(r.sessionUuid()),cohort.getFirst(),0);
         var leases=r.spaceLeases();
         if(r.home().selection() instanceof Unselected) {
             var slots=new ArrayList<SessionRecoveryRecord.SpaceLease>();

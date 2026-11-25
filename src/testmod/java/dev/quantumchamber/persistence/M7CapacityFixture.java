@@ -80,7 +80,7 @@ public final class M7CapacityFixture {
         var first=initial.participants().getFirst();
         var done=new HomeSessionRecord(initial.sessionUuid(),initial.chamberUuid(),initial.rootAnchor(),initial.entryEndpoint(),
                 List.of(person(first.playerUuid(),first.quantumStateSnapshot(),true)),initial.spaceLeases(),SessionState.RETURNING,initial.home());
-        // T5-2 起 public terminateHome 一律拒絕（未選定的返還只經走廊 owner 的 finishHomeReturn proof）。這列是沒有真 B、沒有走廊 space 的容量壓力列，
+        // 未選定的返還只經走廊 owner 的 finishHomeReturn proof（T5-4 Step 0 起沒有 public terminateHome）。這列是沒有真 B、沒有走廊 space 的容量壓力列，
         // 由同 package 的 checked 移除本體收掉（與 JUnit 用的同一個本體），不經 HOME checkpoint。
         HomeReceiptStore store;
         try { store=new HomeReceiptStore(server.getSavePath(net.minecraft.util.WorldSavePath.ROOT)); }
@@ -126,6 +126,63 @@ public final class M7CapacityFixture {
             if(inflated.equals(flushed.get(sid))) setField(journal,"flushed",replaced(flushed,sid,originalFlushed.get(sid)));
             if(written) throw new IllegalStateException("INFLATION_WINDOW_WRITTEN：膨脹窗口內出現 journal 寫出；記憶體權威已換回原壓力列，磁碟由之後的寫出覆寫："+sid);
         };
+    }
+    /**
+     * T5-4 Step 0（T5-3 品質 M-4）：整份 journal（current）的共享預留不變量是否成立。量測方式與 {@link #admit} 計算 padding 的方式相同，交給 checked 寫入前同一個
+     * {@code HomeJournalBudget.requireReserved}：總量加上每一列 HOME 的完成預留不超過 16 MiB。只讀，不寫 journal。
+     */
+    public static boolean sharedReserveHolds(MinecraftServer server) {
+        var journal=SessionRecoveryState.get(server);
+        var data=new NbtCompound(); data.putInt("SchemaVersion",6); var rows=new NbtList();
+        journal.allSessions().values().forEach(row->rows.add(row instanceof SessionRecoveryRecord r?r.toNbt(5):HomeJournalCodec.encode((HomeSessionRecord)row)));
+        data.put("Records",rows); var wrapped=new NbtCompound(); wrapped.put("data",data); NbtHelper.putDataVersion(wrapped);
+        try { HomeJournalBudget.requireReserved(wrapped); return true; }
+        catch(HomeJournalBudget.CapacityExceeded exceeded) { return false; }
+    }
+
+    /**
+     * T5-4 Step 0（T5-2 規格 M-3、品質 M-6）：以正式 journal 寫入一列沒有真 B、沒有走廊 space 的未選定 HOME 列，推進到 checked RETURNING、全員已返還——
+     * 也就是 {@code finishHomeReturn} 本體會接受的列，只差走廊 owner 的 proof。共用 journal 不能有其他 HOME 列或未確認的寫入（{@code PRIOR_TEST_RESIDUE}）。
+     * 收尾以 {@link #removeIfPresent} 歸還。
+     */
+    public static HomeSessionRecord admitReturned(MinecraftServer server) {
+        var journal=SessionRecoveryState.get(server);
+        requireNoPriorResidue(journal,null);
+        var chamber=UUID.randomUUID(); var sid=UUID.randomUUID(); var u=UUID.randomUUID();
+        var root=new ChamberOriginAuthority(chamber,World.OVERWORLD.getValue(),DimensionRole.OVERWORLD,new BlockPos(900200,64,900200),Direction.NORTH,ChamberInstanceKind.ORIGIN);
+        var entry=new EntryEndpoint(chamber,UniverseId.of(u),Identifier.of("quantumchamber","universe/"+u+"/overworld"),
+                DimensionRole.OVERWORLD,root.controllerPos(),root.facing(),ChamberInstanceKind.PROJECTION);
+        var held=new SessionRecoveryRecord.SpaceLease(63,new BlockBox(900000,64,900000,900006,70,900006));
+        var home=new Home(new Unselected(),-1,-1,-1,List.of(),List.of(),Optional.empty(),-1,new None(),Optional.empty());
+        var player=UUID.randomUUID();
+        var arming=new HomeSessionRecord(sid,chamber,root,entry,List.of(person(player,new NbtCompound(),false)),List.of(held),SessionState.ARMING,home);
+        var returning=new HomeSessionRecord(sid,chamber,root,entry,arming.participants(),List.of(held),SessionState.RETURNING,home);
+        var done=new HomeSessionRecord(sid,chamber,root,entry,List.of(person(player,new NbtCompound(),true)),List.of(held),SessionState.RETURNING,home);
+        if(!journal.admitHome(server,arming).committed() || !journal.commitHomeRestore(server,arming,returning).committed()
+                || !journal.commitHomeRollForward(server,returning,done).committed()) throw new IllegalStateException("測試 HOME 已返還列未確認");
+        return done;
+    }
+
+    /** {@link #admitReturned} 的收尾：列仍以原樣（current 與 flushed 都 exact 等於它）留在 journal 時，以同 package 的 checked 移除本體收掉；已移除時不做事。 */
+    public static void removeIfPresent(MinecraftServer server,HomeSessionRecord done) {
+        var journal=SessionRecoveryState.get(server);
+        if(!done.equals(journal.allSessions().get(done.sessionUuid())) || !done.equals(journal.allFlushedSessions().get(done.sessionUuid()))) return;
+        HomeReceiptStore store;
+        try { store=new HomeReceiptStore(server.getSavePath(net.minecraft.util.WorldSavePath.ROOT)); }
+        catch(IOException failure) { throw new UncheckedIOException(failure); }
+        if(!journal.terminateHome(store,() -> journal.flush(server),done).removed()) throw new IllegalStateException("測試 HOME 已返還列未移除");
+    }
+
+    /**
+     * T5-4 Step 0：以 testmod 反射建立走廊 owner 的一次性 proof（{@code CorridorPageManager.HomeReturnProof} 的 private 建構子），只供負向斷言與 proof 守門的
+     * mutation 殺手（C6）。proof 記下建立當下的 server tick。
+     */
+    public static dev.quantumchamber.corridor.CorridorPageManager.HomeReturnProof forgeReturnProof(MinecraftServer server,HomeSessionRecord row) {
+        try {
+            var constructor=dev.quantumchamber.corridor.CorridorPageManager.HomeReturnProof.class.getDeclaredConstructor(MinecraftServer.class,HomeSessionRecord.class);
+            constructor.setAccessible(true);
+            return constructor.newInstance(server,row);
+        } catch(ReflectiveOperationException failure) { throw new IllegalStateException("HomeReturnProof 反射建立失敗",failure); }
     }
     private static Map<UUID,JournalSession> replaced(Map<UUID,JournalSession> rows,UUID sid,JournalSession row) {
         var copy=new LinkedHashMap<>(rows); copy.put(sid,row); return Map.copyOf(copy);

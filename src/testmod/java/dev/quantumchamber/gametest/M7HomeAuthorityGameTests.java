@@ -16,6 +16,51 @@ import net.minecraft.test.GameTest;
 import net.minecraft.test.TestContext;
 
 public final class M7HomeAuthorityGameTests implements FabricGameTest {
+    /**
+     * T5-4 Step 0（T5-2 規格 M-3、品質 M-6）：未選定返還的移除只接受走廊 owner 在同一個 tick 建立、未用過、屬於這一列的 proof。以正式 journal 寫入一列
+     * checked RETURNING、全員已返還（{@code finishHomeReturn} 本體會接受）的列，逐項核對：沒有 proof、別列的 proof、已用過的 proof、前一個 tick 的 proof 都拒絕且列不變；
+     * 同一個 tick 的新 proof 才移除（也是本案的收尾）。proof 以 testmod 反射建立（C6）。RED：proof 沒有綁定建立的 tick（{@code PROOF_STALE_TICK_ACCEPTED}）。
+     */
+    @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_proof_guard",tickLimit=200)
+    public void home_return_proof_rejects_missing_forged_reused_or_stale(TestContext c) {
+        var server=c.getWorld().getServer();
+        var journal=SessionRecoveryState.get(server);
+        var done=M7CapacityFixture.admitReturned(server);
+        var sid=done.sessionUuid();
+        try {
+            var findings=new java.util.ArrayList<String>();
+            java.util.function.BooleanSupplier untouched=() -> done.equals(journal.allSessions().get(sid)) && done.equals(journal.allFlushedSessions().get(sid));
+            if(journal.finishHomeReturn(server,done,null).removed() || !untouched.getAsBoolean()) findings.add("PROOF_NULL_ACCEPTED");
+            var person=done.participants().getFirst();
+            var other=new HomeSessionRecord(sid,done.chamberUuid(),done.rootAnchor(),done.entryEndpoint(),List.of(new SessionRecoveryRecord.Participant(person.playerUuid(),
+                    person.sourcePosition().add(1,0,0),person.sourceVelocity(),person.yaw(),person.pitch(),person.quantumStateSnapshot(),true)),done.spaceLeases(),done.state(),done.home());
+            if(journal.finishHomeReturn(server,done,M7CapacityFixture.forgeReturnProof(server,other)).removed() || !untouched.getAsBoolean()) findings.add("PROOF_FOR_OTHER_ROW_ACCEPTED");
+            var used=M7CapacityFixture.forgeReturnProof(server,done);
+            if(!used.consume(server,done)) findings.add("前提：同一個 tick、同一列的新 proof 可以消費一次");
+            if(journal.finishHomeReturn(server,done,used).removed() || !untouched.getAsBoolean()) findings.add("PROOF_REUSED_ACCEPTED");
+            var stale=M7CapacityFixture.forgeReturnProof(server,done);
+            c.waitAndRun(1,() -> {
+                try {
+                    if(journal.finishHomeReturn(server,done,stale).removed() || !untouched.getAsBoolean()) findings.add("PROOF_STALE_TICK_ACCEPTED");
+                    if(untouched.getAsBoolean() && !journal.finishHomeReturn(server,done,M7CapacityFixture.forgeReturnProof(server,done)).removed())
+                        findings.add("VALID_PROOF_REJECTED：同一個 tick、未用過、屬於這一列的 proof 必須移除");
+                    c.assertTrue(findings.isEmpty() && !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid),
+                            "HOME_RETURN_PROOF_GUARD："+findings+" row="+journal.allSessions().get(sid));
+                    c.complete();
+                } catch(RuntimeException | Error failure) {
+                    try { M7CapacityFixture.removeIfPresent(server,done); } catch(RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+                    if(failure instanceof net.minecraft.test.GameTestException test) throw test;
+                    var wrapped=new net.minecraft.test.GameTestException("M7_HOME_PROOF_CALLBACK：回呼內例外："+failure);
+                    wrapped.initCause(failure);
+                    throw wrapped;
+                }
+            });
+        } catch(RuntimeException | Error failure) {
+            try { M7CapacityFixture.removeIfPresent(server,done); } catch(RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
+    }
+
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_remove_fault",tickLimit=100)
     public void removal_fault_isolated_for_two_native_owners(TestContext c) {
         var first=new M2CorridorGameTests.NativeEntry(c,1);
@@ -279,7 +324,11 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
         if(gate.localPresence(world,entry.controllerPos())==ChamberSessionGateway.Presence.PASSAGE
                 || !gate.globalChamberBusy(server,entry.chamberUuid())) findings.add("I03_CLOSE");
         c.assertTrue(!gate.claimProvisional(server,entry.chamberUuid(),UUID.randomUUID()),"CLOSE 持續占艙");
-        c.assertTrue(!journal.terminateHome(server,ended).removed() && journal.allSessions().containsKey(sid),"結案列不能由外部 caller 自宣完成");
+        // T5-4 Step 0（T5-2 規格 M-3、品質 M-6）：恆拒的 public terminateHome 已移除；改核兩個正式移除入口不帶 owner proof 都拒絕，結案列也不能拿未選定返還的 proof 移除。
+        c.assertTrue(!journal.finishHomeReturn(server,ended,null).removed() && !journal.finishHomeClose(server,ended,null).removed()
+                && !journal.finishHomeReturn(server,ended,M7CapacityFixture.forgeReturnProof(server,ended)).removed()
+                && ended.equals(journal.allSessions().get(sid)) && ended.equals(journal.allFlushedSessions().get(sid)),
+                "CLOSE_ROW_REMOVED_WITHOUT_OWNER：結案列不能由外部 caller 自宣完成（沒有 owner proof、或拿未選定返還的 proof）");
         hold.release();
         M7HomeClosureGameTests.until(c,checkStop?"only_exact_complete_projection_resolves/root_stop":"only_exact_complete_projection_resolves/expired",200,() -> !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid),() -> {
             try {

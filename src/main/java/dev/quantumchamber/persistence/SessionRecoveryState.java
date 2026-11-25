@@ -839,13 +839,9 @@ public final class SessionRecoveryState extends PersistentState {
         return terminateHome(store,() -> flush(server),expected);
     }
     /**
-     * T5-2 收窄（controller C3）：外部 caller 不能自宣 HOME 列已完成。未選定的 RETURNING 只經 {@link #finishHomeReturn}（要求 HOME checkpoint 的 proof），
-     * 已結案列只經 {@link #finishHomeClose}；這個入口一律拒絕、不寫入。保留簽章只為相容既有 testmod 的負向斷言。
+     * HOME 列 checked 移除的共用本體（package-private）。外部 caller 不能自宣 HOME 列已完成：未選定的 RETURNING 只經 {@link #finishHomeReturn}（要求 HOME checkpoint 的 proof），
+     * 已結案列只經 {@link #finishHomeClose}。T5-2 收窄成一律拒絕的 public overload 已在 T5-4 Step 0 移除（T5-2 規格 M-3、品質 M-6）。
      */
-    public TerminalResult terminateHome(MinecraftServer server,HomeSessionRecord expected) {
-        requireServerThread(server);
-        return TerminalResult.of(TerminalResult.Status.REJECTED,new IllegalStateException("HOME 列只經 finishHomeReturn 或 finishHomeClose 移除"));
-    }
     TerminalResult terminateHome(HomeReceiptStore store,Runnable flush,HomeSessionRecord expected) {
         requireMutationThread(); requireHealthy(); var sid=expected.sessionUuid();
         if(!expected.equals(records.get(sid)) || !expected.equals(flushed.get(sid)) || quarantined.contains(sid)

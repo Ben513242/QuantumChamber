@@ -77,7 +77,8 @@ public record HomeSessionRecord(UUID sessionUuid, UUID chamberUuid, ChamberOrigi
         check(!spaceLeases.isEmpty() || state.retainsReceipt() && allReturned, "空租約");
         check(state.retainsReceipt() == (home.selection() instanceof Selected), "選擇與狀態");
         if (home.selection() instanceof Selected s) {
-            check(new DoorKey(sessionUuid, 1L, DoorKey.DoorWallSide.POSITIVE_LATERAL).equals(s.doorKey())
+            // T5-4 Step 0（T5-1 審查 M-2）：固定選門與走廊幾何同一個來源（HomeDoorLayout.key）。
+            check(dev.quantumchamber.corridor.HomeDoorLayout.key(sessionUuid).equals(s.doorKey())
                     && people.contains(s.selectedBy()) && s.selectedAtGameTime() >= 0, "固定選門");
         }
         long selected = home.selection() instanceof Selected s ? s.selectedAtGameTime() : -1;

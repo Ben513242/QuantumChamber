@@ -120,14 +120,24 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 var returning = e.homeRow();
                 c.assertTrue(returning != null && returning.state() == SessionState.RETURNING && returning.home().selection() instanceof Unselected,
                         "取消即 checked RETURNING：" + returning);
-                boolean[] inA = {false};
-                e.awaitReleased(sid, "cancel_or_restart_returns_to_b/returned", () -> inA[0] |= player.getServerWorld() == e.a, () -> {
-                    c.assertTrue(!inA[0] && e.inB(player), "RETURNED_NOT_TO_B：取消必須回 exact B、不得經過 A：world=" + player.getServerWorld().getRegistryKey().getValue());
-                    c.assertTrue(player.hasStatusEffect(ModEffects.QUANTUM_STATE), "取消不改藥效");
-                    c.assertTrue(!e.bController.rearmRequiresPlayerClose(), "未選定的整組返還不上 B 的 latch（spec v1.6 E）");
-                    c.assertTrue(overworld.calls().isEmpty(), "HOME checkpoint 的範圍不含 A：" + overworld.calls());
-                    c.assertTrue(gate().returnToOrigin(e.b, e.bController), "收尾之後 returnToOrigin 回報完成");
-                    e.finish();
+                // T5-4 Step 0（T5-2 規格 M-2、T5-3 規格 M-2，spec §9.1）負控：同 SID 的 session operation guard 被占的 30 tick 內，返還進度、走廊清除與未選定移除都不寫，
+                // 也不移動玩家；guard 釋放之後照常返還。
+                var held = e.occupySessionGuard(sid);
+                e.hold(30, () -> {
+                    if (!returning.equals(e.homeRow()) || !returning.equals(e.journal.allSessions().get(sid)) || player.getServerWorld() != e.corridor())
+                        throw new GameTestException("GUARD_HELD_BUT_WRITTEN：同 SID 的 session operation guard 被占時不得寫 journal 或移動玩家：row=" + e.homeRow()
+                                + " world=" + player.getServerWorld().getRegistryKey().getValue());
+                }, () -> {
+                    held.run();
+                    boolean[] inA = {false};
+                    e.awaitReleased(sid, "cancel_or_restart_returns_to_b/returned", () -> inA[0] |= player.getServerWorld() == e.a, () -> {
+                        c.assertTrue(!inA[0] && e.inB(player), "RETURNED_NOT_TO_B：取消必須回 exact B、不得經過 A：world=" + player.getServerWorld().getRegistryKey().getValue());
+                        c.assertTrue(player.hasStatusEffect(ModEffects.QUANTUM_STATE), "取消不改藥效");
+                        c.assertTrue(!e.bController.rearmRequiresPlayerClose(), "未選定的整組返還不上 B 的 latch（spec v1.6 E）");
+                        c.assertTrue(overworld.calls().isEmpty(), "HOME checkpoint 的範圍不含 A：" + overworld.calls());
+                        c.assertTrue(gate().returnToOrigin(e.b, e.bController), "收尾之後 returnToOrigin 回報完成");
+                        e.finish();
+                    });
                 });
             });
         });
@@ -523,6 +533,58 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
     }
 
     /**
+     * T5-4 Step 0（T5-3 品質 M-6）：初始 ARMING 的寫出結果不明（{@link M7NativeSaveFault}），而未確認路徑的 {@code cancelProvisional}（釋放 START_CHECK 票）第一次丟出例外：
+     * {@code settleFailedHomeStart} 的第二分支（還有走廊 reservation）保留暫占與 reservation，交 {@code finishHomeAbandoned}；收斂之前一直持鎖、不移動玩家，寫出恢復、
+     * 未確認的嘗試收斂之後才解除。T5-3 Step 0 已修，所以沒有 RED；以 mutation「移除 homeAbandons.put」驗證（收斂者消失，暫占與 reservation 永久留下）。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_corridor_unchecked_cleanup_fault_windows", tickLimit = 2000)
+    public void unchecked_home_arming_cleanup_fault_keeps_lock_until_converged(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            var capture = new LogCapture("quantumchamber");
+            hooks.add(capture::close);
+            var label = "unchecked_home_arming_cleanup_fault_keeps_lock_until_converged";
+            var player = e.player(0);
+            var pose = player.getPos();
+            M7NativeSaveFault.Handle fault;
+            try { fault = M7NativeSaveFault.arm(e.server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve(SessionRecoveryState.STATE_ID + ".dat")); }
+            catch (java.io.IOException failure) { throw new GameTestException("M7NativeSaveFault 武裝失敗：" + failure); }
+            hooks.add(fault::close);
+            e.requireStarted();
+            var sid = provisionalSid(e.chamber);
+            c.assertTrue(sid != null, "受理後有暫占");
+            var faults = e.failFirstRootTicketRemoval(sid);
+            M7HomeClosureGameTests.until(c, label + "/attempted", 200, () -> fault.hits() >= 1 && faults[0] == 1, e.step(() -> {
+                c.assertTrue(!e.journal.allSessions().containsKey(sid) && !e.journal.allFlushedSessions().containsKey(sid)
+                        && e.journal.pendingSessions().containsKey(sid), "前提：ARMING 寫出結果不明（沒有 checked 列、pending 保留這次嘗試）");
+                var warned = capture.matching(Level.WARN, "HOME 入場在走廊 reservation 之後丟出例外", sid.toString());
+                c.assertTrue(warned.size() == 1, "前提：未確認路徑的暫占取消丟出例外，交 settleFailedHomeStart 的第二分支（記一則 WARN）：" + warned.size());
+                e.hold(40, () -> {
+                    if (!gate().globalChamberBusy(e.server, e.chamber) || !e.pages.hasReservation(sid))
+                        throw new GameTestException("UNCHECKED_CLEANUP_FAULT_RELEASED：未確認的 ARMING 收斂之前不得解除占用或 reservation");
+                }, () -> {
+                    c.assertTrue(e.inB(player) && pose.equals(player.getPos()) && e.pages.currentMappings(sid).epoch() == 0, "沒有移動玩家、沒有發布 mapping");
+                    fault.disarm();
+                    M7HomeClosureGameTests.until(c, label + "/converged", 600,
+                            () -> !gate().globalChamberBusy(e.server, e.chamber) && !e.pages.hasReservation(sid) && e.journal.pendingSessions().isEmpty(),
+                            e.step(() -> {
+                                c.assertTrue(!e.journal.allSessions().containsKey(sid) && !e.journal.allFlushedSessions().containsKey(sid), "收斂後沒有殘留列");
+                                c.assertTrue(e.inB(player) && pose.equals(player.getPos()), "全程未移動玩家");
+                                c.assertTrue(HomeTicketFaultFixture.count(e.a, sid) == 0, "START_CHECK 票已釋放");
+                                e.assertNoSourceTicket(sid);
+                                e.finish();
+                            }), e.step(() -> {
+                                throw new GameTestException("UNCHECKED_CLEANUP_FAULT_NOT_CONVERGED：寫出恢復之後未確認的 ARMING 沒有收斂（暫占或 reservation 沒有收斂者）：busy="
+                                        + gate().globalChamberBusy(e.server, e.chamber) + " reservation=" + e.pages.hasReservation(sid) + " pending=" + e.journal.pendingSessions().keySet()
+                                        + " owner=" + ownerType(e.chamber));
+                            }));
+                });
+            }), e.timeout(label + "/attempted"));
+        });
+    }
+
+    /**
      * 品質 M-2：全員已返回 B、走廊收尾開始之後 B 暫時不是 exact live（宇宙 lifecycle 未就緒）：收尾托管等待（spec §9.2），保留 RETURNING 列、走廊與占用，
      * 不得每個 tick 記一則 ERROR＋stack；B 恢復之後照常收尾。修正前：{@code MeasuredWorldSaveCheckpoint.ready} 每 tick 丟出、{@code failHome} 每 tick 記 ERROR
      * （{@code HOME_RELEASE_ERROR_FLOOD}）。
@@ -631,13 +693,20 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             var chamber = UUID.randomUUID();
             var bogus = incompleteHomeRuntime(chamber);
             @SuppressWarnings("unchecked") var sessions = (Map<Object, Object>) M4CandidateTestAccess.get(gate(), "sessions");
+            // T5-4 Step 0（T5-3 品質 M-5）：觀察「本 tick 其餘段照常」——在同一個 callback 放入壞 runtime 與一筆本 tick 就到期的 JOIN 排隊（recovery 的 joinTicks，
+            // 只有同一個 END tick 的 recovery 執行了才會清掉）。壞 runtime 在這個 END tick 丟出；下一個 tick 看到排隊已清，表示 HOME 段之後的 recovery 在同一個 tick 照常執行。
+            @SuppressWarnings("unchecked") var joinTicks = (Map<UUID, Integer>) M4CandidateTestAccess.get(M4CandidateTestAccess.get(gate(), "recovery"), "joinTicks");
+            var probe = UUID.randomUUID();
+            int start = c.getWorld().getServer().getTicks();
             sessions.put(chamber, bogus);
             hooks.add(() -> sessions.remove(chamber, bogus));
-            int start = c.getWorld().getServer().getTicks();
-            c.waitAndRun(5, () -> {
+            joinTicks.put(probe, start);
+            hooks.add(() -> joinTicks.remove(probe));
+            c.waitAndRun(1, () -> {
                 try {
                     var warned = capture.matching(Level.WARN, "HOME 的 tick 段（tickHomeRuntimes）丟出意外例外");
-                    c.assertTrue(c.getWorld().getServer().getTicks() >= start + 5, "server 在 HOME 段例外之後照常推進");
+                    c.assertTrue(warned.size() == 1 && !joinTicks.containsKey(probe),
+                            "HOME_TICK_REST_SKIPPED：HOME 段丟出意外例外的同一個 tick，其後的 recovery 必須照常執行：warned=" + warned.size() + " joinQueued=" + joinTicks.containsKey(probe));
                     c.assertTrue(warned.size() == 1 && warned.getFirst().thrown() instanceof NullPointerException,
                             "HOME_TICK_EXCEPTION_NOT_ISOLATED：HOME 段的意外例外只記一則 WARN（去重）：" + warned.stream().map(entry -> String.valueOf(entry.thrown())).toList());
                     hooks.release();
@@ -689,6 +758,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
     public void home_remap_builds_no_second_home_door(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new HomeEntry(c, 1, hooks, true);
+        e.settleOnFailure();
         e.guard(() -> {
             e.requireStarted();
             var label = "home_remap_builds_no_second_home_door";
@@ -700,6 +770,8 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 var oldView = before.instances().getFirst();
                 e.assertSingleHomeDoor(sid, oldView, "前提（換頁前）");
                 var oldSlots = Set.of(oldView.ref().slotId());
+                // T5-4 Step 0（T5-2 規格 M-2、T5-3 規格 M-2，spec §9.1）：換頁聯集、退休清租約、RETURNING、返還進度與未選定移除的 journal 寫出都在這個 SID 的 guard 內。
+                var guardWrites = e.guardWitness(sid);
                 e.walkHome(sid, player, 96.5);
                 // T5-3 fix1：正式 tick 寫出新舊租約聯集之後，先同步生成新租約周圍的走廊 chunk（只改 chunk 載入），換頁仍由正式 reposition tick 完成。
                 M7HomeClosureGameTests.until(c, label + "/union", 200, () -> e.newLeaseWritten(sid, oldSlots), e.step(() -> {
@@ -717,6 +789,13 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                         c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
                         e.awaitReleased(sid, label + "/cancel", null, () -> {
                             c.assertTrue(e.inB(player), "取消後回到 exact B");
+                            var outside = guardWrites.stream().filter(write -> !write.endsWith(" guard=true")).toList();
+                            c.assertTrue(outside.isEmpty() && guardWrites.stream().filter(write -> write.startsWith("leases:")).count() >= 2
+                                    && guardWrites.stream().anyMatch(write -> write.startsWith("state:RETURNING"))
+                                    && guardWrites.stream().anyMatch(write -> write.startsWith("returned"))
+                                    && guardWrites.stream().anyMatch(write -> write.startsWith("remove")),
+                                    "HOME_WRITE_OUTSIDE_GUARD：換頁聯集、退休清租約、RETURNING、返還進度與未選定移除的 journal 寫出都必須在 session operation guard 內："
+                                            + "outside=" + outside + " all=" + guardWrites);
                             e.finish();
                         });
                     }), e.step(() -> {
@@ -736,11 +815,14 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
      * 不送 RETURNING、撤回本次多保留的 slot，保留原 mapping、原 SID、未變的 Selection 與 CLOSE 空間；容量恢復之後重試並完成。合法 journal 下未選定 HOME 列的換頁已含在
      * admission 的預留內（見 {@link M7CapacityFixture#inflateInMemory}），所以「共享預留不符」以 testmod 反射在記憶體暫時加大壓力列來模擬（磁碟上的 journal 全程合法）；
      * 還原之後的換頁是在恰好 16 MiB 的合法壓力下完成。RED：正式 reposition 只看 legacy 列，HOME 不換頁（{@code HOME_REMAP_NOT_ATTEMPTED}）。
+     * <p>T5-4 Step 0（T5-3 品質 M-2）：玩家走回原頁結束一段 pending、再走出去是新的一段（第二則 INFO，{@code HOME_CAPACITY_INFO_NOT_RESET}）；容量恢復之後的重試要等
+     * 這一段的退避，不每 tick 整份量測 journal（{@code HOME_CAPACITY_RETRY_NOT_BACKED_OFF}）。</p>
      */
     @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_corridor_remap_capacity_windows", tickLimit = 3000)
     public void formal_tick_capacity_pending_preserves_home_mapping(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new HomeEntry(c, 1, hooks, true);
+        e.settleOnFailure();
         e.guard(() -> {
             e.requireStarted();
             var label = "formal_tick_capacity_pending_preserves_home_mapping";
@@ -759,10 +841,8 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 boolean[] restored = {false};
                 Runnable restore = () -> { if (!restored[0]) { restored[0] = true; inflation.run(); } };
                 e.beforeClose(restore);
-                var closeReserve = M7CapacityFixture.remaining(row);
                 var rowSlots = slots(row);
-                e.walkHome(sid, player, 96.5);
-                e.hold(20, () -> {
+                Runnable unchanged = () -> {
                     var current = e.homeRow();
                     if (!row.equals(current) || !row.equals(e.journal.allSessions().get(sid)))
                         throw new GameTestException("CAPACITY_SENT_RETURNING：容量不足時 HOME 列必須保持原 SUPERPOSITION、原 SID、未選定與原租約：" + current);
@@ -771,39 +851,66 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                         throw new GameTestException("REMAP_RESERVE_NOT_WITHDRAWN：容量拒絕必須撤回多保留的 slot：space=" + spaceSlots + " row=" + rowSlots);
                     if (!mapping.equals(e.pages.currentMappings(sid)) || player.getServerWorld() != e.corridor())
                         throw new GameTestException("容量不足時保留原 mapping、玩家留在走廊：" + e.pages.currentMappings(sid));
-                }, () -> {
+                };
+                e.walkHome(sid, player, 96.5);
+                e.hold(20, unchanged, () -> {
                     var attempts = capture.matching(Level.INFO, "HOME 換頁的 journal 預留不足", sid.toString());
                     c.assertTrue(!attempts.isEmpty(), "HOME_REMAP_NOT_ATTEMPTED：容量不足期間正式 tick 沒有嘗試 HOME 換頁（沒有容量 pending 的紀錄）");
                     c.assertTrue(attempts.size() == 1, "同一段容量 pending 只記一則 INFO：" + attempts.size());
-                    c.assertTrue(M7CapacityFixture.remaining(e.homeRow()) == closeReserve && e.pages.hasReservation(sid)
-                            && gate().globalChamberBusy(e.server, e.chamber), "CLOSE 空間（完成預留）、走廊 reservation 與占用都不變");
-                    restore.run();
-                    // T5-3 fix1：容量恢復之後由正式 tick 重試、寫出新舊租約聯集；之後先同步生成新租約周圍的走廊 chunk，換頁仍由正式 reposition tick 完成。
-                    M7HomeClosureGameTests.until(c, label + "/union", 200, () -> e.newLeaseWritten(sid, rowSlots), e.step(() -> {
-                        e.pregenerateNewLeases(sid, rowSlots, label);
-                        M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
-                            var after = e.homeRow();
-                            c.assertTrue(after.sessionUuid().equals(sid) && after.state() == SessionState.SUPERPOSITION && after.home().equals(row.home()),
-                                    "容量恢復之後以原 SID、未變的 Selection 完成換頁：" + after);
-                            c.assertTrue(M7CapacityFixture.remaining(after) == closeReserve, "換頁前後 CLOSE 空間（完成預留）相同");
-                            c.assertTrue(Math.abs(e.logicalZ(sid, player) - 96.5) < 1e-6, "玩家以同一個邏輯座標搬到新實例");
-                            M7CapacityFixture.release(e.server, pressure);
-                            c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
-                            e.awaitReleased(sid, label + "/cancel", null, () -> {
-                                c.assertTrue(e.inB(player), "取消後回到 exact B");
-                                e.finish();
+                    // T5-3 品質 M-4：原本的「CLOSE 空間不變」以單列公式比較、在列相等之後恆真，已刪除；膨脹窗口內共享預留是刻意不符，改在窗口外以整份 journal 量測。
+                    c.assertTrue(e.pages.hasReservation(sid) && gate().globalChamberBusy(e.server, e.chamber), "走廊 reservation 與占用都不變");
+                    // T5-4 Step 0（T5-3 品質 M-2）：玩家走回原頁結束這段 pending，再走出去是新的一段：記第二則 INFO，第一次嘗試不受上一段的退避限制。
+                    e.walkHome(sid, player, 48.5);
+                    e.hold(1, unchanged, () -> {
+                        e.walkHome(sid, player, 96.5);
+                        e.hold(1, unchanged, () -> {
+                            var problems = new ArrayList<String>();
+                            int segments = capture.matching(Level.INFO, "HOME 換頁的 journal 預留不足", sid.toString()).size();
+                            if (segments != 2) problems.add("HOME_CAPACITY_INFO_NOT_RESET：玩家走回原頁結束一段容量 pending 之後，新的一段要再記一則 INFO：count=" + segments);
+                            // 容量恢復之後，下一次重試要等這一段的退避（第一次 20 tick），不每 tick 整份量測 journal；這段期間列、slot 與 mapping 都不變。
+                            restore.run();
+                            int restoredAt = (int) c.getTick();
+                            e.hold(10, () -> {
+                                if (e.newLeaseWritten(sid, rowSlots) && problems.stream().noneMatch(problem -> problem.startsWith("HOME_CAPACITY_RETRY_NOT_BACKED_OFF")))
+                                    problems.add("HOME_CAPACITY_RETRY_NOT_BACKED_OFF：容量 pending 的重試不得每 tick 進行（恢復後 " + ((int) c.getTick() - restoredAt) + " tick 內就重試）");
+                            }, () -> {
+                                c.assertTrue(problems.isEmpty(), String.join("；", problems));
+                                capacityRetried(c, e, label, sid, row, rowSlots, oldView, player, pressure);
                             });
-                        }), e.step(() -> {
-                            throw new GameTestException("HOME_REMAP_NOT_COMPLETED：容量恢復之後新舊租約聯集已 checked，但換頁沒有在 600 tick 內完成：epoch="
-                                    + e.pages.currentMappings(sid).epoch() + " " + e.spaceDiagnostics(sid) + " row=" + e.homeRow());
-                        }));
-                    }), e.step(() -> {
-                        throw new GameTestException("HOME_REMAP_NOT_RETRIED：容量恢復之後正式 tick 沒有重試寫出新舊租約聯集：epoch=" + e.pages.currentMappings(sid).epoch()
-                                + " row=" + e.homeRow() + " space=" + e.spaceSlots(sid));
-                    }));
+                        });
+                    });
                 });
             });
         });
+    }
+
+    /** {@code formal_tick_capacity_pending_preserves_home_mapping} 的後半：容量恢復之後正式 tick 重試、換頁完成，再以正式取消返回 B 收尾。 */
+    private static void capacityRetried(TestContext c, HomeEntry e, String label, UUID sid, HomeSessionRecord row, Set<Integer> rowSlots,
+            CorridorPageManager.MappingView oldView, ServerPlayerEntity player, HomeSessionRecord pressure) {
+        // T5-3 fix1：容量恢復之後由正式 tick 重試、寫出新舊租約聯集；之後先同步生成新租約周圍的走廊 chunk，換頁仍由正式 reposition tick 完成。
+        M7HomeClosureGameTests.until(c, label + "/union", 200, () -> e.newLeaseWritten(sid, rowSlots), e.step(() -> {
+            e.pregenerateNewLeases(sid, rowSlots, label);
+            M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
+                var after = e.homeRow();
+                c.assertTrue(after.sessionUuid().equals(sid) && after.state() == SessionState.SUPERPOSITION && after.home().equals(row.home()),
+                        "容量恢復之後以原 SID、未變的 Selection 完成換頁：" + after);
+                c.assertTrue(M7CapacityFixture.sharedReserveHolds(e.server),
+                        "換頁之後整份 journal 的共享預留（含這一列 HOME 的完成預留）仍成立（16 MiB 邊界上的合法壓力）");
+                c.assertTrue(Math.abs(e.logicalZ(sid, player) - 96.5) < 1e-6, "玩家以同一個邏輯座標搬到新實例");
+                M7CapacityFixture.release(e.server, pressure);
+                c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "正式取消（返回 B）開始");
+                e.awaitReleased(sid, label + "/cancel", null, () -> {
+                    c.assertTrue(e.inB(player), "取消後回到 exact B");
+                    e.finish();
+                });
+            }), e.step(() -> {
+                throw new GameTestException("HOME_REMAP_NOT_COMPLETED：容量恢復之後新舊租約聯集已 checked，但換頁沒有在 600 tick 內完成：epoch="
+                        + e.pages.currentMappings(sid).epoch() + " " + e.spaceDiagnostics(sid) + " row=" + e.homeRow());
+            }));
+        }), e.step(() -> {
+            throw new GameTestException("HOME_REMAP_NOT_RETRIED：容量恢復之後正式 tick 沒有重試寫出新舊租約聯集：epoch=" + e.pages.currentMappings(sid).epoch()
+                    + " row=" + e.homeRow() + " space=" + e.spaceSlots(sid));
+        }));
     }
 
     /**
@@ -816,6 +923,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
     public void legacy_candidate_append_cannot_spend_home_remap_reserve(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new HomeEntry(c, 1, hooks, true);
+        e.settleOnFailure();
         e.guard(() -> {
             var legacy = new M2CorridorGameTests.NativeEntry(c, 1, net.minecraft.util.math.Direction.NORTH, true, new BlockPos(32, 0, 0));
             e.beforeClose(legacy::close);
@@ -843,7 +951,6 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 var key = new dev.quantumchamber.corridor.DoorKey(oldSid, 10_000L, dev.quantumchamber.corridor.DoorKey.DoorWallSide.POSITIVE_LATERAL);
                 var pressure = M7CapacityFixture.admitBeside(e.server, row);
                 e.beforeClose(() -> M7CapacityFixture.releaseIfPresent(e.server, pressure));
-                var closeReserve = M7CapacityFixture.remaining(row);
                 e.walkHome(sid, player, 96.5);
                 M7HomeClosureGameTests.until(c, label + "/union", 200, () -> {
                     var current = e.homeRow();
@@ -851,7 +958,6 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 }, e.step(() -> {
                     // HOME 列已 checked 新舊租約聯集（已承諾的 remap 進行中）：另一個 SID 的舊候選 append。
                     var union = e.homeRow();
-                    var unionReserve = M7CapacityFixture.remaining(union);
                     var journalBefore = e.journal.allSessions();
                     var append = new dev.quantumchamber.candidate.CandidateLedgerService().commitCandidates(e.server, oldSid, List.of(key));
                     c.assertTrue(!append.sessionFailed() && !append.committedKeys().contains(key),
@@ -861,14 +967,17 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                             "被拒的 append 不改 journal：舊旅程保留原 SID 與原列");
                     c.assertTrue(oldMapping.equals(e.pages.currentMappings(oldSid)) && oldDoors.equals(e.pages.selectableDoors(oldSid)),
                             "被拒的一方留下既有 mapping 與已發布的門");
-                    c.assertTrue(union.equals(e.homeRow()) && M7CapacityFixture.remaining(e.homeRow()) == unionReserve, "HOME 列與它可用的 CLOSE 餘額（完成預留）不變");
+                    // T5-4 Step 0（T5-3 品質 M-4）：原本以單列公式比較「CLOSE 餘額」，在列相等之後恆真；改以整份 journal 量測共享預留（含 HOME 列的完成預留）仍成立。
+                    c.assertTrue(union.equals(e.homeRow()) && M7CapacityFixture.sharedReserveHolds(e.server),
+                            "HOME 列不變，整份 journal 的共享預留（含 HOME 列可用的 CLOSE 完成預留）在 16 MiB 邊界上仍成立");
                     // T5-3 fix1：同步生成新租約周圍的走廊 chunk（只改 chunk 載入）。不預生成時，走廊世界同時有兩趟的玩家，新租約周圍半徑 2 的 chunk 要約 1000 tick
                     // 才全部 FULL（T5-3 開發輪實測）。被拒的舊旅程仍先以正式路徑收尾（壓力列仍在，舊列的返還與移除只會變小），再等已承諾的 HOME remap 由正式 tick 完成。
                     e.pregenerateNewLeases(sid, Set.of(oldView.ref().slotId()), label);
                     legacy.trustedTeardown((int) c.getTick() + 1, () -> M7HomeClosureGameTests.until(c, label + "/remapped", 600, () -> e.remappedOnce(sid, oldView), e.step(() -> {
                         var after = e.homeRow();
-                        c.assertTrue(after.sessionUuid().equals(sid) && after.home().equals(row.home()) && M7CapacityFixture.remaining(after) == closeReserve,
-                                "已承諾的 HOME remap 在 16 MiB 邊界上完成（原 SID、未變的 Selection、CLOSE 空間相同）：" + after);
+                        // T5-4 Step 0（T5-3 規格 M-4）：完成時舊旅程已收掉，journal 已不在 16 MiB 邊界上；這裡只斷言實際觀察到的事（聯集之後只剩只減不增的寫入）。
+                        c.assertTrue(after.sessionUuid().equals(sid) && after.home().equals(row.home()) && M7CapacityFixture.sharedReserveHolds(e.server),
+                                "聯集在 16 MiB 邊界上 checked 之後，已承諾的 HOME remap 在舊旅程收掉之後完成（原 SID、未變的 Selection、共享預留仍成立）：" + after);
                         M7CapacityFixture.release(e.server, pressure);
                         c.assertTrue(!gate().returnToOrigin(e.b, e.bController), "HOME 正式取消（返回 B）開始");
                         e.awaitReleased(sid, label + "/home-cancel", null, () -> {
@@ -876,7 +985,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                             e.finish();
                         });
                     }), e.step(() -> {
-                        throw new GameTestException("HOME_REMAP_NOT_COMPLETED：16 MiB 邊界上已承諾的 HOME remap（聯集已 checked）沒有在 600 tick 內完成：epoch=" + e.pages.currentMappings(sid).epoch()
+                        throw new GameTestException("HOME_REMAP_NOT_COMPLETED：聯集在 16 MiB 邊界上 checked 之後，已承諾的 HOME remap 在舊旅程收掉之後沒有在 600 tick 內完成：epoch=" + e.pages.currentMappings(sid).epoch()
                                 + " " + e.spaceDiagnostics(sid) + " leases=" + e.homeRow().spaceLeases().stream().map(lease -> lease.slotId() + ":" + lease.bounds()).toList());
                     })));
                 }), e.step(() -> {
@@ -1067,6 +1176,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
         /**
          * T5-3 fix2（品質 M-8 第 2 點，只給選用的案）：失敗路徑不立即斷開假玩家。先請求正式返還（取消暫占、未選定的 ARMING／SUPERPOSITION 送返還），列還在或艙仍 busy 時
          * 交 {@link FailureSettle} 每個 server tick 核對，正式返還收尾（列移除、艙不再 busy）或逾時之後才釋放 B 的測試票並斷開；避免 RETURNING 列因假玩家離線而永久留下。
+         * T5-4 Step 0（T5-3 fix2 複審 N-2）：operator 不參與返還，延後時立即斷開；停服時清空等待；換頁五案都套用。
          */
         private boolean settleOnFailure;
         /** 成功路徑（{@link #finish}）的收尾；不走失敗路徑的延後斷開。 */
@@ -1180,7 +1290,8 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
         }
 
         /**
-         * T5-3 Step 0（品質 M-1）：把這座艙 START_CHECK 票的 backend 換成第一次原生移除丟出例外的代理（加票、FULL 判斷與之後的移除都照原生）。回傳丟出次數的計數格。
+         * T5-3 Step 0（品質 M-1）：把這座艙 START_CHECK 票的 backend 換成第一次原生移除丟出例外的代理（加票與之後的移除照原生）。FULL 判斷不照原生 FULL ticket 層級，
+         * 改為「該 chunk 已載入為 WorldChunk」（{@code getWorldChunk != null}；T5-4 Step 0 更正 T5-3 品質 M-6 指出的說明不符）。回傳丟出次數的計數格。
          * 只在 startHome 受理的同一個 callback 內呼叫；票 owner 的租約是 package-private 介面，以 {@link java.lang.reflect.Proxy} 在同一個 package 建立代理。
          */
         int[] failFirstRootTicketRemoval(UUID sid) {
@@ -1410,6 +1521,53 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             return fault;
         }
 
+        /**
+         * T5-4 Step 0（T5-2 規格 M-2、T5-3 規格 M-2，spec §9.1）：記下每一次帶著這個 SID 變更的 journal checked 寫出（寫出開頭 current 與 flushed 不同），以及寫出當下
+         * 這個 SID 的 session operation guard 是否持有（{@code operationInProgress}）。每筆是「種類 guard=…」；種類是 remove／admit／state:&lt;狀態&gt;／leases:&lt;舊&gt;-&gt;&lt;新&gt;／
+         * returned／other。探針經 hooks 移除。
+         */
+        List<String> guardWitness(UUID sid) {
+            var writes = new ArrayList<String>();
+            M5GameTestSupport.installFlushProbe(c, state -> {
+                var current = state.allSessions().get(sid);
+                var flushed = state.allFlushedSessions().get(sid);
+                if (Objects.equals(current, flushed)) return;
+                writes.add(writeKind(current, flushed) + " guard=" + pages.operationInProgress(sid));
+            }, hooks);
+            return writes;
+        }
+
+        private static String writeKind(JournalSession current, JournalSession flushed) {
+            if (!(current instanceof HomeSessionRecord now)) return "remove";
+            if (!(flushed instanceof HomeSessionRecord before)) return "admit";
+            if (now.state() != before.state()) return "state:" + now.state();
+            if (!now.spaceLeases().equals(before.spaceLeases())) return "leases:" + slots(before) + "->" + slots(now);
+            if (!now.participants().equals(before.participants())) return "returned";
+            return "other";
+        }
+
+        /**
+         * T5-4 Step 0 的負控（spec §9.1）：以 testmod 反射替這個 SID 占住 session operation guard——與 {@code exclusiveOperation} 相同，{@code operating} 加入 SID、
+         * {@code space.operations} 設為 1（C6）。回傳冪等的釋放；失敗路徑在 {@link #close} 最先、hooks 也會釋放。
+         */
+        Runnable occupySessionGuard(UUID sid) {
+            @SuppressWarnings("unchecked") var operating = (Set<UUID>) M4CandidateTestAccess.get(pages, "operating");
+            var space = M4CandidateTestAccess.space(pages, sid);
+            c.assertTrue(space != null && !pages.operationInProgress(sid), "負控前提：走廊 space 在、guard 未被占");
+            operating.add(sid);
+            M4CandidateTestAccess.set(space, "operations", 1);
+            boolean[] released = {false};
+            Runnable release = () -> {
+                if (released[0]) return;
+                released[0] = true;
+                M4CandidateTestAccess.set(space, "operations", 0);
+                operating.remove(sid);
+            };
+            beforeClose(release);
+            hooks.add(release);
+            return release;
+        }
+
         /** {@code bounds} 內的 bulkhead → 是否帶 home_marker（實際讀世界）。 */
         Map<BlockPos, Boolean> bulkheads(net.minecraft.util.math.BlockBox bounds) {
             var cells = new LinkedHashMap<BlockPos, Boolean>();
@@ -1566,6 +1724,9 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 var row = homeRow();
                 if (row != null && (row.state() == SessionState.ARMING || row.state() == SessionState.SUPERPOSITION)) gate().returnToOrigin(b, bController);
                 if (homeRow() == null && !gate().globalChamberBusy(server, chamber)) return false;
+                // T5-4 Step 0（T5-3 fix2 複審 N-2）：operator 不參與返還，立即斷開；只延後斷開凍結 cohort（與 B 的測試票）。
+                try { f.operator.close(); }
+                catch (RuntimeException failure) { LOG.warn("M7_GT_FAILURE_SETTLE 斷開 operator 丟出例外：chamber={}", chamber, failure); }
                 FailureSettle.defer(this, server.getTicks() + FailureSettle.TICKS);
                 LOG.warn("M7_GT_FAILURE_SETTLE chamber={} row={}：失敗路徑等正式返還收尾（最多 {} tick）之後才斷開假玩家", chamber, homeRow(), FailureSettle.TICKS);
                 return true;
@@ -1603,8 +1764,20 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             if (!registered) {
                 registered = true;
                 net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents.END_SERVER_TICK.register(FailureSettle::tick);
+                net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPING.register(FailureSettle::stopping);
             }
             WAITING.put(entry, deadline);
+        }
+
+        /** T5-4 Step 0（T5-3 fix2 複審 N-2）：停服時清空這個 server 的等待（static，否則跨 server instance 留下），仍未收尾的記 {@code M7_GT_LEFTOVER_HOME} 並斷開。 */
+        private static void stopping(MinecraftServer owner) {
+            for (var waiting : List.copyOf(WAITING.entrySet())) {
+                var entry = waiting.getKey();
+                if (entry.server != owner) continue;
+                WAITING.remove(entry);
+                LOG.warn("M7_GT_LEFTOVER_HOME chamber={} row={}：停服時失敗路徑的正式返還仍未收尾，斷開假玩家", entry.chamber, safeRow(entry));
+                entry.disconnectAfterSettle();
+            }
         }
 
         private static void tick(MinecraftServer owner) {

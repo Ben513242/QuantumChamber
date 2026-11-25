@@ -59,14 +59,16 @@ public final class CorridorPageManager {
     /**
      * 未選定 HOME 返還的一次性移除權威（M7 T5-2，controller C3，比照 {@code HomeClosure.HomeClosureProof}）：全員已返回 B、走廊幾何已清空、HOME 原生 checkpoint
      * 已在同一個 tick 成功之後，只由本類建立，交給 {@link SessionRecoveryState#finishHomeReturn}。
+     * <p>T5-4 Step 0（T5-2 品質 M-6 的選做）：proof 記下建立時的 server tick，{@link #consume} 只在同一個 tick 有效，「同 tick」由建構順序提升為檢查。
      */
     public static final class HomeReturnProof {
         private final MinecraftServer server;
         private final HomeSessionRecord row;
+        private final int tick;
         private boolean used;
-        private HomeReturnProof(MinecraftServer server, HomeSessionRecord row) { this.server = server; this.row = row; }
+        private HomeReturnProof(MinecraftServer server, HomeSessionRecord row) { this.server = server; this.row = row; this.tick = server.getTicks(); }
         public boolean consume(MinecraftServer owner, HomeSessionRecord expected) {
-            if (used || owner == null || owner != server || !row.equals(expected)) return false;
+            if (used || owner == null || owner != server || owner.getTicks() != tick || !row.equals(expected)) return false;
             used = true;
             return true;
         }
@@ -1007,6 +1009,7 @@ public final class CorridorPageManager {
     /**
      * 未選定 RETURNING 的收尾（spec §6 :186、X1）：全員已返回 B → 清空走廊 → HOME 原生 checkpoint（B frame＋走廊 leases，A 不入列）→ 同 tick 以一次性 proof
      * checked 移除熱列 → 釋放票、slot 與保護範圍，記完成收據（由 gateway 消費，X5）。checkpoint 或移除失敗時保留列、走廊 space 與占用，依 per-space 退避重做。
+     * checkpoint 與移除都在該 SID 的 session operation guard 內（spec §9.1）；guard 被占時這個 tick 什麼都不做（T5-4 Step 0）。
      */
     private void tickHomeRelease(Space space) {
         if (!journal.recoveryWritesSafe()) return;
@@ -1014,7 +1017,8 @@ public final class CorridorPageManager {
         if (row.state()!=SessionState.RETURNING || !(row.home().selection() instanceof HomeSessionRecord.Unselected)
                 || row.participants().stream().anyMatch(person -> !person.returned())
                 || !row.equals(journal.allSessions().get(space.id)) || journal.rollForwardPending(space.id)) return;
-        if (space.operations>0 || space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty())) return;
+        // T5-4 Step 0（T5-2 規格 M-2，spec §9.1）：同 SID 的 session operation guard 被占時不清除、不存檔、不移除（operating 或 space.operations 任一）。
+        if (operationInProgress(space.id) || space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty())) return;
         if (space.homeCheckpointFailedFor!=null) {
             if (!space.homeCheckpointFailedFor.equals(row)) { resetCheckpointBackoff(space); space.homeCheckpointFailedFor=null; }
             else if (server.getTicks()<space.checkpointRetryTick) return;
@@ -1029,12 +1033,16 @@ public final class CorridorPageManager {
                 if (!world.getBlockState(pos).isAir()) throw new IllegalStateException("HOME 走廊幾何仍未清空");
         }
         var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
-        try { MeasuredWorldSaveCheckpoint.save(server,row); }
-        catch (RuntimeException failure) {
-            scheduleHomeReleaseRetry(space,row,"HOME 返還收尾的原生 checkpoint 失敗，保留 RETURNING 列、走廊與占用，退避後重做",failure);
-            return;
-        }
-        var removed=journal.finishHomeReturn(server,row,new HomeReturnProof(server,row));
+        // T5-4 Step 0（T5-2 規格 M-2，spec §9.1）：HOME checkpoint 與未選定移除都在該 SID 的 session operation guard 內（比照 HomeClosure 的 B 門 checkpoint 與移除）。
+        var removed=exclusiveOperation(space.id,() -> {
+            try { MeasuredWorldSaveCheckpoint.save(server,row); }
+            catch (RuntimeException failure) {
+                scheduleHomeReleaseRetry(space,row,"HOME 返還收尾的原生 checkpoint 失敗，保留 RETURNING 列、走廊與占用，退避後重做",failure);
+                return null;
+            }
+            return journal.finishHomeReturn(server,row,new HomeReturnProof(server,row));
+        });
+        if (removed==null) return;
         if (!removed.removed()) {
             scheduleHomeReleaseRetry(space,row,"HOME 返還收尾的熱列尚未 checked 移除（"+removed.status()+"），保留占用，退避後重做",
                     removed.failure().orElseGet(() -> new IllegalStateException(removed.status().name())));
@@ -1149,10 +1157,11 @@ public final class CorridorPageManager {
             }
             space.selectable=Map.of();
             homeDurable(space); acquireTickets(space); enqueue(space); return prepared;
-        } catch (CapacityExceeded retry) {
-            // 已撤回本次額外資源；不標故障、不送 RETURNING，由呼叫端留 pending。
-            throw retry;
         } catch (RuntimeException failure) {
+            // T5-4 Step 0（T5-3 品質 M-1）：比照 legacy prepareRemap，只有已撤回本次額外資源（pending 與 slot 都回到呼叫前）的容量拒絕才留 pending；
+            // 其他位置丟出的 CapacityExceeded（目前不可觸發）改走一般故障路徑，並包成非容量例外，呼叫端不會把它當成可重試的 pending。
+            if (failure instanceof CapacityExceeded retry && space.pending==oldPending && space.leases.keySet().equals(oldSlots)) throw retry;
+            if (failure instanceof CapacityExceeded unwithdrawn) failure=new IllegalStateException("HOME remap 的容量拒絕發生在撤回之外，交故障路徑",unwithdrawn);
             if (journalHoldsNewLeases(space,oldSlots)) {
                 try { acquireTickets(space); } catch (RuntimeException tickets) { failure.addSuppressed(tickets); }
             } else withdrawHomeRemap(space,oldSlots,oldPending,oldPages,oldInstanceEpoch);
@@ -1292,7 +1301,8 @@ public final class CorridorPageManager {
      */
     private void tickHomeRetirement(Space space,int slot) {
         var lease=space.leases.get(slot);
-        if (lease==null || space.operations>0 || !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty()) return;
+        // T5-4 Step 0（T5-3 規格 M-2，spec §9.1）：同 SID 的 session operation guard 被占時不清除、不寫；清租約的 checked 寫入在 guard 內。
+        if (lease==null || operationInProgress(space.id) || !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty()) return;
         var record=homeDurable(space);
         if (!homeRemappable(space,record)) return;
         if (!clear(space,slot,lease.bounds())) return;
@@ -1300,7 +1310,7 @@ public final class CorridorPageManager {
         if (remaining.isEmpty()) throw new IllegalStateException("最後租約必須經 release 收尾");
         var next=new HomeSessionRecord(record.sessionUuid(),record.chamberUuid(),record.rootAnchor(),record.entryEndpoint(),record.participants(),
                 remaining,record.state(),record.home());
-        var result=journal.commitHomeRollForward(server,record,next);
+        var result=exclusiveOperation(space.id,() -> journal.commitHomeRollForward(server,record,next));
         if (result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) {
             homeRollForwardPendingTick=server.getTicks();
             throw new IllegalStateException("HOME 舊租約移除的寫出未確認（ROLL_FORWARD_PENDING），保留舊 slot 並返回 B：slot="+slot,result.failure().orElse(null));

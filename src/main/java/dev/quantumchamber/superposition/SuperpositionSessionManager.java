@@ -417,7 +417,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     /**
      * T5-3 Step 0（品質 M-1）：{@link #admitHomeStart} 丟出意外例外時依現況收斂，不在 journal 未確認時釋放鎖或 reservation。
      * <ul>
-     * <li>這座艙已有本 SID 的 runtime（checked ARMING 之後才建立）：補取 Entry=B 來源票與走廊票（返還要它們），交 {@link #failHome}，只回 B。</li>
+     * <li>這座艙已有本 SID 的 runtime（checked ARMING 之後才建立）：補取 Entry=B 來源票與走廊票（返還要它們），交 {@link #failHome}，只回 B。
+     *     <b>防禦性分支</b>（T5-4 Step 0，T5-3 品質 M-6）：T5-3 Step 0 重排之後，{@link #admitHomeStart} 在 {@code sessions.put(chamber,runtime)} 之後只剩記 log 與回傳，
+     *     目前不可達；保留它，讓日後在 put 之後加入會丟例外的步驟時，仍不會留下沒有收斂者的 runtime。</li>
      * <li>還有走廊 reservation 或 journal 殘留：釋放 START_CHECK 票，暫占記號與 reservation 保留（鎖），交 {@link #finishHomeAbandoned}——journal 確認沒有殘留之後才歸還。</li>
      * <li>兩者皆無（reservation 之前就丟出）：與原本相同，只釋放暫占與票。</li>
      * </ul>
