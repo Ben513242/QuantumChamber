@@ -1,5 +1,22 @@
 {
-  "schema": 4,
+  "schema": 5,
+  "gametestSegments": {
+    "Main": {
+      "classes": [
+        "M7HomeSpikeGameTests",
+        "M7HomeClosureGameTests",
+        "M7HomeEntryTicketGameTests"
+      ]
+    },
+    "Corridor": {
+      "classes": [
+        "M7HomeCorridorGameTests",
+        "M7HomeAuthorityGameTests",
+        "M7RearmGameTests",
+        "M7SealReleaseGameTests"
+      ]
+    }
+  },
   "portable": {
     "junit": [
       "dev.quantumchamber.persistence.M7BudgetSpikeTest.legalHomeAtAndBeyondTrackerLimit",

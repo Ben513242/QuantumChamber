@@ -186,6 +186,12 @@ loom {
             vmArg "-Dquantumchamber.m7game.nonce=${nonce}"
             vmArg "-Dquantumchamber.m7game.root=${project.file("run/gametest-m7-${nonce}").absolutePath}"
             vmArg "-Dquantumchamber.m7game.head=${providers.gradleProperty('m7Head').getOrElse('disabled')}"
+            // 使用者 2026-11-25 裁示「拆成兩段」：-Pm7GameSegment 是 m7-inventory.json gametestSegments 的段名（沒給就是 disabled），
+            // JVM 內由 M4LegacyGameTestFilterMixin 依同一份 inventory 只留該段的類別；段名不在清單即 fail closed。
+            def segment=providers.gradleProperty('m7GameSegment').getOrElse('disabled')
+            if(!(segment ==~ /[A-Za-z][A-Za-z0-9]*/)) throw new GradleException('M7 GameTest segment格式')
+            vmArg "-Dquantumchamber.m7game.segment=${segment}"
+            vmArg "-Dquantumchamber.m7game.inventory=${project.file('scripts/verification/m7-inventory.json').absolutePath}"
             vmArg '-Dfabric-api.gametest'
             vmArg '-Dquantumchamber.test.m7Home=true'
             vmArg '-Dquantumchamber.gametest.minTickMillis=10'

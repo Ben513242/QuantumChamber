@@ -39,12 +39,28 @@ jobs:
       - name: 執行 M7 獨立 GameTest
         shell: pwsh
         run: |
-          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
+          # 使用者 2026-11-25 裁示「拆成兩段」：Main 段＝m7-inventory.json gametestSegments.Main 的 GameTest＋非規模 JUnit＋兩 JAR。
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Main -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
       - name: 確認 M7 精確集合與隔離
         shell: pwsh
         run: |
           # m7_home：同一份不可覆寫原XML/JUnit/log/JAR，不借另一root。
-          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Main -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
+      - name: 執行 M7 走廊段 GameTest
+        # 使用者 2026-11-25 裁示「拆成兩段」：gametestSegments.Corridor 的 GameTest 獨立一段，自己的 Gradle 呼叫與 root；前一段失敗時照跑（!cancelled()），互不連坐。
+        # step 時限 20 分（Windows 另有 Invoke-Gradle 的 600 秒、idle 90 秒）。
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Corridor -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-corridor
+      - name: 確認 M7 走廊段精確集合與隔離
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          # m7_home／Corridor：同一份不可覆寫的原 XML/log，不借另一 root。
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Corridor -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-corridor
       - name: 執行 M7 規模測試
         # T5 Step 0（T4 B2b-5 審查 M2）：前面的 Main 段失敗時規模段照跑（!cancelled()），兩段互不連坐；step 時限 20 分（Windows 另有 Invoke-Gradle 的 600 秒）。
         if: ${{ !cancelled() }}
@@ -68,6 +84,14 @@ jobs:
           include-hidden-files: true
           path: |
             .superpowers/m7-own/**
+      - name: 上傳 M7 走廊段證據
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m7-corridor-${{ matrix.platform }}
+          include-hidden-files: true
+          path: |
+            .superpowers/m7-corridor/**
       - name: 上傳 M7 規模測試證據
         if: always()
         uses: actions/upload-artifact@v4

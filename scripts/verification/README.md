@@ -712,9 +712,11 @@ T1只保兩平台的M7BudgetSpikeTest（合法NBT大小/同bytes bounded raw及d
 固定M6來源見SDD/t1-m6-equivalence-baseline.md/json：m6-universe-probe.ps1、probe-common.ps1、m6-ci-gametest.ps1對b26b90c/已綠CI43373504422不改。新入口只載gates與M6 GT具名純oracle；Windows遊戲執行沿既有gates/原handle、CIM PID/start/name/nonce token與probe-common身份規則（既有<1ms精度差），不新增argv parser/不可變class/argfile框架。Ubuntu只跑JUnit/GT，沒有新Linuxowner/native/main-only。既有全部M6 required jobs/main-only/斷言/門檻不變。
 
 ```powershell
-pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -ExpectedHead <完整SHA> -GameNonce <32位hex唯一nonce> -OutputRoot .superpowers/m7-current
-pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -VerifyOnly -SelfTest -ExpectedHead <完整SHA> -OutputRoot .superpowers/m7-current
+pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -Segment Main -ExpectedHead <完整SHA> -GameNonce <32位hex唯一nonce> -OutputRoot .superpowers/m7-current
+pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -Segment Main -VerifyOnly -SelfTest -ExpectedHead <完整SHA> -OutputRoot .superpowers/m7-current
 ```
+
+（2026-11-25 起 `-Segment` 必須明確指定，GameTest 也拆成 `Main` 與 `Corridor` 兩段；見下方「M7 GameTest 拆段」。本段其餘文字是 T1 當時的紀錄。）
 
 首次命令一次呼叫兩個JUnit suite與唯一nonce GameTest及兩JAR，fresh root既有就拒絕、不移除世界。OutputRoot先GetFullPath／非reparse／ignored／fresh檢查，所以真CI的相對路徑與本機絕對路徑同樣可用。JUnit與GT的當次XML/log、JAR與SHA/平台/時間保存在同root raw/inputs.json；失敗也先保全已有原件，缺失/過時寫FAIL，不借build殘留PASS。release/sources分角色並沿M6遞迴掃nested JAR，僅保留既有production ModPresenceProbe例外。
 
@@ -874,7 +876,7 @@ strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立
 使用者 2026-11-18 裁示「規模測試獨立一段」：CI 44117707536（`926425c`）的 Windows「執行 M7 獨立 GameTest」step 耗時 494 秒，其中 `M7HomeHistoryScaleTest` 204.5 秒、GameTest 177.4 秒，離 600 秒總時限只剩約 100 秒。`M7HomeHistoryScaleTest` 因此從 M7 gate 拆出、另外執行。M7 gate 與規模段的總時限都是 600 秒、idle 都是 90 秒，數值沒有改；測試內容不變（4100 趟、正式發布與移除、各項斷言、11 段順序）。
 
 - exact 集合（`m7-inventory.json` schema 4）：
-  - M7 gate（`m7-ci-gametest.ps1 -Segment Main`，預設）：`portable.junit`＋`<平台>.junit`（不含規模測試），GameTest 與兩個 JAR 照舊；
+  - M7 gate（`m7-ci-gametest.ps1 -Segment Main`；當時是預設值，2026-11-25 起必須明確指定，GameTest 也拆成兩段，見下方「M7 GameTest 拆段」）：`portable.junit`＋`<平台>.junit`（不含規模測試），GameTest 與兩個 JAR 照舊；
   - 規模段（`-Segment Scale`）：`scale.portable.junit`＋`scale.<平台>.junit`，目前是 `M7HomeHistoryScaleTest` 的 11 個方法，兩平台都跑。
   - Gradle 的 `--tests` 由各段的 class 集合產生，兩段的 class 必須互斥（`M7_JUNIT_SEGMENT_OVERLAP`）。`src/test/java` 內每個 `M7*Test.java` 都要列入 Main 或 Scale（`M7_JUNIT_CLASS_UNLISTED`）；兩段的聯集必須與 class 集合（`M7_JUNIT_CLASS_SET`）、方法集合（`M7_JUNIT_DECLARATION_SET`）各自完全一致。
   - 一般無參數 `void` 測試支援 `@Test`、`@org.junit.jupiter.api.Test` 與 `public`、`final` 等合法修飾詞。`@ParameterizedTest`、`@RepeatedTest`、`@TestFactory`、`@TestTemplate` 等未支援的宣告，以 `M7_JUNIT_DECLARATION_FORM` 和實際 class／註解名稱拒絕。
@@ -891,6 +893,51 @@ strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立
 - CI（`m7-validation`，Windows 與 Ubuntu matrix）：在原本的「確認 M7 精確集合與隔離」之後新增「執行 M7 規模測試」（`-Segment Scale -OutputRoot .superpowers/m7-scale`）與「確認 M7 規模測試精確集合」（`-VerifyOnly -SelfTest`），證據另存 artifact `m7-scale-<平台>`（`.superpowers/m7-scale/**`）。原本的 step 與 artifact `m7-validation-<平台>` 沒有改。T5-0 起（使用者 2026-11-24 指示先以 Windows 為主），`m7-validation` 的 Ubuntu 那一格與 Ubuntu `build` 照跑但不擋 workflow（job 層 `continue-on-error`）；Ubuntu 失敗時 run 層的 conclusion 仍可能是 success，判讀時逐 job 看 Windows 各 job 的 conclusion，Ubuntu 只照錄。
   - T5 Step 0（B2b-5 審查 M2）：這兩個規模段 step 加 `if: ${{ !cancelled() }}`，前面的 Main 段（或編譯）失敗時規模段照跑，兩段互不連坐（Main 段失敗時 job 仍是失敗）；step 時限執行 20 分、驗證 10 分（Ubuntu 原本只受 job 的 90 分鐘限制；Windows 另有 `Invoke-Gradle` 的 600 秒）。
 - run-all：`m7-home` 之後緊接新 step `m7-scale`（執行，再 `-VerifyOnly -SelfTest`；root 是 `<run root>/m7-scale`）。`summary` step 在 `M7_FINAL_PROOF` 之後唯讀重驗同一個 root（不跑負控，`M7_SCALE_FINAL_PROOF`），結果寫進 `summary.json` 新增的 `m7HomeScale`（在 `m7HomeNative` 之後），`SUMMARY` 行尾加 `m7scale=PASS:11`。其他 step 與 `summary.json` 既有欄位沒有改；`m7Home` 的 `junitCases` 不再含規模測試，Windows 從 59 個變成 48 個。
+
+### M7 GameTest 拆段（使用者 2026-11-25 裁示「拆成兩段」）
+
+CI 45508192969（`852f27c`）的 Windows「執行 M7 獨立 GameTest」step 耗時 602 秒（Gradle 597 秒，`Invoke-Gradle` 總時限 600 秒），超過約 450 秒的回報線；T5-3 fix2 再加 2 案，T5-4～T7 的案例大多也會加在 `M7HomeCorridorGameTests`。使用者選「拆成兩段」：M7 GameTest 依測試類別拆成兩段，各自一次 Gradle 呼叫、各自的總時限 600 秒與 idle 90 秒（數值沒有改），約 450 秒的回報線改為逐段計算。測試內容、斷言與時限都不變；遊戲程式沒有改。
+
+- 分配（`m7-inventory.json` schema 5 的 `gametestSegments`，段名區分大小寫；日後要第三段只改這份清單）：
+  - `Main`：`M7HomeSpikeGameTests`、`M7HomeClosureGameTests`、`M7HomeEntryTicketGameTests`，另含全部非規模 JUnit（`portable.junit`＋`<平台>.junit`）與兩個 JAR。
+  - `Corridor`：`M7HomeCorridorGameTests`、`M7HomeAuthorityGameTests`、`M7RearmGameTests`、`M7SealReleaseGameTests`，只跑 GameTest（不跑 JUnit、不封裝）。
+  - 理由：會繼續長大的是走廊類別，所以它那一段只配較輕的類別，留最多餘量；`Main` 留收尾類（Closure、B 收尾票）與 Spike（平台／scope 基線，也是 `ci-rule-check.ps1` M7 fixture 的 source mutation 對象）。兩段在 Ubuntu 也都有案例（走廊類別全是 `_windows`）。以 CI 45508192969 的各案 time、每 batch 約 0.73 秒、固定開銷（編譯、開服、停服；Main 另加 JUnit 與封裝）估 Windows CI：`Main` 約 367 秒、`Corridor` 約 328 秒；派工建議的「走廊＋B 收尾票一段」約 378／317 秒，走廊那段的餘量較少。
+- 預期數字（`62dacdd` 之後）：
+
+  | 段 | Windows JUnit | Windows GameTest | Ubuntu JUnit | Ubuntu GameTest |
+  |---|---|---|---|---|
+  | `Main` | 59 | 36 | 59 | 35 |
+  | `Corridor` | 0 | 41 | 0 | 18 |
+  | `Scale`（不變） | 11 | 0 | 11 | 0 |
+
+  兩個 GameTest 段合計 Windows 77、Ubuntu 53，與拆段前相同。
+- 段名與清單的核對（啟動前與 `-VerifyOnly` 都做）：
+  - `m7-ci-gametest.ps1 -Segment` 必須明確指定（`Main`、`Corridor` 或 `Scale`），不再有預設值；不給是 `M7_SEGMENT_REQUIRED`，不在清單（含大小寫不同）是 `M7_SEGMENT_UNKNOWN`。`inventory` 不是 schema 5 是 `M7_INVENTORY_SCHEMA`。
+  - 每段至少一個 `M7*GameTests` 類別（`M7_GAME_SEGMENT_FORM`）；同一類別不得出現兩次（`M7_GAME_SEGMENT_OVERLAP`）；原始碼宣告 `m7_home` GameTest 的類別都要列入某一段（遺漏是 `M7_GAME_SEGMENT_CLASS_UNLISTED`），列入的類別都要有宣告（`M7_GAME_SEGMENT_CLASS_UNDECLARED`），不分平台；本段在本平台至少一案（`M7_GAME_SEGMENT_EMPTY`）。
+  - 本平台全部 M7 GameTest 與原始碼宣告的 exact 核對（`M7_DECLARATION_SET`）照舊對每一段都做；各段的 exact 集合是其中屬於本段類別的部分。
+- 同一個 JVM 內的選取：`build.gradle` 的 `gameTestM7` 把 `-Pm7GameSegment`（沒給是 `disabled`）轉成 `-Dquantumchamber.m7game.segment`，並以 `-Dquantumchamber.m7game.inventory` 傳入同一份 `m7-inventory.json`。`M4LegacyGameTestFilterMixin` 的 M7 分支在平台篩選之後只留該段類別的案例：段名不在清單（`M7_SEGMENT_UNKNOWN`）、清單讀不到或格式不符（`M7_SEGMENT_INVENTORY`、`M7_SEGMENT_FORM`）、類別重複（`M7_SEGMENT_OVERLAP`）、JVM 內 `m7_home` 的類別集合與各段聯集不符（`M7_SEGMENT_CLASS_SET`）、本段選到的類別與清單不符（`M7_SEGMENT_CLASS_MISMATCH`）、選到 0 案（`M7_SEGMENT_EMPTY`），都在開跑前丟出。類別以 `TestFunction.templatePath()` 的前綴辨識（原版 `TestFunctions`：類別 simple name 小寫＋「.」＋方法名稱小寫），不由 batch 名稱推斷。`onlyBatches`（RED 取證用）照舊在之後套用。
+- 證據與驗證：
+  - 各段自己的 OutputRoot。`Main` 的格式不變，summary 多 `segment` 欄位（`inputs.json` 本來就有）。
+  - `Corridor` 只收本次的 GameTest XML 與 runtime；有 JUnit XML 或 JAR 輸入、數量不符或不是本次寫出的，都是 `M7_NOT_CURRENT`。summary 的欄位集合必須恰等於重算的結果（`M7_SAVED_SUMMARY`）。
+  - XML 先核類別、再核 exact 集合：混入其他段的類別是 `M7_GAME_SEGMENT_FOREIGN`，不屬於任何段的 M7 類別是 `M7_GAME_SEGMENT_CLASS_EXTRA`，本段在本平台應有的類別缺席是 `M7_GAME_SEGMENT_CLASS_MISSING`；其他差異仍是 `M7_GAME_SET`。拆段前的單一 root（77 案）以 `-Segment Main` 驗證會以 `M7_GAME_SEGMENT_FOREIGN` 拒絕。
+  - 輸出行：`M7_VERIFIED PASS platform=<平台> segment=<段> junit=<n> gametest=<n> launched=… HEAD=…`。
+- SelfTest（`-VerifyOnly -SelfTest`）：既有反例全部保留、錯因不變。兩個 GameTest 段另加 `wrong-game-segment`（manifest 換成另一段，`M7_INPUT_IDENTITY`）、`foreign-class`（混入另一段的類別）、`class-missing`（少一個本段類別）、`class-extra`（多一個不屬於任何段的 M7 類別）、`summary-segment`（`M7_SAVED_SUMMARY`），以及只改記憶體複本的清單負控 `segment-positive`、`segment-unknown`、`segment-unknown-case`、`segment-overlap`、`segment-class-missing`、`segment-class-extra`、`segment-form`、`segment-empty`。`Corridor` 沒有 JUnit／JAR 的反例，改核 `junit-present`（`M7_NOT_CURRENT`）與 `summary-extra-field`（夾帶 `junitCases`，`M7_SAVED_SUMMARY`）。各段共 28 例（`Main` 原本 15 例；`Scale` 13 例不變）。
+- 執行：
+  - Windows：`gates.ps1 -Mode M7Runtime -M7Segment <段>`。`Main` 執行 `test --tests <Main JUnit class> runGameTestM7 remapJar remapSourcesJar`，其他段只執行 `runGameTestM7`；都帶 `-Pm7GameNonce`、`-Pm7Head`、`-Pm7GameSegment` 與 `--rerun-tasks`，每段各自的總時限 600 秒、idle 90 秒。
+  - Ubuntu：同樣的 task 直接呼叫 Gradle（`gradle.log`）。依「Windows 優先驗證」，Ubuntu 結果只照錄、不擋。
+  - 本機 gate：`gates.ps1 -Mode M7GameTest -Label <唯一標籤>` 依清單順序逐段執行（root 底下的 `m7`、`m7-corridor`），一段失敗不影響其他段，最後以 `M7_GATE_FAILED：<段>（原因）` 列出；`-M7Segment <段>` 只跑指定的那一段。
+  - 手動：
+
+    ```powershell
+    pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -Segment Main -ExpectedHead <完整SHA> -OutputRoot .superpowers/<root>/m7
+    pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -Segment Main -VerifyOnly -SelfTest -ExpectedHead <完整SHA> -OutputRoot .superpowers/<root>/m7
+    pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -Segment Corridor -ExpectedHead <完整SHA> -OutputRoot .superpowers/<root>/m7-corridor
+    pwsh -NoProfile -File scripts/verification/m7-ci-gametest.ps1 -Platform Windows -Segment Corridor -VerifyOnly -SelfTest -ExpectedHead <完整SHA> -OutputRoot .superpowers/<root>/m7-corridor
+    ```
+
+- CI（`m7-validation`）：「執行 M7 獨立 GameTest」與「確認 M7 精確集合與隔離」改帶 `-Segment Main`（step 名稱、root `.superpowers/m7-own` 與 artifact `m7-validation-<平台>` 不變）。之後新增「執行 M7 走廊段 GameTest」（`-Segment Corridor -OutputRoot .superpowers/m7-corridor`，`if: ${{ !cancelled() }}`、20 分）與「確認 M7 走廊段精確集合與隔離」（`-VerifyOnly -SelfTest`，`!cancelled()`、10 分），證據另存 artifact `m7-corridor-<平台>`。前一段失敗時其他段照跑、互不連坐（job 仍是失敗）。規模段的 step 不變。
+- run-all：`m7-home`（`Main`）之後依清單接 `m7-corridor` step（執行，再 `-VerifyOnly -SelfTest`；root `<run root>/m7-corridor`），再接原本的 `m7-scale`。`summary` step 的 `M7_FINAL_PROOF` 改帶 `-Segment Main` 並核 `segment=Main`；之後唯讀重驗其他段（`M7_SEGMENT_FINAL_PROOF`），各段的 `gameCases` 互斥、聯集恰為 `m7-inventory.json` 的全部 Windows M7 GameTest（`M7_SEGMENT_COVERAGE`，漏跑任何一段都不會通過）。結果寫進 `summary.json` 新增的 `m7HomeSegments`（`m7Home` 仍是 `Main`，所以它的 `gameCases` 從 77 變成 36），`SUMMARY` 行尾加 `m7game=Main:36,Corridor:41`。
+- 約 450 秒的回報線逐段計算：Windows CI 的「執行 M7 獨立 GameTest」（`Main`）與「執行 M7 走廊段 GameTest」（`Corridor`）任一個 step 超過約 450 秒就先回報；本機也是逐段計算。
 
 ### run-all 與 CI 接線（T4 B2b-3）
 

@@ -23,6 +23,9 @@ param(
     [string]$M7Nonce='',
     # M7Runtime／M7ScaleRuntime 的 JUnit class（T4 B2b-5）：由 m7-ci-gametest.ps1 依 m7-inventory.json 該段的 exact 集合傳入。
     [string[]]$M7Tests=@(),
+    # M7 GameTest 段（使用者 2026-11-25 裁示「拆成兩段」）：m7-inventory.json gametestSegments 的段名。M7Runtime 必填（轉成 -Pm7GameSegment）；
+    # M7GameTest 不給時依清單順序逐段執行，給了只跑該段。
+    [string]$M7Segment='',
     [string]$Gradle=''
 )
 $ErrorActionPreference='Stop'
@@ -471,13 +474,29 @@ try {
         'Legacy' {Fresh-Game $false 'legacy'}
         'M4NormalGameTest' {Fresh-Game $false 'normal'}
         'M5GameTest' {Fresh-Game $false 'm5'}
-        'M7GameTest' { & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform $(if($IsWindows){'Windows'}else{'Ubuntu'}) -Gradle $Gradle -OutputRoot (Join-Path $gate 'm7'); if($LASTEXITCODE -ne 0){throw 'M7_GATE_FAILED'} }
+        # 使用者 2026-11-25 裁示「拆成兩段」：依 m7-inventory.json gametestSegments 的順序逐段執行，各段自己的 Gradle 呼叫與 OutputRoot
+        # （Main 是 <gate>/m7，其他段是 <gate>/m7-<段名小寫>）；一段失敗不影響其他段，最後列出失敗的段。-M7Segment 只跑指定的那一段。
+        'M7GameTest' {
+            $m7Segments=@((Get-Content -LiteralPath (Join-Path $PSScriptRoot 'm7-inventory.json') -Raw | ConvertFrom-Json).gametestSegments.PSObject.Properties.Name)
+            if(-not $m7Segments.Count){throw 'M7_SEGMENT_TABLE：m7-inventory.json 沒有 gametestSegments'}
+            if($M7Segment){if($M7Segment -cnotin $m7Segments){throw "M7_SEGMENT_UNKNOWN：$M7Segment"};$m7Segments=@($M7Segment)}
+            $m7Failed=@()
+            foreach($m7Each in $m7Segments){
+                $m7Output=Join-Path $gate $(if($m7Each -ceq 'Main'){'m7'}else{'m7-'+$m7Each.ToLowerInvariant()})
+                try{& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform $(if($IsWindows){'Windows'}else{'Ubuntu'}) -Segment $m7Each -Gradle $Gradle -OutputRoot $m7Output}
+                catch{$m7Failed+="$m7Each（$($_.Exception.Message)）"}
+            }
+            if($m7Failed.Count){throw "M7_GATE_FAILED：$($m7Failed -join '；')"}
+        }
         # T4 B2b-5（使用者 2026-11-18 裁示）：規模測試獨立一段，自己的 Gradle 呼叫與 OutputRoot；M7GameTest 不再執行它。
         'M7ScaleTest' { & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform $(if($IsWindows){'Windows'}else{'Ubuntu'}) -Segment Scale -Gradle $Gradle -OutputRoot (Join-Path $gate 'm7-scale'); if($LASTEXITCODE -ne 0){throw 'M7_SCALE_GATE_FAILED'} }
         'M7Runtime' {
             if($M7Nonce -cnotmatch '^[0-9a-f]{32}$'){throw 'M7_NONCE'}
+            # 段名是否在清單由 m7-ci-gametest.ps1 與 JVM 內的 M4LegacyGameTestFilterMixin 核對；Main 另跑 JUnit 與兩個 JAR，其他段只跑 GameTest。
+            if($M7Segment -cnotmatch '^[A-Z][A-Za-z0-9]*$' -or $M7Segment -ceq 'Scale'){throw 'M7_SEGMENT：M7Runtime 需要 GameTest 段名（-M7Segment）'}
+            if($M7Segment -cne 'Main' -and @($M7Tests).Count){throw 'M7_TEST_FILTER：只有 Main 段執行 JUnit'}
             $runtime=Join-Path $repo "run/gametest-m7-$M7Nonce";Check-Path $runtime|Out-Null;if(Test-Path $runtime){throw 'M7_FRESH_ROOT_REQUIRED'}
-            try{$tasks=@('test')+@(M7-TestFilter)+@('runGameTestM7','remapJar','remapSourcesJar',"-Pm7GameNonce=$M7Nonce","-Pm7Head=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())",'--rerun-tasks');$exit=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $runtime '' 600)[-1];if($exit -ne 0){throw "M7_RUNTIME_EXIT $exit"}}
+            try{$m7Properties=@("-Pm7GameNonce=$M7Nonce","-Pm7Head=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())","-Pm7GameSegment=$M7Segment",'--rerun-tasks');$tasks=if($M7Segment -ceq 'Main'){@('test')+@(M7-TestFilter)+@('runGameTestM7','remapJar','remapSourcesJar')+$m7Properties}else{@('runGameTestM7')+$m7Properties};$exit=@(Invoke-Gradle $tasks (Join-Path $gate 'execution') $runtime '' 600)[-1];if($exit -ne 0){throw "M7_RUNTIME_EXIT $exit"}}
             finally{Copy-Build (Join-Path $gate 'result-build')}
         }
         # 只跑 JUnit（不啟動 Minecraft），沿用 Invoke-Gradle 的 M6 deadline：總時限 600 秒、idle 90 秒。

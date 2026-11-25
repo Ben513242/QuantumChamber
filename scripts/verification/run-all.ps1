@@ -262,6 +262,10 @@ Step 'w10-preflight' { & (Join-Path $PSScriptRoot 'm5-collapse-probe.ps1') -Only
 if($PreflightOnly){Say "END PREFLIGHT exit=0 HEAD=$startHead";return}
 
 $gates=Join-Path $PSScriptRoot 'gates.ps1'
+# M7 GameTest 段名（使用者 2026-11-25「拆成兩段」）：段名與類別只在 m7-inventory.json 的 gametestSegments；Main 必須存在（含 JUnit 與 JAR）。
+$m7GameSegments=@((Read-Json (Join-Path $PSScriptRoot 'm7-inventory.json')).gametestSegments.PSObject.Properties.Name)
+if('Main' -cnotin $m7GameSegments){throw 'M7_SEGMENT_TABLE：gametestSegments 必須有 Main'}
+function M7-SegmentRoot([string]$Segment){ if($Segment -ceq 'Main'){return 'm7'}; return 'm7-'+$Segment.ToLowerInvariant() }
 Step 'full' { & $gates -Mode Full -Label full -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'm4-normal' { & $gates -Mode M4NormalGameTest -Label m4-normal -EvidenceRoot $runRoot -Gradle $Gradle }
 Step 'legacy' { & $gates -Mode Legacy -Label legacy -EvidenceRoot $runRoot -Gradle $Gradle }
@@ -271,9 +275,14 @@ Step 'm6-oracle-and-safety' {
     foreach($case in @('move-fresh','owned-root','optional-probe-properties','ci-cwd-preflight')){& (Join-Path $PSScriptRoot 'm6-harness-safety-check.ps1') -Case $case -Label "full-$case"}
 }
 Step 'm6-gametest' { & $gates -Mode M6GameTest -Label m6-gametest -EvidenceRoot $runRoot -Gradle $Gradle }
-Step 'm7-home' {
-    & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Gradle $Gradle -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $startHead
-    & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -SelfTest -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $startHead
+# 使用者 2026-11-25 裁示「拆成兩段」：M7 GameTest 依 m7-inventory.json gametestSegments 的順序逐段執行（各自 Gradle 呼叫、root、600 秒／idle 90 秒）。
+# Main 的 step 與 root 維持 m7-home／m7（另含非規模 JUnit 與兩 JAR），其他段是 m7-<段名小寫>；summary step 核對各段聯集恰為全部 M7 GameTest。
+foreach($m7Segment in $m7GameSegments){
+    $m7Root=Join-Path $runRoot (M7-SegmentRoot $m7Segment)
+    Step $(if($m7Segment -ceq 'Main'){'m7-home'}else{'m7-'+$m7Segment.ToLowerInvariant()}) {
+        & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment $m7Segment -Gradle $Gradle -OutputRoot $m7Root -ExpectedHead $startHead
+        & (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment $m7Segment -VerifyOnly -SelfTest -OutputRoot $m7Root -ExpectedHead $startHead
+    }
 }
 # M7 T4 B2b-5（使用者 2026-11-18 裁示「規模測試獨立一段」）：M7HomeHistoryScaleTest 不在 m7-home 內，緊接著以自己的 Gradle 呼叫（總時限 600 秒、idle 90 秒）與 root 執行並自測。
 Step 'm7-scale' {
@@ -568,8 +577,21 @@ Step 'summary' {
     }
     & (Join-Path $PSScriptRoot 'm6-universe-probe.ps1') -VerifySummary $nativeFile -ExpectedHead $head -SelfTest |
         Tee-Object -FilePath (Join-Path $runRoot 'm6-native-verify.log')
-    $m7Fresh=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -VerifyOnly -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_home'})
+    $m7Fresh=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment Main -VerifyOnly -OutputRoot (Join-Path $runRoot 'm7') -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_home' -and $_.segment -ceq 'Main'})
     if($m7Fresh.Count -ne 1 -or $m7Fresh[0].head -cne $head -or $m7Fresh[0].status -cne 'PASS'){throw 'M7_FINAL_PROOF'}
+    # 使用者 2026-11-25「拆成兩段」：唯讀重驗其他 GameTest 段的 root（不再跑負控），結果寫進 summary.json 的 m7HomeSegments；
+    # 各段 gameCases 互斥、聯集恰為 m7-inventory.json 的全部 Windows M7 GameTest（M7_SEGMENT_COVERAGE），漏跑任何一段都不會通過。
+    $m7Segments=[ordered]@{}
+    foreach($m7Segment in @($m7GameSegments|Where-Object {$_ -cne 'Main'})){
+        $m7Proof=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment $m7Segment -VerifyOnly -OutputRoot (Join-Path $runRoot (M7-SegmentRoot $m7Segment)) -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_home' -and $_.segment -ceq $m7Segment})
+        if($m7Proof.Count -ne 1 -or $m7Proof[0].head -cne $head -or $m7Proof[0].status -cne 'PASS' -or -not @($m7Proof[0].gameCases).Count){throw "M7_SEGMENT_FINAL_PROOF：$m7Segment"}
+        $m7Segments[$m7Segment]=$m7Proof[0]
+    }
+    $m7Inventory=Read-Json (Join-Path $PSScriptRoot 'm7-inventory.json')
+    $m7AllGame=@(@($m7Inventory.portable.gametest)+@($m7Inventory.windows.gametest))
+    $m7Covered=@(@($m7Fresh[0].gameCases)+@($m7Segments.Values|ForEach-Object {@($_.gameCases)}))
+    if(-not $m7AllGame.Count -or $m7Covered.Count -ne $m7AllGame.Count -or @($m7Covered|Sort-Object -Unique -CaseSensitive).Count -ne $m7Covered.Count -or @(Compare-Object ($m7AllGame|Sort-Object) ($m7Covered|Sort-Object) -CaseSensitive).Count){throw "M7_SEGMENT_COVERAGE：各段 $($m7Covered.Count) 案，全部 $($m7AllGame.Count) 案"}
+    $m7GameLine=(@("Main:$(@($m7Fresh[0].gameCases).Count)")+@($m7Segments.Keys|ForEach-Object {"${_}:$(@($m7Segments[$_].gameCases).Count)"})) -join ','
     # T4 B2b-5：唯讀重驗 m7-scale step 的同一個 root（不再跑負控），結果寫進 summary.json 的 m7HomeScale。
     $m7Scale=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment Scale -VerifyOnly -OutputRoot (Join-Path $runRoot 'm7-scale') -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_scale'})
     if($m7Scale.Count -ne 1 -or $m7Scale[0].head -cne $head -or $m7Scale[0].status -cne 'PASS' -or -not @($m7Scale[0].junitCases).Count){throw 'M7_SCALE_FINAL_PROOF'}
@@ -584,10 +606,11 @@ Step 'summary' {
         m7Home=$m7Fresh[0]
         m7HomeNative=$m7Native
         m7HomeScale=$m7Scale[0]
+        m7HomeSegments=$m7Segments
         m6Native=[ordered]@{summary=$nativeFile;sha256=Hash $nativeFile;mode='PER_CHAIN';phaseCount=$native.phaseCount;chains=$native.chains;functionalAssertionsRemainRed=$true}
         m5Collapse=[ordered]@{summary=$collapseFile;runId=$collapse.runId;phaseCount=$collapsePhases.Count;halts=@($collapsePhases | Where-Object {$_.ending -eq 'halt'}).Count};ci=$ci
         roots=[ordered]@{full=$full;normal=$normal;legacy=$legacy;m5=$m5;m6=$m6;main=$main;m3=$m3}}
     $summary | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $runRoot 'summary.json') -Encoding utf8
-    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) normal=$($normalCases.Count)/13 perTest=$fullReceipts+$normalReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:$(@($native.phases | Where-Object expectedMode -CEQ 'DIAGNOSTIC').Count),FUNCTIONAL:$(@($native.phases | Where-Object expectedMode -CEQ 'FUNCTIONAL').Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green']) m7native=$($m7Native.status):$($m7Native.rows) m7scale=$($m7Scale[0].status):$(@($m7Scale[0].junitCases).Count)"
+    Write-Output "SUMMARY default=$($defaultCases.Count-$bad.Count)/$($defaultCases.Count) windows=$windowsCases legacy=$($legacyCases.Count)/$($legacyCases.Count) m5=$($m5Cases.Count)/$($m5Cases.Count) m6=$($m6Cases.Count)/$($m6Cases.Count) m6pace=$($m6Oracle.pacing.tps) normal=$($normalCases.Count)/13 perTest=$fullReceipts+$normalReceipts+$legacyReceipts junit=$junitTotal failures=$failures errors=$errors skipped=$junitSkipped windowsCheckpoint=$windowsTests release=$($release.entries)entries/$($release.classes)classes sources=$($sources.entries) testmodHits=0 mainOnly=$($oracle.status) m3=4+5 recovery=$($phases.Count) m5collapse=$($collapsePhases.Count) m6native=DIAGNOSTIC:$(@($native.phases | Where-Object expectedMode -CEQ 'DIAGNOSTIC').Count),FUNCTIONAL:$(@($native.phases | Where-Object expectedMode -CEQ 'FUNCTIONAL').Count) ci=win:$($ci['win-green']),ubuntu:$($ci['ubuntu-green']) m7native=$($m7Native.status):$($m7Native.rows) m7scale=$($m7Scale[0].status):$(@($m7Scale[0].junitCases).Count) m7game=$m7GameLine"
 }
 Say "END ALL exit=0 HEAD=$((git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim())"
