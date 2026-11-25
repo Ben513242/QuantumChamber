@@ -898,7 +898,7 @@ strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立
 
 CI 45508192969（`852f27c`）的 Windows「執行 M7 獨立 GameTest」step 耗時 602 秒（Gradle 597 秒，`Invoke-Gradle` 總時限 600 秒），超過約 450 秒的回報線；T5-3 fix2 再加 2 案，T5-4～T7 的案例大多也會加在 `M7HomeCorridorGameTests`。使用者選「拆成兩段」：M7 GameTest 依測試類別拆成兩段，各自一次 Gradle 呼叫、各自的總時限 600 秒與 idle 90 秒（數值沒有改），約 450 秒的回報線改為逐段計算。測試內容、斷言與時限都不變；遊戲程式沒有改。
 
-- 分配（`m7-inventory.json` schema 5 的 `gametestSegments`，段名區分大小寫；日後要第三段只改這份清單）：
+- 分配（`m7-inventory.json` schema 5 的 `gametestSegments`，段名區分大小寫）。本機的 `m7-ci-gametest.ps1`、testmod mixin、`gates.ps1 -Mode M7GameTest` 與 run-all 都從這份清單讀段名；CI 不是，`m7-validation` 的 step 是寫死的 `Main` 與 `Corridor`。日後加段（或改段名、改順序）時，除了改清單，還要在 `m7-validation` 新增該段的執行、驗證、上傳三個 step，並更新「確認 M7 精確集合與隔離」裡的段名守門（見下方 CI）；只改清單時，CI 會以 `M7_CI_SEGMENT_SET` 失敗，不會靜默少跑新段：
   - `Main`：`M7HomeSpikeGameTests`、`M7HomeClosureGameTests`、`M7HomeEntryTicketGameTests`，另含全部非規模 JUnit（`portable.junit`＋`<平台>.junit`）與兩個 JAR。
   - `Corridor`：`M7HomeCorridorGameTests`、`M7HomeAuthorityGameTests`、`M7RearmGameTests`、`M7SealReleaseGameTests`，只跑 GameTest（不跑 JUnit、不封裝）。
   - 理由：會繼續長大的是走廊類別，所以它那一段只配較輕的類別，留最多餘量；`Main` 留收尾類（Closure、B 收尾票）與 Spike（平台／scope 基線，也是 `ci-rule-check.ps1` M7 fixture 的 source mutation 對象）。兩段在 Ubuntu 也都有案例（走廊類別全是 `_windows`）。以 CI 45508192969 的各案 time、每 batch 約 0.73 秒、固定開銷（編譯、開服、停服；Main 另加 JUnit 與封裝）估 Windows CI：`Main` 約 367 秒、`Corridor` 約 328 秒；派工建議的「走廊＋B 收尾票一段」約 378／317 秒，走廊那段的餘量較少。
@@ -936,6 +936,7 @@ CI 45508192969（`852f27c`）的 Windows「執行 M7 獨立 GameTest」step 耗�
     ```
 
 - CI（`m7-validation`）：「執行 M7 獨立 GameTest」與「確認 M7 精確集合與隔離」改帶 `-Segment Main`（step 名稱、root `.superpowers/m7-own` 與 artifact `m7-validation-<平台>` 不變）。之後新增「執行 M7 走廊段 GameTest」（`-Segment Corridor -OutputRoot .superpowers/m7-corridor`，`if: ${{ !cancelled() }}`、20 分）與「確認 M7 走廊段精確集合與隔離」（`-VerifyOnly -SelfTest`，`!cancelled()`、10 分），證據另存 artifact `m7-corridor-<平台>`。前一段失敗時其他段照跑、互不連坐（job 仍是失敗）。規模段的 step 不變。
+  - 拆段 fix1（審查 I1、M1）：「確認 M7 精確集合與隔離」開頭先核清單的段：`gametestSegments` 的段名依清單順序（不排序）以逗號串接，必須 `-ceq 'Main,Corridor'`；多一段、少一段、改名或改順序都以 `M7_CI_SEGMENT_SET` 失敗（訊息附實際的段名）。`ci-rule-check.ps1` 的 M7 fixture 逐字執行這個 step，所以也會執行到這道守門。Main 的執行 step 另加 `timeout-minutes: 20`、驗證 step 加 `timeout-minutes: 10`，與走廊段、規模段相同（job 的 90 分仍是最後上限）。
 - run-all：`m7-home`（`Main`）之後依清單接 `m7-corridor` step（執行，再 `-VerifyOnly -SelfTest`；root `<run root>/m7-corridor`），再接原本的 `m7-scale`。`summary` step 的 `M7_FINAL_PROOF` 改帶 `-Segment Main` 並核 `segment=Main`；之後唯讀重驗其他段（`M7_SEGMENT_FINAL_PROOF`），各段的 `gameCases` 互斥、聯集恰為 `m7-inventory.json` 的全部 Windows M7 GameTest（`M7_SEGMENT_COVERAGE`，漏跑任何一段都不會通過）。結果寫進 `summary.json` 新增的 `m7HomeSegments`（`m7Home` 仍是 `Main`，所以它的 `gameCases` 從 77 變成 36），`SUMMARY` 行尾加 `m7game=Main:36,Corridor:41`。
 - 約 450 秒的回報線逐段計算：Windows CI 的「執行 M7 獨立 GameTest」（`Main`）與「執行 M7 走廊段 GameTest」（`Corridor`）任一個 step 超過約 450 秒就先回報；本機也是逐段計算。
 

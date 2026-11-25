@@ -37,13 +37,20 @@ jobs:
           & $gradle classes testmodClasses testClasses remapJar remapSourcesJar --console=plain
           if ($LASTEXITCODE -ne 0) { throw 'M7_BUILD_FAILED' }
       - name: 執行 M7 獨立 GameTest
+        # 拆段 fix1（審查 M1）：step 時限比照走廊段與規模段，執行 20 分（Windows 另有 Invoke-Gradle 的 600 秒、idle 90 秒）。
+        timeout-minutes: 20
         shell: pwsh
         run: |
           # 使用者 2026-11-25 裁示「拆成兩段」：Main 段＝m7-inventory.json gametestSegments.Main 的 GameTest＋非規模 JUnit＋兩 JAR。
           & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Main -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
       - name: 確認 M7 精確集合與隔離
+        timeout-minutes: 10
         shell: pwsh
         run: |
+          # 拆段 fix1（審查 I1）：CI 只執行下面寫死的 Main 與 Corridor 兩段。m7-inventory.json gametestSegments 的段名依清單順序以逗號串接，
+          # 必須恰為 Main,Corridor（區分大小寫）；加段、改名或改順序時，要同時改這裡並新增該段的執行、驗證、上傳 step，否則以 M7_CI_SEGMENT_SET 失敗。
+          $m7CiSegments=@((Get-Content -LiteralPath ./scripts/verification/m7-inventory.json -Raw | ConvertFrom-Json).gametestSegments.PSObject.Properties.Name) -join ','
+          if ($m7CiSegments -cne 'Main,Corridor') { throw "M7_CI_SEGMENT_SET：m7-inventory.json gametestSegments=[$m7CiSegments]，CI 只執行 Main,Corridor" }
           # m7_home：同一份不可覆寫原XML/JUnit/log/JAR，不借另一root。
           & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Main -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
       - name: 執行 M7 走廊段 GameTest
