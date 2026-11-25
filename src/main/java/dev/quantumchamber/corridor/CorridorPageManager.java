@@ -37,6 +37,11 @@ import net.minecraft.server.world.ChunkTicketType;
 public final class CorridorPageManager {
     public record MappingRef(UUID sessionUuid, long instanceEpoch, int slotId) {}
     public record CandidateDoorLocation(DoorKey key, MappingRef owner) {}
+    /**
+     * M7 T5-4：HOME 門格的定位（spec §4.2）。{@code owner} 是門所在實例（含 instanceEpoch 與 slot），{@code mappingEpoch} 是定位當下的 current MappingSet epoch；
+     * {@code current} 只在 owner 屬於 current mapping、25 格完整時為真（退休中、pending 的實例為假）。
+     */
+    public record HomeDoorHit(UUID sessionUuid, DoorKey key, MappingRef owner, long mappingEpoch, boolean current) {}
     public record MappingView(MappingRef ref, long firstCorePage, long lastCorePage, long aliasStartBlock,
             long aliasEndBlock, long logicalAnchorBlock, BlockPos localBlockOrigin, Direction outwardFacing, BlockBox bounds) {
         public MappingView { localBlockOrigin = localBlockOrigin.toImmutable(); bounds = SlotAllocator.copy(bounds); }
@@ -322,6 +327,8 @@ public final class CorridorPageManager {
         requireThread();
         if(target!=world || target.getServer()!=server) return Optional.empty();
         for(var space : spaces.values()) {
+            // M7 T5-4（T5-1 審查 M-1）：HOME Space 的門與牆格不定位成候選門；HOME 門由 HomeDoorInteraction 經 homeDoorAt 處理。
+            if(space.home) continue;
             var known=new ArrayList<>(space.current.instances());
             if(space.pending!=null) known.addAll(space.pending.target().instances());
             known.addAll(space.retiredViews.values());
@@ -977,11 +984,16 @@ public final class CorridorPageManager {
      */
     private void tickHome(Space space) {
         settleConfirmedHomeRetirement(space);
+        // T5-4：選定 HOME 的清 lease 寫出未確認、之後被其他寫出確認時，先補做原生釋放（比照退休的 settle）。
+        if (settleConfirmedHomeMeasuredRelease(space)) return;
         if (space.releasing) { tickHomeRelease(space); return; }
+        if (space.homeMeasuredReleasing) { tickHomeMeasuredRelease(space); return; }
         if (space.failed || space.builds.isEmpty() && space.overlay.isEmpty() && space.retiring.isEmpty()) return;
         var record=homeDurable(space);
         if (record.state()==SessionState.RETURNING || !(journal.allSessions().get(space.id) instanceof HomeSessionRecord staged)
                 || staged.state()==SessionState.RETURNING) return;
+        // T5-4：選定之後不再建造、寫 overlay 或退休（換頁已停止）；保留式清理一次清掉全部 lease。
+        if (homeSelected(space)) return;
         for (var job : List.copyOf(space.builds.values())) {
             if (!leaseReady(job.view.bounds())) continue;
             if (!pins(job.view.bounds()).isEmpty()) throw new IllegalStateException("HOME prepared 空間出現 live pin，停止幾何寫入");
@@ -1066,7 +1078,8 @@ public final class CorridorPageManager {
 
     private Optional<List<UUID>> homeReturnEntityPins(Space space) {
         var record=homeDurable(space);
-        if (record.state()!=SessionState.RETURNING) throw new IllegalStateException("HOME 未請求安全返還不可取得 pins");
+        // T5-4（C12）：未選定的 RETURNING，或選定之後的 MEASURED／COLLAPSING（保留式返還）。
+        if (!homeReturnable(record)) throw new IllegalStateException("HOME 未請求安全返還不可取得 pins");
         if (space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()))) return Optional.empty();
         requirePinCapacity(); var result=new LinkedHashSet<UUID>();
         for (var lease : space.leases.values()) for (var entity : pins(lease.bounds())) result.add(entity.getUuid());
@@ -1337,6 +1350,158 @@ public final class CorridorPageManager {
         space.retiring.remove(slot); space.cleared.remove(slot);
         space.retiredViews.entrySet().removeIf(entry -> entry.getKey().slotId()==slot);
         space.retireTokens.values().removeIf(token -> token.instances().stream().noneMatch(space.retiredViews::containsKey));
+    }
+
+    // ---- M7 HOME（T5-4）：唯一 HOME 選擇的走廊側查詢，與選定之後（MEASURED／COLLAPSING）的保留式清理。legacy 方法本體不動。 ----
+
+    /**
+     * HOME 門格的定位（spec §4.2）：{@code pos} 落在某個 HOME Space 任一實例（current、pending target、退休中）的 HOME 門格上就回傳；不是 HOME 門格回 empty。
+     * {@code current} 只在門所在實例屬於 current mapping、25 格完整時為真；退休中舊實例的同一個 DoorKey 的門為假（T5-3 規格 M-5，選門只認 current mapping 與 epoch）。
+     */
+    public Optional<HomeDoorHit> homeDoorAt(ServerWorld target, BlockPos pos) {
+        requireThread();
+        if (target!=world || target.getServer()!=server) return Optional.empty();
+        for (var space : spaces.values()) {
+            if (!space.home) continue;
+            var key=HomeDoorLayout.key(space.id);
+            var known=new ArrayList<>(space.current.instances());
+            if (space.pending!=null) known.addAll(space.pending.target().instances());
+            known.addAll(space.retiredViews.values());
+            for (var mapping : known) {
+                if (!mapping.bounds().contains(pos) || !homeDoorCells(mapping).contains(pos)) continue;
+                boolean current=space.current.instances().contains(mapping) && completeDoor(space,mapping,key);
+                return Optional.of(new HomeDoorHit(space.id,key,mapping.ref(),space.current.epoch(),current));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** 這個 HOME Space 在 current mapping 上的 HOME 門（25 格完整）；沒有時為 empty。 */
+    public Optional<HomeDoorHit> currentHomeDoor(UUID sessionUuid) {
+        var space=space(sessionUuid);
+        if (!space.home) return Optional.empty();
+        var key=HomeDoorLayout.key(space.id);
+        return space.current.instances().stream().filter(mapping -> completeDoor(space,mapping,key)).findFirst()
+                .map(mapping -> new HomeDoorHit(space.id,key,mapping.ref(),space.current.epoch(),true));
+    }
+
+    /** current 實例 {@code owner} 上 HOME 門的 25 格（不在 current 時為空集合）。 */
+    public Set<BlockPos> homeDoorCells(UUID sessionUuid, MappingRef owner) {
+        var space=space(sessionUuid);
+        return space.current.instances().stream().filter(mapping -> mapping.ref().equals(owner)).findFirst().map(this::homeDoorCells).orElse(Set.of());
+    }
+
+    private Set<BlockPos> homeDoorCells(MappingView mapping) {
+        var key=HomeDoorLayout.key(mapping.ref().sessionUuid());
+        long start=Math.multiplyExact(key.logicalStationIndex(),8);
+        if (start+1<mapping.aliasStartBlock() || start+5>=mapping.aliasEndBlock()) return Set.of();
+        int x=key.wallSide()==DoorKey.DoorWallSide.NEGATIVE_LATERAL ? 0 : 6;
+        var cells=new HashSet<BlockPos>();
+        for (int z=1;z<=5;z++) for (int y=1;y<=5;y++)
+            cells.add(CorridorGeometry.block(CorridorGeometry.frame(mapping),x,y,Math.toIntExact(start+z-mapping.logicalAnchorBlock())).toImmutable());
+        return cells;
+    }
+
+    /**
+     * 選門的走廊側前置（spec §4.2；使用者 2026-11-25「新走廊建造中不受理（建議）」）：HOME Space 沒有新實例在建造或搬移（pending、batch 都是 null）、未故障、未收尾，
+     * current 實例的租約都已實體就緒。退休中的舊實例不擋（選門只認 current 的門）。
+     */
+    public boolean homeSelectable(UUID sessionUuid) {
+        var space=space(sessionUuid);
+        return space.home && !space.failed && !space.releasing && !space.homeMeasuredReleasing && space.pending==null && space.batch==null
+                && !space.current.instances().isEmpty() && space.current.instances().stream().allMatch(view -> leaseReady(view.bounds()));
+    }
+
+    /** 玩家 bbox 完整所在的唯一 current 實例；不在任何實例或不只一個時為 empty。 */
+    public Optional<MappingRef> homePlayerOwner(UUID sessionUuid, ServerPlayerEntity player) {
+        var space=space(sessionUuid);
+        var owners=space.current.instances().stream().filter(view -> contains(box(view.bounds()),player.getBoundingBox())).map(MappingView::ref).toList();
+        return owners.size()==1 ? Optional.of(owners.getFirst()) : Optional.empty();
+    }
+
+    /** HOME 列是否在返還引擎的範圍（C12）：未選定的 RETURNING，或選定之後的 MEASURED／COLLAPSING。 */
+    private static boolean homeReturnable(HomeSessionRecord record) {
+        return record.home().selection() instanceof HomeSessionRecord.Unselected ? record.state()==SessionState.RETURNING
+                : record.state()==SessionState.MEASURED || record.state()==SessionState.COLLAPSING;
+    }
+
+    /** 選定 HOME 全員已返回 B：開始保留式清理（比照 {@link #releaseMeasured}）；收尾在 {@link #tickHomeMeasuredRelease}。已開始時不做事。 */
+    public void releaseHomeMeasured(UUID sessionUuid) {
+        var space=space(sessionUuid);
+        if (!space.home) throw new IllegalArgumentException("不是 HOME 走廊");
+        if (space.homeMeasuredReleasing) return;
+        var record=homeDurable(space);
+        if (!(record.home().selection() instanceof HomeSessionRecord.Selected) || !homeReturnable(record) || record.spaceLeases().isEmpty()
+                || record.participants().stream().anyMatch(person -> !person.returned()))
+            throw new IllegalStateException("HOME 保留式清理前必須 checked 選定、全員已返回 B、租約仍在");
+        acquireTickets(space);
+        space.selectable=Map.of(); space.homeMeasuredReleasing=true; space.builds.clear(); space.overlay.clear();
+    }
+
+    /** 選定 HOME 的保留式清理已完成：checked 列已沒有租約，走廊 space 已釋放（DORMANT 或 COLLAPSING 已清理）。 */
+    public boolean homeMeasuredReleaseComplete(UUID sessionUuid) {
+        requireThread();
+        return !spaces.containsKey(sessionUuid) && journal.allFlushedSessions().get(sessionUuid) instanceof HomeSessionRecord row
+                && row.home().selection() instanceof HomeSessionRecord.Selected && row.spaceLeases().isEmpty() && row.equals(journal.allSessions().get(sessionUuid));
+    }
+
+    /**
+     * 選定 HOME 的保留式清理（spec §8 :207、§9.1；比照 {@link #tickMeasuredRelease} 與 {@link #tickHomeRelease}）：全員已返回 B → 清空全部租約的幾何（含退休中的舊實例）→
+     * guard 內 HOME 原生 checkpoint（B frame＋走廊 leases，A 不入列）與 checked roll-forward 把 SpaceLeases 清成空（列保留：MEASURED 成 DORMANT）→ 釋放票、slot 與保護範圍。
+     * checkpoint 或寫入失敗時保留列、space 與占用，依 per-space 退避重做；寫出未確認時記本 tick（journal 退避），確認之後由 {@link #settleConfirmedHomeMeasuredRelease} 釋放。
+     */
+    private void tickHomeMeasuredRelease(Space space) {
+        if (!journal.recoveryWritesSafe()) return;
+        var row=homeDurable(space);
+        if (!(row.home().selection() instanceof HomeSessionRecord.Selected) || !homeReturnable(row) || row.spaceLeases().isEmpty()
+                || row.participants().stream().anyMatch(person -> !person.returned())
+                || !row.equals(journal.allSessions().get(space.id)) || journal.rollForwardPending(space.id)) return;
+        if (operationInProgress(space.id) || space.leases.values().stream().anyMatch(lease -> !leaseReady(lease.bounds()) || !pins(lease.bounds()).isEmpty())) return;
+        if (space.homeCheckpointFailedFor!=null) {
+            if (!space.homeCheckpointFailedFor.equals(row)) { resetCheckpointBackoff(space); space.homeCheckpointFailedFor=null; }
+            else if (server.getTicks()<space.checkpointRetryTick) return;
+        }
+        if (!MeasuredWorldSaveCheckpoint.entryLive(server,row)) return;
+        if (!MeasuredWorldSaveCheckpoint.ready(server,row)) return;
+        for (var lease : space.leases.values()) if (!clear(space,lease.slotId(),lease.bounds())) return;
+        for (var lease : space.leases.values()) {
+            var box=lease.bounds();
+            for (var pos : BlockPos.iterate(box.getMinX(),box.getMinY(),box.getMinZ(),box.getMaxX(),box.getMaxY(),box.getMaxZ()))
+                if (!world.getBlockState(pos).isAir()) throw new IllegalStateException("HOME 選定之後的走廊幾何仍未清空");
+        }
+        var next=new HomeSessionRecord(row.sessionUuid(),row.chamberUuid(),row.rootAnchor(),row.entryEndpoint(),row.participants(),List.of(),row.state(),row.home());
+        var result=exclusiveOperation(space.id,() -> {
+            try { MeasuredWorldSaveCheckpoint.save(server,row); }
+            catch (RuntimeException failure) {
+                scheduleHomeReleaseRetry(space,row,"HOME 選定之後的保留式清理，原生 checkpoint 失敗，保留選擇、走廊與占用，退避後重做",failure);
+                return null;
+            }
+            return journal.commitHomeRollForward(server,row,next);
+        });
+        if (result==null) return;
+        if (result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) { homeRollForwardPendingTick=server.getTicks(); return; }
+        if (!result.committed()) {
+            scheduleHomeReleaseRetry(space,row,"HOME 選定之後的清 lease 尚未 checked（"+result.status()+"），保留選擇與占用，退避後重做",
+                    result.failure().orElseGet(() -> new IllegalStateException(result.status().name())));
+            return;
+        }
+        releaseHomeMeasuredSpace(space,row);
+    }
+
+    /** 選定 HOME 的清 lease 寫出未確認、之後被其他寫出確認：checked 列已沒有租約，補做原生釋放。回傳是否已釋放（space 已移除）。 */
+    private boolean settleConfirmedHomeMeasuredRelease(Space space) {
+        if (!space.home || !space.homeMeasuredReleasing || space.operations!=0) return false;
+        if (!(journal.allFlushedSessions().get(space.id) instanceof HomeSessionRecord checked) || !checked.equals(journal.allSessions().get(space.id))
+                || !(checked.home().selection() instanceof HomeSessionRecord.Selected) || !checked.spaceLeases().isEmpty() || space.leases.isEmpty()) return false;
+        releaseHomeMeasuredSpace(space,checked);
+        return true;
+    }
+
+    private void releaseHomeMeasuredSpace(Space space,HomeSessionRecord row) {
+        for (int slot : space.leases.keySet()) { releaseTickets(space,slot); allocator.release(slot); protectedLeases.remove(slot); }
+        spaces.remove(space.id);
+        org.slf4j.LoggerFactory.getLogger("quantumchamber").info("HOME 選定之後的保留式清理完成：全員已返回 B、走廊清除、原生 checkpoint 與清 lease 都已 checked，選擇保留：session={} state={}",
+                space.id,row.state());
     }
 
     private boolean cohortHasBuff(List<SessionRecoveryRecord.Participant> people) {
@@ -1818,6 +1983,8 @@ public final class CorridorPageManager {
         MappingSet current=new MappingSet(0,List.of()); PreparedMappings pending; RemapBatch batch;
         Set<Long> currentPages=Set.of(),pendingPages=Set.of();
         boolean queued,frontOpen,rearOpen,failed,releasing,provisionalCancelled,measuredRecoveryRequested,measuredReleasing;
+        /** M7 T5-4：選定 HOME（MEASURED／COLLAPSING）的保留式清理已開始（{@link #releaseHomeMeasured}）。 */
+        boolean homeMeasuredReleasing;
         int operations,batchTick,prepareTick; long instanceEpoch,prepareNanos;
         SessionRecoveryRecord finalizing,authority;
         Map<DoorKey,MappingRef> selectable=Map.of();

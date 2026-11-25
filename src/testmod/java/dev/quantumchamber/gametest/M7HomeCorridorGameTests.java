@@ -859,6 +859,8 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                     c.assertTrue(attempts.size() == 1, "同一段容量 pending 只記一則 INFO：" + attempts.size());
                     // T5-3 品質 M-4：原本的「CLOSE 空間不變」以單列公式比較、在列相等之後恆真，已刪除；膨脹窗口內共享預留是刻意不符，改在窗口外以整份 journal 量測。
                     c.assertTrue(e.pages.hasReservation(sid) && gate().globalChamberBusy(e.server, e.chamber), "走廊 reservation 與占用都不變");
+                    // T5-4（Step 0 審查 M-2）：量測本身量得到「不成立」：膨脹窗口內整份 journal 的共享預留刻意不符。
+                    c.assertTrue(!M7CapacityFixture.sharedReserveHolds(e.server), "SHARED_RESERVE_PROBE_BLIND：膨脹窗口內共享預留必須量得到不成立");
                     // T5-4 Step 0（T5-3 品質 M-2）：玩家走回原頁結束這段 pending，再走出去是新的一段：記第二則 INFO，第一次嘗試不受上一段的退避限制。
                     e.walkHome(sid, player, 48.5);
                     e.hold(1, unchanged, () -> {
@@ -1178,7 +1180,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
          * 交 {@link FailureSettle} 每個 server tick 核對，正式返還收尾（列移除、艙不再 busy）或逾時之後才釋放 B 的測試票並斷開；避免 RETURNING 列因假玩家離線而永久留下。
          * T5-4 Step 0（T5-3 fix2 複審 N-2）：operator 不參與返還，延後時立即斷開；停服時清空等待；換頁五案都套用。
          */
-        private boolean settleOnFailure;
+        private boolean settleOnFailure = true;
         /** 成功路徑（{@link #finish}）的收尾；不走失敗路徑的延後斷開。 */
         private boolean finishing;
 
@@ -1723,6 +1725,14 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
                 if (sid != null) gate().cancelProvisional(server, chamber, sid);
                 var row = homeRow();
                 if (row != null && (row.state() == SessionState.ARMING || row.state() == SessionState.SUPERPOSITION)) gate().returnToOrigin(b, bController);
+                // T5-4（Step 0 審查 M-4）：已選定的列不會自己移除；checked 且沒有停止、沒有結案時，以原艙停止 latch 交回程終局 owner 收尾（test-only，比照成功路徑的 closeOut）。
+                if (row != null && row.home().selection() instanceof HomeSessionRecord.Selected && row.home().stopReason().isEmpty()
+                        && row.home().closeIntent() instanceof HomeSessionRecord.None && row.equals(journal.allSessions().get(row.sessionUuid()))
+                        && !pages.operationInProgress(row.sessionUuid())) {
+                    var stopped = M7HomeClosureGameTests.withStop(row, HomeSessionRecord.RootReason.ROOT_DISABLED, server.getOverworld().getTime());
+                    var latched = pages.exclusiveOperation(row.sessionUuid(), () -> journal.commitHomeRollForward(server, row, stopped));
+                    if (!latched.committed()) LOG.warn("M7_GT_FAILURE_SETTLE 選定列的停止 latch 未確認（{}）：chamber={}", latched.status(), chamber);
+                }
                 if (homeRow() == null && !gate().globalChamberBusy(server, chamber)) return false;
                 // T5-4 Step 0（T5-3 fix2 複審 N-2）：operator 不參與返還，立即斷開；只延後斷開凍結 cohort（與 B 的測試票）。
                 try { f.operator.close(); }

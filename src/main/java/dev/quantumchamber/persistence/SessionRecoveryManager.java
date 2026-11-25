@@ -83,9 +83,9 @@ public final class SessionRecoveryManager {
                 if(journal.collapseView(sid).filter(view -> freezes(view,player)).isPresent()) return true;
             } else if(staged!=null && freezes(staged,player) || checked!=null && freezes(checked,player)) return true;
         }
-        // M7 HOME（T5-2）：未選定的 RETURNING 只凍結尚未返還的參與者（current 或 flushed 任一份）。選定之後的 HOME 狀態屬 T5-4。
+        // M7 HOME（T5-2）：未選定的 RETURNING 只凍結尚未返還的參與者（current 或 flushed 任一份）。T5-4：選定之後的 MEASURED／COLLAPSING（保留式返還）同樣只凍結尚未返還者。
         for(var rows : List.of(journal.allSessions(),journal.allFlushedSessions()))
-            for(var row : rows.values()) if(row instanceof HomeSessionRecord home && home.state()==SessionState.RETURNING
+            for(var row : rows.values()) if(row instanceof HomeSessionRecord home && homeReturning(home)
                     && home.participants().stream().anyMatch(person -> person.playerUuid().equals(player) && !person.returned())) return true;
         return false;
     }
@@ -469,8 +469,8 @@ public final class SessionRecoveryManager {
         homeMoveWarnings.keySet().retainAll(flushed.keySet()); homeLandingWarnings.keySet().retainAll(flushed.keySet());
         boolean outstanding=false;
         for(var row : flushed.values()) {
-            if(!(row instanceof HomeSessionRecord home) || home.state()!=SessionState.RETURNING
-                    || !(home.home().selection() instanceof HomeSessionRecord.Unselected)) continue;
+            // T5-4（C12）：同一條返還引擎也處理選定之後的 MEASURED／COLLAPSING（保留式返還，列保留）。
+            if(!(row instanceof HomeSessionRecord home) || !homeReturning(home)) continue;
             var sid=home.sessionUuid();
             if(pages.operationInProgress(sid) || !pages.hasReservation(sid) || journal.rollForwardPending(sid)
                     || journal.quarantinedSessions().contains(sid) || !home.equals(journal.allSessions().get(sid))) continue;
@@ -514,7 +514,8 @@ public final class SessionRecoveryManager {
         for(var person : initial.participants()) {
             if(person.returned() || joinTicks.containsKey(person.playerUuid())) continue;
             var player=server.getPlayerManager().getPlayer(person.playerUuid());
-            if(player==null || player.isRemoved()) continue;
+            // T5-4（使用者 2026-11-25「照原版，記為已知行為」）：死亡中的玩家不移動、不記 Returned，等他照原版重生之後再送回 exact B。
+            if(player==null || player.isRemoved() || !player.isAlive()) continue;
             if(!inside(player,world,frame) && !landingClear(world,slots.get(person.playerUuid())))
                 warnOnce(homeLandingWarnings,sid,person.playerUuid(),"B 艙內沒有無碰撞的返還落點，沿用預設地板落點");
             var marker=new PlayerRecoveryCheckpoint(sid,PlayerRecoveryCheckpoint.AppliedPolicy.KEEP_CURRENT);
@@ -551,7 +552,17 @@ public final class SessionRecoveryManager {
                     || !entryValid(record) || !transfers.move(entity,world,position,Vec3d.ZERO,entity.getYaw(),entity.getPitch())) return;
             world.getEntity(id).removeCommandTag("quantumchamber_session:"+sid);
         }
-        if(record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned)) pages.releaseHome(sid);
+        if(record.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned)) {
+            // 未選定：移除列（T5-2）；選定：保留式清理，列保留（T5-4，C12）。
+            if(record.home().selection() instanceof HomeSessionRecord.Selected) pages.releaseHomeMeasured(sid);
+            else pages.releaseHome(sid);
+        }
+    }
+
+    /** 返還引擎的範圍（T5-4，C12）：未選定的 RETURNING，或選定之後、租約仍在的 MEASURED／COLLAPSING。 */
+    static boolean homeReturning(HomeSessionRecord home) {
+        if(home.home().selection() instanceof HomeSessionRecord.Unselected) return home.state()==SessionState.RETURNING;
+        return (home.state()==SessionState.MEASURED || home.state()==SessionState.COLLAPSING) && !home.spaceLeases().isEmpty();
     }
 
     /** exact live B：Entry 的 world key 存在，而且是該宇宙目前的 active world；否則 null（不猜另一個 B）。 */
@@ -589,7 +600,7 @@ public final class SessionRecoveryManager {
     }
 
     static HomeSessionRecord returnedHome(HomeSessionRecord record,UUID player) {
-        if(record.state()!=SessionState.RETURNING) throw new IllegalArgumentException("只有返還中的 HOME 列可更新玩家返還進度");
+        if(!homeReturning(record)) throw new IllegalArgumentException("只有返還中的 HOME 列（未選定 RETURNING，或選定的 MEASURED／COLLAPSING）可更新玩家返還進度");
         if(record.participants().stream().noneMatch(person -> person.playerUuid().equals(player))) throw new IllegalArgumentException("玩家不屬於凍結 cohort");
         var people=record.participants().stream().map(person -> person.playerUuid().equals(player)
                 ? new SessionRecoveryRecord.Participant(person.playerUuid(),person.sourcePosition(),person.sourceVelocity(),person.yaw(),person.pitch(),

@@ -13,7 +13,6 @@ import dev.quantumchamber.superposition.SuperpositionSessionManager;
 import java.util.*;
 import java.util.function.BooleanSupplier;
 import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -483,29 +482,81 @@ public final class M7HomeSelectGameTests implements FabricGameTest {
                 e.walkHome(sid, player, 11.5);
                 requireAccepted(e, sid, click(e, player, doorCell(e, sid)));
                 gateSelectTicket(e, sid);
-                player.kill();
+                // 原生 damage 在傳送確認之前（假連線不回確認）會被 invulnerable 擋下，所以直接以原版的死亡流程（health 0＋onDeath）。
+                player.setHealth(0.0f);
+                player.onDeath(player.getDamageSources().genericKill());
                 c.assertTrue(!player.isAlive(), "前提：選門者在走廊內死亡");
                 e.hold(5, () -> {
                     if (selected(e, sid)) throw new GameTestException("DEAD_SELECTOR_SELECTED：row=" + e.homeRow());
                 }, () -> {
-                    var respawned = e.server.getPlayerManager().respawnPlayer(player, false, Entity.RemovalReason.KILLED);
-                    hooks.add(() -> { if (e.server.getPlayerManager().getPlayer(uuid) == respawned && respawned != player) e.server.getPlayerManager().remove(respawned); });
-                    boolean[] returnedFlag = {false};
-                    e.awaitReleased(sid, label + "/returned", () -> {
-                        var current = e.homeRow();
-                        if (current != null) returnedFlag[0] = current.participants().getFirst().returned();
-                    }, () -> {
+                    // 真客戶端的重生（使用者 2026-11-25「恢復，死亡案改用真重生（建議）」）：重生封包 onClientStatus(PERFORM_RESPAWN) 讓連線改指向新的玩家實體；
+                    // 之後照真客戶端時序，以既有 confirmTeleport() 讀原生 PlayerPositionLookS2CPacket 的 teleport id 再 ACK（重生一次、返還的傳送之後每 tick 有封包就回）。
+                    var connection = e.f.players.get(0);
+                    player.networkHandler.onClientStatus(new net.minecraft.network.packet.c2s.play.ClientStatusC2SPacket(
+                            net.minecraft.network.packet.c2s.play.ClientStatusC2SPacket.Mode.PERFORM_RESPAWN));
+                    var respawned = e.server.getPlayerManager().getPlayer(uuid);
+                    c.assertTrue(respawned != null && respawned != player && respawned.isAlive() && respawned.networkHandler.player == respawned,
+                            "前提：真重生之後是新的、活著的玩家實體，連線指向它");
+                    hooks.add(() -> { if (e.server.getPlayerManager().getPlayer(uuid) == respawned) e.server.getPlayerManager().remove(respawned); });
+                    ack(connection);
+                    M7HomeClosureGameTests.until(c, label + "/returned", 600, () -> {
+                        ack(connection);
+                        return e.homeRow() == null && !gate().globalChamberBusy(e.server, e.chamber);
+                    }, e.step(() -> {
                         var now = e.server.getPlayerManager().getPlayer(uuid);
-                        c.assertTrue(now != null && now.isAlive() && e.inB(now), "DEATH_NOT_RETURNED_TO_B：死亡重生之後最終回到 exact B：world="
+                        c.assertTrue(now == respawned && now.isAlive() && e.inB(now), "DEATH_NOT_RETURNED_TO_B：死亡重生之後最終回到 exact B：world="
                                 + (now == null ? null : now.getServerWorld().getRegistryKey().getValue()));
+                        e.assertNoSourceTicket(sid);
                         e.finish();
-                    });
+                    }), e.step(() -> {
+                        var now = e.server.getPlayerManager().getPlayer(uuid);
+                        throw new GameTestException("DEATH_NOT_RETURNED_TO_B：死亡重生之後沒有回到 exact B 收尾：row=" + (e.homeRow() == null ? null : e.homeRow().state())
+                                + " world=" + (now == null ? null : now.getServerWorld().getRegistryKey().getValue()) + " pos=" + (now == null ? null : now.getPos())
+                                + " teleporting=" + (now != null && now.isInTeleportationState()));
+                    }));
                 });
             });
         });
     }
 
     // ---- 支援 ----
+
+    /**
+     * Step 0 審查 M-8：以 testmod 反射把 {@code M7HomeProbe} 的 phase 換成只觀察這個 SID 的 {@code after-readback}（{@code M7HomeReceiptWindowMixin} 的既有 cut 點）：
+     * 在那個時點以形式上有效的 proof 呼叫 {@code finishHomeReturn}。回傳 {@code [reached, removed, threw]}；收尾（hooks）還原 phase。不丟出例外到正式程式。
+     */
+    private static boolean[] receiptWindow(M7HomeCorridorGameTests.HomeEntry e, UUID sid) {
+        boolean[] seen = {false, false, false};
+        java.lang.reflect.Field field;
+        try { field = M7HomeProbe.class.getDeclaredField("active"); field.setAccessible(true); }
+        catch (ReflectiveOperationException failure) { throw new GameTestException("M7HomeProbe.active 找不到：" + failure); }
+        M7HomeProbe.Phase phase = new M7HomeProbe.Phase() {
+            @Override public void start() { }
+            @Override public void reached(String event, UUID session, Object detail) {
+                if (!"after-readback".equals(event) || !sid.equals(session)) return;
+                seen[0] = true;
+                try {
+                    if (e.journal.allSessions().get(sid) instanceof HomeSessionRecord row
+                            && e.journal.finishHomeReturn(e.server, row, M7CapacityFixture.forgeReturnProof(e.server, row)).removed()) seen[1] = true;
+                } catch (RuntimeException unexpected) { seen[2] = true; }
+            }
+        };
+        try {
+            if (field.get(null) != null) throw new GameTestException("M7HomeProbe 已有其他 phase，不能借用收據窗口");
+            field.set(null, phase);
+        } catch (IllegalAccessException failure) { throw new GameTestException("M7HomeProbe.active 不能設定：" + failure); }
+        e.hooks.add(() -> {
+            try { if (field.get(null) == phase) field.set(null, null); }
+            catch (IllegalAccessException failure) { LOG.warn("M7HomeProbe.active 還原失敗", failure); }
+        });
+        return seen;
+    }
+
+    /** 照真客戶端：有原生 {@code PlayerPositionLookS2CPacket} 時以既有 {@code confirmTeleport()} ACK；沒有時回 none。 */
+    private static String ack(ConnectedGameTestPlayer connection) {
+        try { connection.confirmTeleport(); return "acked"; }
+        catch (IllegalStateException none) { return "none"; }
+    }
 
     /** 真互動：以 bulkhead 的 {@code onUse} 點 {@code pos}（走 {@code QuantumBulkheadBlock.onUse} 的 HOME hook）。 */
     static ActionResult click(M7HomeCorridorGameTests.HomeEntry e, ServerPlayerEntity player, BlockPos pos) {
@@ -599,11 +650,22 @@ public final class M7HomeSelectGameTests implements FabricGameTest {
     static void closeOut(M7HomeCorridorGameTests.HomeEntry e, UUID sid, String label, Runnable then) {
         var row = e.homeRow();
         e.c.assertTrue(row != null && row.home().stopReason().isEmpty(), "收尾前提：選定列仍在、尚未停止：" + row);
+        // Step 0 審查 M-8：選定列（DORMANT 或已清理的 COLLAPSING）拿走廊 owner 形式上有效的 proof，未選定返還的移除也必須拒絕、列不變。
+        e.c.assertTrue(!e.journal.finishHomeReturn(e.server, row, M7CapacityFixture.forgeReturnProof(e.server, row)).removed() && row.equals(e.homeRow()),
+                "SELECTED_ROW_REMOVED_BY_RETURN_PROOF：選定列不能經未選定返還的移除入口移除");
         var stopped = M7HomeClosureGameTests.withStop(row, HomeSessionRecord.RootReason.ROOT_DISABLED, e.server.getOverworld().getTime());
         e.c.assertTrue(e.pages.exclusiveOperation(sid, () -> e.journal.commitHomeRollForward(e.server, row, stopped)).committed(), "收尾：原艙停止 checked latch");
-        M7HomeClosureGameTests.until(e.c, label + "/closed", 600, () -> e.homeRow() == null && !gate().globalChamberBusy(e.server, e.chamber), e.step(then),
-                e.step(() -> { throw new GameTestException("SELECTED_ROW_NOT_CLOSED：row=" + e.homeRow()); }));
+        // Step 0 審查 M-8（controller：用既有 M7HomeReceiptWindowMixin 的窗口）：回程終局 owner 發布收據、exact 讀回之後、熱列移除之前（after-readback），
+        // 拿未選定返還的 proof 移除 CLOSE 列必須拒絕（否則本體會依已發布的收據移除列）。
+        var window = receiptWindow(e, sid);
+        M7HomeClosureGameTests.until(e.c, label + "/closed", 600, () -> e.homeRow() == null && !gate().globalChamberBusy(e.server, e.chamber), e.step(() -> {
+            e.c.assertTrue(window[0] && !window[1] && !window[2],
+                    "CLOSE_ROW_REMOVED_BY_RETURN_PROOF：結案列在收據已發布、熱列還在的窗口不能經未選定返還的移除入口移除：reached=" + window[0] + " removed=" + window[1] + " threw=" + window[2]);
+            then.run();
+        }), e.step(() -> { throw new GameTestException("SELECTED_ROW_NOT_CLOSED：row=" + e.homeRow()); }));
     }
+
+    private static final org.slf4j.Logger LOG = org.slf4j.LoggerFactory.getLogger("quantumchamber-testmod");
 
     private static Set<Integer> slots(HomeSessionRecord row) {
         var slots = new TreeSet<Integer>();
