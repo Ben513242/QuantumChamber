@@ -212,6 +212,8 @@ public final class CollapseService {
         ChamberCollapsePort.installDoors(CollapseService::useDoor);
         // F5-2：找不到所屬 session 的量子膜（spec §10.6 :613），ChamberPowerCoordinator 刷新原艙時經同一個 port 交給這裡排入下一個 tick。
         ChamberCollapsePort.installMembranes(CollapseService::normalizeOwnerless);
+        // M7 T5-4：回程走廊 HOME 門的互動（spec §4.2）經同一個 port 交給 HomeDoorInteraction，排在候選門之前。
+        ChamberCollapsePort.installHomeDoors(HomeDoorInteraction::onUse);
     }
 
     private static void onStarted(MinecraftServer server) {

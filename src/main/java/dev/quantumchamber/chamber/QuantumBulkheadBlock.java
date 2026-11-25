@@ -151,6 +151,9 @@ public final class QuantumBulkheadBlock extends Block implements FluidFillable {
             return ActionResult.SUCCESS;
         }
         if (world instanceof ServerWorld serverWorld && player instanceof net.minecraft.server.network.ServerPlayerEntity serverPlayer) {
+            // M7 T5-4（spec §4.2）：回程走廊的 HOME 門先交回程 owner（經 ChamberCollapsePort 反轉，chamber 不參考 collapse），之後才是候選門。
+            var home = ChamberCollapsePort.homeDoors().use(serverWorld, pos, serverPlayer);
+            if (home.isPresent()) return home.get();
             var candidate = new dev.quantumchamber.candidate.CandidateDoorInteraction().onBulkheadUse(serverWorld, pos, serverPlayer);
             if (candidate.isPresent()) return candidate.get();
         }

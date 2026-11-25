@@ -5,7 +5,8 @@
       "classes": [
         "M7HomeSpikeGameTests",
         "M7HomeClosureGameTests",
-        "M7HomeEntryTicketGameTests"
+        "M7HomeEntryTicketGameTests",
+        "M7HomeSelectGameTests"
       ]
     },
     "Corridor": {
@@ -156,6 +157,19 @@
       "quantumchamber:m1_empty|m7homecorridorgametests.start_home_checkpoint_unavailable_has_no_side_effects",
       "quantumchamber:m1_empty|m7homecorridorgametests.home_start_cleanup_fault_after_checked_arming_keeps_runtime",
       "quantumchamber:m1_empty|m7homecorridorgametests.unchecked_home_arming_cleanup_fault_keeps_lock_until_converged",
+      "quantumchamber:m1_empty|m7homeselectgametests.home_select_commits_measured_and_returns_cohort_to_b",
+      "quantumchamber:m1_empty|m7homeselectgametests.same_key_new_generation_or_player_never_selects",
+      "quantumchamber:m1_empty|m7homeselectgametests.stale_select_requests_never_commit",
+      "quantumchamber:m1_empty|m7homeselectgametests.root_low_after_full_never_selects",
+      "quantumchamber:m1_empty|m7homeselectgametests.select_check_released_on_reload",
+      "quantumchamber:m1_empty|m7homeselectgametests.spectator_selector_never_selects",
+      "quantumchamber:m1_empty|m7homeselectgametests.two_players_same_tick_select_once",
+      "quantumchamber:m1_empty|m7homeselectgametests.home_corridor_walls_never_produce_candidates",
+      "quantumchamber:m1_empty|m7homeselectgametests.retiring_old_home_door_never_selects_and_selection_cleans_all_leases",
+      "quantumchamber:m1_empty|m7homeselectgametests.select_during_new_instance_build_is_refused",
+      "quantumchamber:m1_empty|m7homeselectgametests.root_disabled_during_measured_return_still_returns_to_b",
+      "quantumchamber:m1_empty|m7homeselectgametests.collapsing_row_uses_the_same_return_engine",
+      "quantumchamber:m1_empty|m7homeselectgametests.corridor_death_returns_to_exact_b_with_returned",
       "quantumchamber:m1_empty|m7homecorridorgametests.home_release_waits_for_exact_b_without_error_flood",
       "quantumchamber:m1_empty|m7homecorridorgametests.returning_roll_forward_pending_waits_for_journal_backoff",
       "quantumchamber:m1_empty|m7homecorridorgametests.home_tick_exception_is_isolated_and_warned_once",

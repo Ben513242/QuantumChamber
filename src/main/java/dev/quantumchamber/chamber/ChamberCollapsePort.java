@@ -30,6 +30,26 @@ public final class ChamberCollapsePort {
 
     private ChamberCollapsePort() {}
 
+    private static volatile HomeDoors homeDoors = HomeDoors.NONE;
+
+    /** 目前註冊的回程 HOME 門互動；沒有註冊時是 {@link HomeDoors#NONE}。 */
+    public static HomeDoors homeDoors() { return homeDoors; }
+
+    /** 註冊回程 HOME 門互動（取代之前註冊的）。 */
+    public static void installHomeDoors(HomeDoors replacement) { homeDoors = Objects.requireNonNull(replacement, "homeDoors"); }
+
+    /**
+     * 回程走廊 HOME 門的互動（M7 spec §4.2，T5-4）：{@code QuantumBulkheadBlock.onUse} 在候選門與一般艙門之前、server thread 上呼叫。回傳 empty 表示這一格不是 HOME 門，
+     * 交回既有流程；有值時互動已由回程 owner 處理（消耗），呼叫端直接回傳。實作不得丟出例外。
+     */
+    @FunctionalInterface
+    public interface HomeDoors {
+        /** 不攔截：一律交回既有流程。 */
+        HomeDoors NONE = (world, pos, player) -> java.util.Optional.empty();
+
+        java.util.Optional<net.minecraft.util.ActionResult> use(ServerWorld world, BlockPos pos, net.minecraft.server.network.ServerPlayerEntity player);
+    }
+
     /** 目前註冊的原艙停用防線；沒有註冊時是 {@link Roots#NONE}。 */
     public static Roots roots() { return roots; }
 
