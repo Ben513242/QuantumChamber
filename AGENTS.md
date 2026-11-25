@@ -121,7 +121,14 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-25 最新：T5-3 依段落結案，M7 Main GameTest 已拆成兩段，下一步 T5-4。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-3 結案（2026-11-25）」節，以及 plan 檔尾「T5-3 的追加（2026-11-25）」小節（設計決定，以及審查 Minor 與交接事項分配到 T5-4 Step 0／T5-4／T5-5／T8）。
+**2026-11-25 最新：T5-4 進行中，暫停等使用者裁示。** 使用者原話「好，CI 綠了就提交並收尾，等我裁示繼續做 T5-4」。先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節，以及 plan 檔尾「T5-4 的追加（進行中，2026-11-25）」小節。
+- 狀態：Step 0 `238ade6` 已 push（一席審查 C0／I0／M8）；本體 RED `46a4683` 與本筆收尾 docs 只在本機 commit、沒有 push（RED 的測試刻意失敗，push 會讓 CI 變紅）。恢復 T5-4、GREEN commit 之前，不要 push 這些本機 commit；持續 push 授權不適用於刻意失敗的 RED（controller 的決定）。GREEN 候選 6 檔留在工作樹、沒有 commit，不要丟棄或覆寫，整份 diff 另存 M7 SDD `t5-4-body-wip-46a4683-after-diag.diff`；其中含死亡案的診斷程式（marker `M7_T54_DEATH_DIAG`）。
+- 卡點：走廊死亡案 `corridor_death_returns_to_exact_b_with_returned` 第 3 次非預期失敗；使用者授權的一次受限診斷 FAIL。implementer 讀原版 bytecode 推論是測試直接呼叫 `respawnPlayer`、沒有走原生 `onClientStatus(PERFORM_RESPAWN)`，但未以修正後重跑證實。依使用者所選選項的說明，FAIL 預設視為遊戲程式問題，停下，修法另問使用者。
+- 恢復前不要繼續 T5-4 的 GREEN、第三段、mutation 或 focused。使用者 2026-11-25 已裁示的設計三題（點門時機、第三段、走廊死亡照原版）見 note 該節；止損計數現況見同節「止損計數」。
+- 止損與額度：同 T5-3 段；`238ade6`、`46a4683` 的 AccessDenied 額度都未用。U1 逐段，`971bbb8` 的 Windows CI 是 Main 337 秒、Corridor 351 秒，同一份程式波動很大。`238ade6` 的 CI 45569149943 **failure**：Windows 走廊段的 GameTest 在既有案 `home_entry_commits_superposition_with_entry_b` 的全伺服器存檔中卡住超過 90 秒（`M6_PHASE_DEADLINE_EXCEEDED reason=idle`），原因未查明，原判保留、沒有 rerun；細節見 note 該節「CI」。使用者 16:3x 選「本機重現調查（建議）」（在拋棄式 clone 以 `238ade6` 跑走廊段 3 次並在卡住時取 jstack，不改程式），結果記在 M7 SDD `STATUS.md`；原文檔 `user-step0-ci-hang-ruling-20261125.md`。
+- main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-25：T5-3 依段落結案，M7 Main GameTest 已拆成兩段，下一步 T5-4。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-3 結案（2026-11-25）」節，以及 plan 檔尾「T5-3 的追加（2026-11-25）」小節（設計決定，以及審查 Minor 與交接事項分配到 T5-4 Step 0／T5-4／T5-5／T8）。
 - T5-3：`8d868e7..62dacdd`（Step 0、RED、GREEN、fix1、fix2），規格審查 C0／I0／M6，品質審查 fix2 後 C0／I0。拆段：`62dacdd..eb10bc8`，一席審查 fix1 後 C0／I0。CI 45532643386（`c0dbdd7`，含 T5-3 最終 code）與 45537137999（`eb10bc8`）的 Windows 各 job 都 success。Ubuntu 只照錄、不採計。
 - 使用者 2026-11-25 的三項裁示（選項原文與第 1 點的題目見 note 該節「使用者裁示」，第 2、3 點的題目見該節所列的 SDD 原文檔）：換頁案「測試先生成走廊 chunk（建議）」；AccessDenied 加連坐「換新 nonce 重跑一次（建議）」與「併入，追得到起點才算（建議）」（規則見下方「M7 Windows atomic-move AccessDenied 單次重跑規則」的 2026-11-25 擴充）；CI 時限「拆成兩段（建議）」。
 - 拆段之後（分配與規則見 plan 檔尾）：`m7-ci-gametest.ps1` 的 `-Segment` 沒有預設值，Main 與 Corridor 各自一次 Gradle 呼叫、各自 600 秒；U1 改為逐段，任一段的 Windows CI 步驟超過約 450 秒先報使用者（`c0dbdd7`：Main 300 秒、Corridor 261 秒；`eb10bc8`：Main 258 秒、Corridor 215 秒）。加段要同時改 CI step 與 `M7_CI_SEGMENT_SET` 守門。

@@ -769,3 +769,27 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
     - 負載下全新 slot 的換頁可能要約 1000 tick 才完成，玩家在頁邊界會等；這是走廊世界的 chunk 載入特性，legacy 相同（T5-3 報告）。
     - 其他 owner（例如 `HomeRootFence`）在未選定的 SUPERPOSITION 列寫出未確認時，gateway 仍以 Buff 失效的字串回 B；與 T5-2 品質 M-11 的訊息整理一起處理（T5-3 fix2 報告）。
   - 流程：會暫改 tracked 檔的負向控制，改在 gitignored 目錄下的拋棄式 clone 或 worktree 執行（拆段審查 M8）。
+
+### T5-4 的追加（進行中，2026-11-25）
+
+本小節只有「使用者選」之後加引號的選項標籤是使用者裁示（選項說明原文見 M7 note「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節，題目原文見該節所列的 SDD 原文檔）；其餘是 controller 的決定，或 controller 採用的 implementer 設計與審查判定，各項標明出處。T5-4 尚未完成，本小節之後會再補。
+
+- 核取框：照 T5-1～T5-3 的做法，T5-5 之前不勾。
+- 設計稿：S `t5-4-design.md`（implementer），controller 核可。
+- 點門時機：使用者選「新走廊建造中不受理（建議）」，即設計稿的方案 A'。落實（implementer 設計）：選門前置要求該 space 沒有 pending 建造與 batch；退休中照常可選，但只認 current mapping 與 epoch 的門；選定之後不再建造、不再退休，由選定後的清理一次清掉含退休中舊實例在內的全部 lease。
+- 退休中的舊門（T5-3 規格 M-5）：只認 current；點舊門會消耗互動，但不取票、不選定（implementer 設計）。
+- 第三段：使用者選「加第三段（建議）」。落實（controller 的執行說明）：T5-4 的新 class `M7HomeSelectGameTests` 將成為第三段；清單、CI 三個 step、`M7_CI_SEGMENT_SET` 守門與 SelfTest 反例比照拆兩段的標準，獨立一筆 commit（B+C）；這筆 commit 的審查要逐段核對 CI 的執行、驗證、上傳 step 都存在。目前 RED 暫列 Main 段，尚未加段。
+- 走廊死亡：使用者選「照原版，記為已知行為（建議）」。落實（controller 的執行說明）：T5-4 補一案，驗證走廊內死亡後最終回到 exact B、Returned 正確；重生點（先到主世界 spawn 或床，再被送回 B）與走廊掉落物在清理時消失，列入 T8 發行說明的已知行為。
+- 設計稿第 8 節第 4～8 項由 controller 採用：選門請求放在 SSM 的 `HomeRuntime`；B 封艙用 `ChamberDetector.validate` 的 valid＋sealed；互動距離用原版 `canInteractWithBlockAt(pos,1.0)`；選定後 B 的 `returnToEntry` 維持不動（選定後的 B 端操作屬 T6）；DORMANT 時釋放 HOME runtime 與 B 來源票（比照 legacy，T6 準備時重新取得）。
+- Step 0 的替代做法（implementer 設計，經 Step 0 審查接受）：容量退避用 20→1200 tick，不沿用 journal 的 200→12000（玩家停在頁邊界等，照 journal 上限，容量恢復後最多還要再等約 10 分鐘）；T5-3 品質 M-5 的隔離粒度維持整段（production 建得出的 runtime 每次狀態轉換最多丟一次例外）。
+- 改派（controller 決定；Step 0 審查 M-5 指出這些項目在 Step 0 簡報沒有人負責）：拆段一席審查的 M2～M7、M9、拆段 fix1 複審新 Minor，以及 T5-3 規格 M-6（驅動與證據整理），原寫在 T5-3 小節的 T5-4 Step 0，全部改交 T5-5。
+  - 理由：大多是腳本、CI 與 README 的整理（另有 testmod 的 `M4LegacyGameTestFilterMixin` 一處死檢查），T5-5 本來就要改這些腳本；也避免與 T5-4 的 GameTest 在同一工作樹並行。
+  - T5-5 簡報要逐檔授權：`scripts/verification/{m7-ci-gametest,ci-rule-check,run-all,gates}.ps1`、`scripts/verification/README.md`、`.github/workflows/build.yml`、`src/testmod/java/dev/quantumchamber/gametest/mixin/M4LegacyGameTestFilterMixin.java`，以及 SDD 驅動。
+  - 交集提醒：T5-4 剩下的 default 子集不要沿用 T5-3 那支會撿到 `prior-build/` 舊 XML 的驅動，要明確讀本次 `result-build/` 或 gate 的 `scope.json` 指定的 XML。
+- Step 0 審查 Minor 的分配（括號是來源；Step 0 審查 C0／I0／M8）：
+  - T5-4 本體：`sharedReserveHolds` 補「量得到不成立」的斷言（M-2）；非換頁的 HomeEntry 案失敗時的永久殘留（M-4，implementer 選擇比照換頁案的延後斷開，並改成 `HomeEntry` 的預設）；`finishHomeReturn` 拒絕已選定列與 CLOSE 列的具名殺手（M-8）。
+  - T8：走回原頁時連退避一起清掉，玩家在頁邊界來回時每次越界都整份量測並記一則 INFO（M-3）。
+  - T5-4 結案 docs：README :905–913 的段案數、plan :676 對 `terminateHome` 的描述、plan :765 的 77／53 已過時（M-6）。
+  - 只改 SDD：mutation 彙總的 root 欄位被路徑空白截斷、報告的 JUnit 範圍與驅動敘述（M-1、M-7），implementer 已更正。
+- T5-3 規格 M-1 的窗口（退休寫出確認之後、下一個 CPM tick 的 settle 之前 `homeDurable` 暫時不符）：選門重驗會讀 `homeDurable`，窗口內丟例外即釋票、拒絕（fail-closed），玩家重點一次即可；列為已知（implementer 設計稿 §2.3，controller 採用）。
+- M-8 的 CLOSE 列殺手（controller 決定）：若能用既有 `M7HomeReceiptWindowMixin` 停在「收據已發布、熱列還在」的窗口就做；不能就以讀碼論證記為已知缺口，不新增 mixin。「選定列拿有效 proof 也被拒」與拿掉 Unselected 守門等價（合法的選定列不會是 RETURNING），記錄即可。

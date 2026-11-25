@@ -1,6 +1,82 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）；T5 分 5 段，T5-1、T5-2 已依段落結案，T5 整體未完成（見「最新：T5-1、T5-2 結案（2026-11-24）」節）；T5-3 於 2026-11-25 依段落結案，同日依使用者裁示把 M7 Main 的 GameTest 拆成兩段（見「最新：T5-3 結案（2026-11-25）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）；T5 分 5 段，T5-1、T5-2 已依段落結案，T5 整體未完成（見「最新：T5-1、T5-2 結案（2026-11-24）」節）；T5-3 於 2026-11-25 依段落結案，同日依使用者裁示把 M7 Main 的 GameTest 拆成兩段（見「最新：T5-3 結案（2026-11-25）」節）；T5-4 的 Step 0 已完成，本體進行中、暫停等使用者裁示（見「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）
+
+狀態：T5-4（唯一 HOME 選擇與保留式返 B）的 Step 0 已完成並 push；本體的 RED 已在本機 commit、沒有 push；GREEN 候選留在工作樹、沒有 commit。走廊死亡案的受限診斷沒過，依使用者原話「好，CI 綠了就提交並收尾，等我裁示繼續做 T5-4」暫停，等使用者裁示再繼續。
+
+下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`（gitignored）。本節的事實讀自 S 的 `STATUS.md`（2026-11-25 12:4x～15:4x 各段）、`task-5-4-brief.md`、`t5-4-design.md`、`t5-4-report.md`（SHA-256 `93f4508cf603f1c08d9748cc4c8632b79902d017c3c5fa8ee7cc9bcd9207c9a0`）、`t5-4-step0-review.md`、兩份使用者裁示原文檔，以及各 `ci-*` 目錄。
+
+### Step 0（`238ade6`，已 push）
+
+- commit：`971bbb8..238ade6`，一筆、11 檔（+399／−83），全在 Step 0 授權清單內。內容是 plan 檔尾分給 T5-4 Step 0 的 production 小修與測試修正：
+  - HOME 的返還進度、未選定移除、換頁退休的清租約寫入，都包進該 SID 的 session operation guard（spec §9.1）。
+  - `HomeReturnProof` 綁定建立的 tick；移除一律拒絕的 public `terminateHome`；兩處寫死的門 key 改用 `HomeDoorLayout.key`；`prepareHomeRemap` 的容量拒絕比照 legacy 先核對已撤回；容量 pending 的重試加 20→1200 tick 退避，pending 段結束時清除 INFO 去重鍵。
+  - 測試：guard 寫入見證與「guard 被占」負控、proof 的偽造／重用／過期／他列反例、容量案的走回原頁與退避、新案 `unchecked_home_arming_cleanup_fault_keeps_lock_until_converged`、失敗收尾延後斷開凍結 cohort（operator 立即斷開、停服清 `WAITING`）。
+  - inventory：Windows 79（Main 36＋Corridor 43），Ubuntu 54。
+  - 原寫在 plan T5-3 小節、分給 T5-4 Step 0 的腳本與 CI 整理項目（拆段審查 M2～M7、M9、fix1 新 Minor、T5-3 規格 M-6）不在本筆，已改交 T5-5（見 plan 檔尾 T5-4 小節「改派」）。
+- 驗證（Windows，implementer 自報、審查重算相符）：
+  - RED（在 `971bbb8` 的拋棄式 clone 只加 4 個測試檔）：`HOME_WRITE_OUTSIDE_GUARD`、`HOME_CAPACITY_INFO_NOT_RESET`＋`HOME_CAPACITY_RETRY_NOT_BACKED_OFF`、`PROOF_STALE_TICK_ACCEPTED`。
+  - mutation 11 個（guard 三處、guard 前置、proof 三項、退避、pending 段結束、隔離、`homeAbandons.put`），都在拋棄式 clone 執行，各由具名測試殺掉、還原 exact；tracked 檔全程沒有暫改。
+  - 乾淨 pin `t5-4-step0-green-m7-d8aa7fea`：Main `junit=59 gametest=36`、Corridor `gametest=43`，兩段 `M7_VERIFIED PASS`，SelfTest 都 PASS；本機 Main 149 秒、Corridor 134 秒。
+  - 計數 0，真實 AccessDenied 0。
+- 審查（一席，規格＋品質）：Approved，C0／I0／M8（S `t5-4-step0-review.md`，SHA-256 `d4883787c4a640302e5378af58603116ee929165ce5d83381b48f1e1706638bd`）。Minor 的分配見 plan 檔尾「T5-4 的追加（進行中，2026-11-25）」。
+- CI：見下方「CI」。
+
+### 本體（進行中，未完成）
+
+- RED `46a4683`（`238ade6..46a4683`，7 檔，本機 commit、沒有 push）：hook 與 `HomeDoorInteraction` 的 no-op 腳手架（C1，production 行為不變）、新 class `M7HomeSelectGameTests` 13 案（暫列 Main 段）、inventory 與 entrypoint。
+  - 乾淨 pin（拋棄式 clone）root `t5-4-red-pin-303080cd`，XML SHA-256 `41446092AD02E16D3F0F731264CC99592CC8B03BCB9B7B93572FAEB050F9246D`：`same_key_new_generation_or_player_never_selects`、`home_select_commits_measured_and_returns_cohort_to_b` 以 `HOME_NOT_SELECTED` 失敗，`home_corridor_walls_never_produce_candidates` 以 `HOME_DOOR_LOCATED_AS_CANDIDATE` 失敗。
+  - 這筆 commit 的測試是刻意失敗的，所以沒有 push；T5-4 恢復、GREEN commit 之後一起 push。
+- GREEN 候選：6 檔留在工作樹、沒有 commit（CPM、SRM、SSM、`HomeDoorInteraction`、`M7HomeCorridorGameTests`、`M7HomeSelectGameTests`），編譯通過。整份 diff 另存 S `t5-4-body-wip-46a4683-after-diag.diff`（SHA-256 `8c12e2f2c92604a8605698397a2978703a593a3b58a7b49f8abd449e181dc9b8`）。
+  - 開發輪 dev2：13 案中 12 案通過。這是較早的 WIP 狀態；之後 WIP 又加了 Step 0 審查 M-2、M-4 的修改與死亡案的診斷程式（marker `M7_T54_DEATH_DIAG`，恢復時要移除或改寫成正式步驟），這些改動還沒在 Corridor 段跑過。
+  - 走廊死亡案 `corridor_death_returns_to_exact_b_with_returned` 第 3 次非預期失敗（dev1、dev2、dev4；dev3 是刻意的診斷重跑，不計），依止損停下。implementer 在第 3 次之後又多跑了 dev5，違反止損，報告照實列出。
+- 尚未做：第三段、mutation、focused 兩輪、default 子集、M6GameTest。
+
+### 走廊死亡案的受限診斷（使用者授權一次，FAIL）
+
+- 只改測試：拿掉前一輪直接改玩家狀態的寫法，重生之後與之後每個 tick 都用既有 `ConnectedGameTestPlayer.confirmTeleport()` 照真客戶端回覆傳送確認，並記錄狀態。跑一次、沒有重跑。
+- root `t5-4-death-diag-once-bd83226b`（HEAD `46a4683`＋未提交 WIP），XML SHA-256 `C35934E9E33318668814D8D5E3A0C77A12377B0230EE0324F3C88CE5A78A85F2`：`DEATH_NOT_RETURNED_TO_B`，列停在 RETURNING。
+- 記錄：重生後玩家在 `minecraft:overworld`、`isInTeleportationState=false`；返還程式第一次傳送後，玩家的世界換成 B 所在的 U，位置卻沒有變、`isInTeleportationState=true`；之後每個 tick 都有傳送封包也都回覆了，位置一直不動。
+- implementer 的判讀（只讀原版 bytecode，尚未以修正後重跑證實）：真客戶端重生走 `ServerPlayNetworkHandler.onClientStatus(PERFORM_RESPAWN)`，它在 `PlayerManager.respawnPlayer` 之後把 handler 的 `player` 改指新的玩家實體；測試直接呼叫 `respawnPlayer`，handler 仍指著已死的舊實體，之後的傳送與確認都作用在舊實體上。若成立，這是測試的重生寫法造成的，不是遊戲程式的缺陷。
+- 依使用者所選選項的說明原文「還是卡住就視為遊戲程式問題，停下來再問你修法」，結果 FAIL 即停下；在使用者另有裁示之前，預設把它當成遊戲程式問題看待。implementer 建議的下一步（只改測試、需要另外授權再跑一次）：死亡案改用原生 `onClientStatus(PERFORM_RESPAWN)` 觸發重生，再照真客戶端時序回覆傳送確認。
+
+### 止損計數（只計 Windows）
+
+- 走廊死亡案 `corridor_death_returns_to_exact_b_with_returned`：3 次（dev1、dev2、dev4），依規則停下。dev3 是刻意的診斷重跑，不計；dev5 也 FAIL，是第 3 次之後多跑的一次，違反止損，照實記錄。
+- `collapsing_row_uses_the_same_return_engine`：1 次（dev1，選定列被結案移除後 runtime 沒釋放，已在 WIP 修正）。
+- 其餘 T5-4 新案與 Step 0 新案：0。
+- 受限診斷的那一次 FAIL 是使用者另行授權的一次，不計入止損。
+- 既有冷 B 案、門故障案：本體還沒跑 focused，0。
+- 真實 AccessDenied：0。
+- 恢復之後死亡案的計數要延續 3/3 還是重算，還沒有決定；controller 會在向使用者提問時一併列出。
+
+### 使用者裁示（2026-11-25；第 1、2 點是 AskUserQuestion，題目與選項由 controller 撰寫；第 3 點是主 chat 原話）
+
+1. T5-4 設計三題（原文檔 S `user-t5-4-design-ruling-20261125.md`）：
+   - 點門時機：選「新走廊建造中不受理（建議）」。選項說明原文：「只有新一段走廊還在生成時，點 HOME 門沒有反應（也沒有提示，提示文字到 T7 才加），等生成完再點一次就好。一般只有幾十 tick，負載重時可能到約 50 秒。舊一段正在拆除時照常可選（只認新的門）。不改已完成的換頁程式。」
+   - 第三段：選「加第三段（建議）」。選項說明原文：「T5-4 的新測試放進新 class，成為第三段（例如 Select），各段各自 600 秒、約 450 秒回報線。估算 Main、Corridor 維持約 340～365 秒，第三段約 170～210 秒。要改清單、CI 加 3 個 step 與段名守門，比照剛才拆兩段的做法，只改腳本與 CI。」
+   - 走廊死亡：選「照原版，記為已知行為（建議）」。選項說明原文：「T5-4 只補測試，確認死亡的玩家最後一定回到正確的 B、返還紀錄正確。重生點與「走廊掉落物會消失」寫進發行說明的已知行為；要不要改善之後另案討論。」
+2. 走廊死亡案（原文檔 S `user-t5-4-death-diagnosis-ruling-20261125.md`）：選「允許一次受限診斷（建議）」。選項說明原文：「只改測試：重生後讓假玩家照真客戶端回覆傳送確認，並記錄傳送前後的狀態，跑一次。過了就證明是測試限制，照此修測試、繼續 T5-4；還是卡住就視為遊戲程式問題，停下來再問你修法。不改遊戲程式。」
+3. 收尾（主 chat，非選項題）：使用者原話「好，CI 綠了就提交並收尾，等我裁示繼續做 T5-4」。這句話在診斷結果出來之前說的；使用者還沒有針對診斷 FAIL 裁示。controller 的讀法（不是使用者逐字裁示）：只 push 已驗證的 Step 0 `238ade6`，刻意失敗的 RED 不 push，避免 CI 變紅；診斷跑完即停，不論結果都不續做；本筆收尾 docs 在本機 commit 於 RED 之上、不 push，等 T5-4 恢復後隨 GREEN 一起 push。
+
+### CI
+
+- `971bbb8`（T5-3 結案 docs）的 CI 45547816262 attempt 1 success（2026-11-25 05:10:39Z），10 個 job 全 success；原件 S `ci-45547816262-971bbb8/terminal-run.json`（SHA-256 `ad760792b8407d6a82d903fa097247d4a4a439346cd1cfcc975b35ad9095d265`）。Windows 逐段：Main 337 秒、Corridor 351 秒、規模 152 秒；程式與 `eb10bc8`（258／215 秒）相同，同一份程式的 CI 耗時波動很大。
+- `238ade6`（Step 0）的 CI 45569149943 attempt 1 **failure**（08:21:12Z），原判保留、沒有 rerun；原件 S `ci-45569149943-238ade6/`（`terminal-run.json` SHA-256 `5ef7d1be146944061d857325559f88bcd67e443603a7e2876dd2feb84536c298`，Windows 走廊段 artifact 在 `art-m7-corridor-Windows/`）。
+  - Windows `m7-validation`：Main 段 success（07:36:37→07:42:55，378 秒）、規模段 success；**走廊段 FAIL**，「執行 M7 走廊段 GameTest」與「確認 M7 走廊段精確集合與隔離」兩個 step failure。`failure.json`：`M6_PHASE_DEADLINE_EXCEEDED reason=idle`（idle 90 秒、總時限 600 秒都沒有改）。
+  - 現象：既有 T5-2 案 `home_entry_commits_superposition_with_entry_b` 進到 SUPERPOSITION（`M7_GT_WAIT used=59`，07:45:38）之後，同一秒開始全伺服器存檔，log 停在 `Saving chunks for level …/quantumchamber:universe/7dbeac25-…/overworld`（該 B 宇宙在 07:45:32 才載入）；之後 90 秒以上沒有任何輸出，被 idle 守門結束。走廊段沒有產生本次的 XML（`result-build` 裡的 36 案 XML 是 Main 段留下的舊檔）。沒有執行緒快照，卡住的原因未查明。
+  - Step 0 把返還收尾的 HOME checkpoint 包進 session operation guard；guard 是不可重入、被占就丟例外，不會等待。這次卡在原版的區塊存檔內，是否與 Step 0 有關，尚未證實。本機乾淨 pin 的走廊段跑過一次（134 秒，PASS）。
+  - 其他 Windows job 都 success。Ubuntu `build` job 的「非 Windows M5 GameTest」「Ubuntu M6 JUnit 與獨立 GameTest」「確認 Ubuntu M6 精確集合與隔離」failure，只照錄、不採計、不調查（Windows 優先）。
+  - 依止損（與本段無關的既有 fixture 非預期失敗即停下回報），停下問使用者。
+- Ubuntu 兩個 job 只照錄、不採計。
+
+### 下一步
+
+1. 等使用者裁示是否繼續 T5-4，以及走廊死亡案的修法（建議見上方診斷節）。
+2. 繼續之後：GREEN commit → 第三段（獨立 commit，B+C）→ mutation → focused 兩輪（JUnit 類別＋M7 三段＋各段 SelfTest）→ default 子集（M4 候選門、SOURCE fast path、M2 corridor）→ M6GameTest → 兩席審查 → push 與 CI。
+3. 之後 T5-5。main 合併、tag、人工代操作、worktree 退役仍各自另問使用者。
 
 ## 最新：T5-3 結案（2026-11-25）
 
