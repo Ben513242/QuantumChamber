@@ -940,6 +940,30 @@ CI 45508192969（`852f27c`）的 Windows「執行 M7 獨立 GameTest」step 耗�
 - run-all：`m7-home`（`Main`）之後依清單接 `m7-corridor` step（執行，再 `-VerifyOnly -SelfTest`；root `<run root>/m7-corridor`），再接原本的 `m7-scale`。`summary` step 的 `M7_FINAL_PROOF` 改帶 `-Segment Main` 並核 `segment=Main`；之後唯讀重驗其他段（`M7_SEGMENT_FINAL_PROOF`），各段的 `gameCases` 互斥、聯集恰為 `m7-inventory.json` 的全部 Windows M7 GameTest（`M7_SEGMENT_COVERAGE`，漏跑任何一段都不會通過）。結果寫進 `summary.json` 新增的 `m7HomeSegments`（`m7Home` 仍是 `Main`，所以它的 `gameCases` 從 77 變成 36），`SUMMARY` 行尾加 `m7game=Main:36,Corridor:41`。
 - 約 450 秒的回報線逐段計算：Windows CI 的「執行 M7 獨立 GameTest」（`Main`）與「執行 M7 走廊段 GameTest」（`Corridor`）任一個 step 超過約 450 秒就先回報；本機也是逐段計算。
 
+### M7 GameTest 第三段（T5-4，使用者 2026-11-25「加第三段（建議）」）
+
+T5-4 新增 `M7HomeSelectGameTests`（13 案，全是 `_windows`）。照較高的 CI 基準（`971bbb8`：Main 337 秒、Corridor 351 秒）估，放進任一個既有段都會超過約 400 秒，使用者選加第三段。本節取代上一節的分配與預期數字；上一節其餘規則（段名核對、同 JVM 選取、證據、SelfTest、執行方式）對三段都照舊適用，只有段名序列與 CI step 改變。
+
+- 分配：
+  - `Main`：`M7HomeSpikeGameTests`、`M7HomeClosureGameTests`、`M7HomeEntryTicketGameTests`（不變），另含全部非規模 JUnit 與兩個 JAR。
+  - `Corridor`：`M7HomeCorridorGameTests`、`M7RearmGameTests`、`M7SealReleaseGameTests`。
+  - `Select`：`M7HomeSelectGameTests`、`M7HomeAuthorityGameTests`，只跑 GameTest。
+  - `M7HomeAuthorityGameTests` 由 `Corridor` 移到 `Select` 的理由：`M7HomeSelectGameTests` 全是 `_windows`，單獨成段在 Ubuntu 會選到 0 案（`M7_GAME_SEGMENT_EMPTY`）；Authority 是兩平台都跑的類別，讓三段在兩平台都有案例，同時把 Corridor 的時間移一些到新段。
+- 預期數字（T5-4 之後）：
+
+  | 段 | Windows JUnit | Windows GameTest | Ubuntu JUnit | Ubuntu GameTest |
+  |---|---|---|---|---|
+  | `Main` | 59 | 36 | 59 | 35 |
+  | `Corridor` | 0 | 37 | 0 | 13 |
+  | `Select` | 0 | 19 | 0 | 6 |
+  | `Scale`（不變） | 11 | 0 | 11 | 0 |
+
+  三個 GameTest 段合計 Windows 92、Ubuntu 54。
+- CI（`m7-validation`）：在走廊段的兩個 step 之後新增「執行 M7 選門段 GameTest」（`-Segment Select -OutputRoot .superpowers/m7-select`，`if: ${{ !cancelled() }}`、20 分）與「確認 M7 選門段精確集合與隔離」（`-VerifyOnly -SelfTest`，`!cancelled()`、10 分），證據另存 artifact `m7-select-<平台>`（`if: always()`）。「確認 M7 精確集合與隔離」開頭的段名守門改為 `-ceq 'Main,Corridor,Select'`（`M7_CI_SEGMENT_SET`）。前一段失敗時其他段照跑、互不連坐（job 仍是失敗）。
+- SelfTest：`Select` 段與 `Corridor` 段同一套 28 例（GameTest 段的反例 `wrong-game-segment`、`foreign-class`、`class-missing`、`class-extra`、`summary-segment` 與清單負控都依清單自動套用；沒有 JUnit／JAR 的段另核 `junit-present`、`summary-extra-field`）。腳本沒有改。
+- 本機：`gates.ps1 -Mode M7GameTest` 依清單逐段執行，root 底下是 `m7`、`m7-corridor`、`m7-select`；run-all 依清單接各段，`SUMMARY` 行尾是 `m7game=Main:36,Corridor:37,Select:19`。
+- 約 450 秒的回報線逐段計算，三段（`Main`、`Corridor`、`Select`）任一個 Windows CI step 超過約 450 秒就先回報。
+
 ### run-all 與 CI 接線（T4 B2b-3）
 
 run-all 新 step `m7-home-native`（在 `m6-native` 之後）：

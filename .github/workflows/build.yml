@@ -47,10 +47,10 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          # 拆段 fix1（審查 I1）：CI 只執行下面寫死的 Main 與 Corridor 兩段。m7-inventory.json gametestSegments 的段名依清單順序以逗號串接，
-          # 必須恰為 Main,Corridor（區分大小寫）；加段、改名或改順序時，要同時改這裡並新增該段的執行、驗證、上傳 step，否則以 M7_CI_SEGMENT_SET 失敗。
+          # 拆段 fix1（審查 I1）：CI 只執行下面寫死的 Main、Corridor 與 Select 三段（T5-4，使用者 2026-11-25「加第三段（建議）」）。m7-inventory.json gametestSegments 的段名
+          # 依清單順序以逗號串接，必須恰為 Main,Corridor,Select（區分大小寫）；加段、改名或改順序時，要同時改這裡並新增該段的執行、驗證、上傳 step，否則以 M7_CI_SEGMENT_SET 失敗。
           $m7CiSegments=@((Get-Content -LiteralPath ./scripts/verification/m7-inventory.json -Raw | ConvertFrom-Json).gametestSegments.PSObject.Properties.Name) -join ','
-          if ($m7CiSegments -cne 'Main,Corridor') { throw "M7_CI_SEGMENT_SET：m7-inventory.json gametestSegments=[$m7CiSegments]，CI 只執行 Main,Corridor" }
+          if ($m7CiSegments -cne 'Main,Corridor,Select') { throw "M7_CI_SEGMENT_SET：m7-inventory.json gametestSegments=[$m7CiSegments]，CI 只執行 Main,Corridor,Select" }
           # m7_home：同一份不可覆寫原XML/JUnit/log/JAR，不借另一root。
           & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Main -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-own
       - name: 執行 M7 走廊段 GameTest
@@ -68,6 +68,21 @@ jobs:
         run: |
           # m7_home／Corridor：同一份不可覆寫的原 XML/log，不借另一 root。
           & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Corridor -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-corridor
+      - name: 執行 M7 選門段 GameTest
+        # T5-4（使用者 2026-11-25「加第三段（建議）」）：gametestSegments.Select 的 GameTest 獨立一段，自己的 Gradle 呼叫與 root；前一段失敗時照跑（!cancelled()），互不連坐。
+        # step 時限 20 分（Windows 另有 Invoke-Gradle 的 600 秒、idle 90 秒）。
+        if: ${{ !cancelled() }}
+        timeout-minutes: 20
+        shell: pwsh
+        run: |
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Select -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-select
+      - name: 確認 M7 選門段精確集合與隔離
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          # m7_home／Select：同一份不可覆寫的原 XML/log，不借另一 root。
+          & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Select -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-select
       - name: 執行 M7 規模測試
         # T5 Step 0（T4 B2b-5 審查 M2）：前面的 Main 段失敗時規模段照跑（!cancelled()），兩段互不連坐；step 時限 20 分（Windows 另有 Invoke-Gradle 的 600 秒）。
         if: ${{ !cancelled() }}
@@ -99,6 +114,14 @@ jobs:
           include-hidden-files: true
           path: |
             .superpowers/m7-corridor/**
+      - name: 上傳 M7 選門段證據
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m7-select-${{ matrix.platform }}
+          include-hidden-files: true
+          path: |
+            .superpowers/m7-select/**
       - name: 上傳 M7 規模測試證據
         if: always()
         uses: actions/upload-artifact@v4

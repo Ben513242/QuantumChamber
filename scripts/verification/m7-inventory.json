@@ -5,16 +5,20 @@
       "classes": [
         "M7HomeSpikeGameTests",
         "M7HomeClosureGameTests",
-        "M7HomeEntryTicketGameTests",
-        "M7HomeSelectGameTests"
+        "M7HomeEntryTicketGameTests"
       ]
     },
     "Corridor": {
       "classes": [
         "M7HomeCorridorGameTests",
-        "M7HomeAuthorityGameTests",
         "M7RearmGameTests",
         "M7SealReleaseGameTests"
+      ]
+    },
+    "Select": {
+      "classes": [
+        "M7HomeSelectGameTests",
+        "M7HomeAuthorityGameTests"
       ]
     }
   },
