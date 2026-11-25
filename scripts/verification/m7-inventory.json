@@ -142,7 +142,9 @@
       "quantumchamber:m1_empty|m7homecorridorgametests.home_tick_exception_is_isolated_and_warned_once",
       "quantumchamber:m1_empty|m7homecorridorgametests.home_remap_builds_no_second_home_door",
       "quantumchamber:m1_empty|m7homecorridorgametests.formal_tick_capacity_pending_preserves_home_mapping",
-      "quantumchamber:m1_empty|m7homecorridorgametests.legacy_candidate_append_cannot_spend_home_remap_reserve"
+      "quantumchamber:m1_empty|m7homecorridorgametests.legacy_candidate_append_cannot_spend_home_remap_reserve",
+      "quantumchamber:m1_empty|m7homecorridorgametests.home_retirement_write_pending_returns_to_b_with_reason",
+      "quantumchamber:m1_empty|m7homecorridorgametests.home_remap_union_write_pending_tickets_new_lease_and_returns_to_b"
     ],
     "native": [
       "close-ordinary-before-close",
