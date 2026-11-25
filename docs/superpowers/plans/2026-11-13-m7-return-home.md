@@ -715,3 +715,57 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
     - `prepareHome` 在取得走廊票之前失敗時，艙會永久 BUSY，與 legacy 同構（品質 M-3）。
     - HOME 與 legacy 平行重複程式的整理；`failHome` 的 WARN「HOME 入場交易保留 RETURNING」也用在 SUPERPOSITION 失敗與斷線，要依階段分開，注意測試依賴這個字串（品質 M-11）。
 - T5-1 legacy 逐格 hash 基準的出處：在未改 production 的 `a1468c3` 放暫時探針 `T51LegacyHashProbeTest`（不提交），以 `gates.ps1 -Mode M6JUnit` 印出 8 個 digest（四朝向 × 兩種語意），寫成 `J/corridor/M7HomeDoorLayoutTest.java` 的常數。探針原始碼 SHA-256 `dd14548e072e908d4b38ef756cb2a6603ec129aef0441cfb60bafcac9b39c949`，在 SDD root `t5-1-legacy-hash-probe-9f7f8e16`；SDD 是 gitignored，工作樹退役時會一起刪除。
+
+### T5-3 的追加（2026-11-25）
+
+本小節只有加引號的使用者選項標籤是使用者裁示（題目與選項說明原文見 M7 note「最新：T5-3 結案（2026-11-25）」節「使用者裁示」）；其餘都是 controller 的決定，或 controller 採用的 implementer 設計、原文檔的 controller 執行說明與審查判定，各項標明出處。下文「T5-2 品質 M-x」指 T5-2 的品質審查，「品質 M-x」「規格 M-x」不加前綴時指 T5-3 的審查。T5-3 的結案紀錄見 M7 note 同一節。
+
+- 核取框：照 T5-1、T5-2 的做法，T5-5 之前不勾。
+- :325 的「接近 16 MiB 的合法混合 journal」照字面觸發不了容量拒絕。未選定的 HOME 列，`HomeJournalBudget.peaks` 一律以 64 筆合成租約計上界；每筆租約的計量是固定成本，聯集寫入時實際量與剩餘預留同增同減，總量不變；allocator 上限也是 64。所以合法 journal 下，未選定列的換頁不會被預留拒絕。
+  - 測試改為（implementer 設計，controller 依 C6 接受）：先以合法 admission 放入恰在 16 MiB 邊界的壓力列，再以 testmod 反射在記憶體加大 4096 bytes，觸發 spec §5.1「共享預留不符」的防禦分支（C6）。磁碟不變，窗口內若有寫出會丟錯，收尾還原。
+  - 規格審查已獨立驗證上述主張並接受這個做法。
+- 容量 pending 只涵蓋 journal 預留；slot、頁或 pin 不足，仍照 legacy 送 RETURNING（規格 M-3）。
+- 換頁案的修法：使用者 2026-11-25 選「測試先生成走廊 chunk（建議）」。
+  - 落實方式（派工與 implementer 的設計，不是使用者原文）：三個換頁案在新舊租約聯集 checked 之後，以 `getChunk` 同步生成新租約外擴 2 圈的走廊 chunk；換頁等待維持 600 tick；換頁仍由正式 reposition tick 完成，不直接呼叫 remap API。
+  - 原因：新租約要等周邊 5×5 chunk 都 FULL 才算 entity ticking，負載下全新位置的周邊 chunk 生成慢。targeted 單跑時 30～60 tick 完成；開發輪 dev6 的單案實驗（兩趟玩家同時在走廊、等待暫時放寬到 2400 tick）約 989 tick 才完成；整批 focused 只知道 600 tick 內沒完成，沒有量到完成時間。
+- 換頁退休的寫出未確認（ROLL_FORWARD_PENDING）時，保留舊 slot、交故障路徑整組回 B，原因字串寫實際原因（品質 I-1，controller 決定採審查提出的甲案）。理由：legacy `tickRetirement` 移除未 durable 時也是丟例外走故障路徑；同一段 `prepareHomeRemap` 的聯集寫出未確認也是回 B；使用者 2026-10-21 對 AccessDenied 的裁示是維持 fail-closed／退避。之後確認時，由 `settleConfirmedHomeRetirement` 補做原生釋放。
+- 換頁的聯集寫出與退休寫出未確認時，記一次 journal 退避，同一個 tick 不再重寫（品質 M-7）；共用點在 `SessionRecoveryManager.retryHomeRollForward`，legacy RETRY_FLUSH 不變。
+- Step 0 的兩個選擇（implementer 設計，經規格審查接受）：
+  - T5-2 品質 M-2 選「`tickHomeRelease` 在 `ready` 之前先核 exact B」，不選依原因去重。B 暫時不是 exact live 屬 spec §9.2 的托管等待，不是故障。
+  - T5-2 品質 M-10 的 RED 沒有執行。讀 bytecode 確認，例外丟出 `END_SERVER_TICK` 時原版 `runServer` 會建 crash report 並停服，RED 只會讓整台 GameTest server 停掉、沒有具名 marker；改以讀碼論證，加上 GREEN 案 `home_tick_exception_is_isolated_and_warned_once`。
+- M7 Main 的 GameTest 拆段：使用者 2026-11-25 選「拆成兩段（建議）」。下列子項不是使用者原文，各自標明出處：
+  - 分配（implementer 設計，controller 接受；與使用者選項說明裡的範例不同）：寫在 `m7-inventory.json`（schema 5）的 `gametestSegments`。Main＝Spike、Closure、EntryTicket 三類的 GameTest，加上全部非規模 JUnit 與兩個 JAR；Corridor＝Corridor、Authority、Rearm、SealRelease 四類的 GameTest。走廊類別之後會持續加案，所以只配較輕的類別；它全是 `_windows` 案例，單獨成段在 Ubuntu 會選到 0 案。
+  - 每段各自一次 Gradle 呼叫、各自 600 秒（使用者選項說明）；各自的 OutputRoot（implementer 實作）；idle 90 秒不變，各自做 exact 集合、隔離與 SelfTest，不得弱化（原文檔的 controller 執行說明第 1、4 點）。
+  - 範圍：`src/main` 不改；改了驗證腳本、CI 設定、清單、README，以及 testmod 的 `M4LegacyGameTestFilterMixin.java`（在 JVM 內依段篩選類別）與 `build.gradle` 的 `gameTestM7` 區塊（傳段名屬性）。後兩檔是 controller 在派工中授權的。
+  - U1 改為逐段計算（使用者選項說明「約 450 秒回報線改成逐段計算」）：任一段的 Windows CI 步驟超過約 450 秒，先報使用者（沿用 U1 原規則）。
+  - CI 的段名寫死在 step 裡；加段、改名或改順序時，要同時新增該段的執行、驗證、上傳 step，並更新 Main 驗證 step 開頭的 `M7_CI_SEGMENT_SET` 守門（拆段審查 I1 的修正）。
+  - `m7-ci-gametest.ps1` 的 `-Segment` 沒有預設值，不給就以 `M7_SEGMENT_REQUIRED` 失敗（implementer 設計）。controller 的 SDD 驅動要跟著改：舊的 focused 驅動遇到缺段名時只印 `M7_GATE_THREW=` 就繼續跑，結果不能讀成 PASS，要改用 `gates.ps1 -Mode M7GameTest` 或逐段呼叫；計時驅動只看 `<gate>/m7`，要加上 `m7-corridor`；完整回歸的 26 項採計改為兩段加總（拆段審查對報告第 2 點的建議）。
+- C13：規格審查逐處核對 legacy 方法本體，只有加法分派與等價改寫，m4-recovery／m5-collapse probe 留 T5-5 的完整回歸；CI 不涵蓋這兩條鏈，T5-5 要列為必要門檻。
+- 審查 Minor、觀察與交接事項的分配（括號是來源）：
+  - T5-4 Step 0：
+    - `tickHomeRetirement` 清租約的寫入不在 session operation guard 內（spec §9.1），併入既有的 guard 項（規格 M-2）。
+    - reserve 案的斷言訊息「16 MiB 邊界上完成」說得太滿（規格 M-4）。
+    - `prepareHomeRemap` 的 `catch (CapacityExceeded)` 沒有比照 legacy 先核對已撤回，目前不可觸發（品質 M-1）。
+    - 容量 pending 每 tick 重試、每次整份量測，沒有退避；INFO 去重鍵在 pending 段結束時不清（品質 M-2；也可交 T8）。
+    - 「CLOSE 空間不變」的斷言在列相等之後恆真，沒有量到共享預留（品質 M-4）。
+    - M-10 的測試沒有觀察「本 tick 其餘段照常」；隔離粒度是整段（品質 M-5）。
+    - `settleFailedHomeStart` 的分支 1 是死碼、分支 2 沒有測試，fixture 的 Javadoc 與實作不符（品質 M-6 的測試與文件部分）。
+    - 失敗路徑的 RETURNING 殘留讓後續對殘留敏感的案以 `PRIOR_TEST_RESIDUE` 連坐（品質 M-8 第 2 點）；fix2 的 `settleOnFailure()` 只用在兩個新案，延後斷開最多 1200 tick 的副作用（operator 不斷開、static `WAITING` 停服不清、另三個換頁案未套用）一併處理（品質 fix2 複審 N-2）。
+    - 驅動與證據整理：default 子集驅動讀錯 XML、JUnit gate 的 `result-build/` 留著過期 GameTest XML（規格 M-6）。
+    - 拆段一席審查 M2～M7、M9：ci-rule-check 的 M7 fixture 只逐字執行 Main 的 step；mixin 的 `M7_SEGMENT_CLASS_MISMATCH` 永遠不會觸發；run-all summary 缺段 root 時錯因不具名；Corridor 的 `result-build` 夾帶 Main 的 JUnit XML 與 JAR；drop／wrong-scope 反例固定改第一個 testcase；兩段共用結果 XML 卻沒有 `fresh=false` 反例；Main 的 summary 沒有核對欄位集合。
+    - `M7_CI_SEGMENT_SET` 只比對清單與固定字串，沒有比對 CI 實際有哪些 step；刪掉 Corridor 的 step、或加段時連守門字串一起改卻忘了加 step，CI 仍會是綠的。可選修法：最後加一個 `!cancelled()` 的 step，依清單逐段以 `-VerifyOnly` 重驗各段 root（拆段 fix1 複審新 Minor）。
+  - T5-4：
+    - 舊實例退休完成之前，還有一扇同一個 DoorKey 的 HOME 門；`candidateDoor` 會定位到它。要補「點退休中的舊門不會選定」，選門以 current mapping 與 generation 判定（規格 M-5、T5-3 報告）。
+    - 選門若落在舊租約清除完成前、或新實例建造期間，退休與 remap 都會因 `homeRemappable` 為假而永久停住，T5-4 要定案（品質 M-8 第 1 點）。
+    - 選門之後的換頁目前一律不做（predicate 要求未選定，`retire` 拒絕已選定的 HOME）。
+  - T5-5：
+    - 開服接手時 HOME space 的 `retiring` 與未確認的退休，要由 settle 的邏輯對齊，或在 attach 時以 checked 列重建（T5-3 報告）。
+    - 「checked ARMING 但沒有 runtime」的保守退路歸入 `homeAbandons`，但 `finishHomeAbandoned` 在 `homeResidue` 為真時一律略過，對 checked 列永遠不收斂，艙會 BUSY 到重啟；收斂交 attach 一併處理（品質 M-6 的 attach 收斂部分）。
+    - 退休寫出確認之後、下一個 CPM tick 的 settle 之前，`homeDurable` 暫時不符；甲之下這段時間沒有讀者，T5-4 選門或 T5-5 開服接手若新增讀者要一併考慮（規格 M-1）。
+    - 完整回歸的採計改為 Main＋Corridor 兩段加總，並核對聯集（Windows 77、Ubuntu 53）。
+  - T8（發行說明的已知限制，或文件整理）：
+    - journal 有其他 SID 的未確認寫入時，HOME 換頁與退休會整組回 B，與 legacy 一致（品質 M-3）。
+    - M-7 只約束 `retryHomeRollForward`；同一個 tick 較早執行的 legacy RETRY_FLUSH，或另一個 SID 的 `retryHomeReturning`，仍可能多寫一次（品質 fix2 複審 N-1）。
+    - 負載下全新 slot 的換頁可能要約 1000 tick 才完成，玩家在頁邊界會等；這是走廊世界的 chunk 載入特性，legacy 相同（T5-3 報告）。
+    - 其他 owner（例如 `HomeRootFence`）在未選定的 SUPERPOSITION 列寫出未確認時，gateway 仍以 Buff 失效的字串回 B；與 T5-2 品質 M-11 的訊息整理一起處理（T5-3 fix2 報告）。
+  - 流程：會暫改 tracked 檔的負向控制，改在 gitignored 目錄下的拋棄式 clone 或 worktree 執行（拆段審查 M8）。

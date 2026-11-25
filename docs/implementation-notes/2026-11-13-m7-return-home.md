@@ -1,6 +1,125 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）；T5 分 5 段，T5-1、T5-2 已依段落結案，T5 整體未完成（見「最新：T5-1、T5-2 結案（2026-11-24）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）；T5 分 5 段，T5-1、T5-2 已依段落結案，T5 整體未完成（見「最新：T5-1、T5-2 結案（2026-11-24）」節）；T5-3 於 2026-11-25 依段落結案，同日依使用者裁示把 M7 Main 的 GameTest 拆成兩段（見「最新：T5-3 結案（2026-11-25）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 最新：T5-3 結案（2026-11-25）
+
+狀態：T5-3（HOME 換頁與容量 pending）已依段落結案；T5 整體未完成，完整回歸在 T5-5。同日依使用者裁示把 M7 Main 的 GameTest 拆成 Main 與 Corridor 兩段。
+
+下文 S 指 SDD 目錄 `.superpowers/sdd/2026-11-13-m7-return-home/`（gitignored）。本節的事實讀自 S 的 `STATUS.md`（2026-11-24 22:3x～2026-11-25 各段）、`task-5-3-brief.md`、`task-5-3-fix1-brief.md`、`task-5-3-fix2-brief.md`、`t5-3-report.md`（最終 SHA-256 `1b70d48cef2b756226cb65d9f65630bfe9e3a5d6690974783b3f62ff08f4303a`）、`t5-3-review-spec.md`、`t5-3-review-quality.md`、`t5-3-review-quality-fix2.md`、`task-m7-ci-split-brief.md`、`m7-ci-split-report.md`、`m7-ci-split-review.md`、`m7-ci-split-review-fix1.md`、三份使用者裁示原文檔，以及各 `ci-*` 目錄。
+
+- **段落結案判定**（controller 的判定，不是使用者裁示）：照 T5-1、T5-2 的標準，完整 run-all 以外的 production 門檻都做到，再加上 Windows 各 job success 的 CI。
+  - T5-3 的最終 code `62dacdd` 沒有自己的 CI：它和拆段 `c0dbdd7` 一起 push。CI 跑在後繼的 `c0dbdd7`、`eb10bc8` 上，兩者的 `src/main` 與 `62dacdd` 相同（`git diff --stat 62dacdd..eb10bc8 -- src/main` 為空），以這兩次 CI 採計（controller 的判定）。
+  - 拆段沒有改 `src/main`。改了驗證腳本、CI 設定、清單與 README，加上 testmod 的 `M4LegacyGameTestFilterMixin.java`（在 JVM 內依段篩選類別）與 `build.gradle` 的 `gameTestM7` 區塊（傳段名屬性）；後兩檔是 controller 在派工中授權的。拆段依 B+C（一席審查、定向驗證、CI）。
+- 設計決定、審查 Minor 與交接事項的分配，見 plan 檔尾「T5-3 的追加（2026-11-25）」小節。
+
+### commit
+
+- T5-3：`8d868e7..62dacdd`，6 筆。
+  - Step 0 `23480d7`：T5-2 品質審查分給 T5-3 Step 0 的 M-1、M-2、M-8、M-9、M-10 與可選第 6 項（production 小修，加 4 案 GameTest）。
+  - RED `7a8ae04`：只有測試、testmod fixture 與 inventory。
+  - GREEN `19f3bd9`：HOME 換頁分支、容量 pending、退休。
+  - fix1 `852f27c`：只改 `M7HomeCorridorGameTests.java`（換頁案先生成走廊 chunk）。
+  - fix2 RED `43e82c1`、GREEN `62dacdd`：品質 I-1 與 M-7。
+- 拆段：`62dacdd..eb10bc8`，2 筆。`c0dbdd7` 拆段本體（8 檔），`eb10bc8` 拆段 fix1（workflow 與 README）。
+- production 改動的檔：`CorridorPageManager.java`、`CorridorRepositionService.java`、`SuperpositionSessionManager.java`、`SessionRecoveryManager.java`、`MeasuredWorldSaveCheckpoint.java`。全部在授權清單內。
+
+### 內容
+
+- `CorridorRepositionService`：以 `allFlushedSessions()` 修剪追蹤並以 typed 分派處理 HOME 列；舊列的迴圈不變。HOME 換頁遇到容量拒絕時，`targetPages` 清空、同一段 pending 只記一則 INFO、下一個 tick 重試，不送 RETURNING。
+- `CorridorPageManager`：
+  - 7 個 legacy remap 方法開頭各加一行 HOME 分派，`retire` 加一行「已選定的 HOME 保留所有 mapping」守門，其餘 HOME 版本以加法新增。
+  - `prepareHomeRemap` 以 checked roll-forward 寫新舊租約聯集。寫入前就被拒時撤回額外 slot 等資源，原因含 `CapacityExceeded` 就原樣丟出留 pending，其他拒絕回 B；寫出未確認或確認後才失敗時，保留額外 slot、補取票，再回 B。
+  - 換頁退休：舊租約清空後以 checked roll-forward 移除，確認之後才釋放票、slot 與保護範圍；寫出未確認時保留舊 slot、整組回 B（fix2）；之後確認時由 `settleConfirmedHomeRetirement` 補做原生釋放。
+  - 新實例以同一個 HOME mode 建造，換頁之後沒有第二扇 HOME 門。
+- `SuperpositionSessionManager`：reposition 的 HOME predicate（本 server 的 runtime、同一座艙與 SID、checked 列為 SUPERPOSITION 且未選定）；HOME 的四個 tick 段各自經 `isolateHome` 執行，意外例外只記去重 WARN（Step 0 M-10）。
+- `SessionRecoveryManager`：roll-forward 待確認時記 journal 退避，同一個 tick 不重寫（Step 0 M-8、fix2 M-7）。
+- `MeasuredWorldSaveCheckpoint.entryLive`：`tickHomeRelease` 在 `ready` 之前先核 exact B，B 暫時不在時托管等待，不再每 tick 記 ERROR（Step 0 M-2）。
+- `M7CapacityFixture`：容忍一列活的 HOME 列並計入兩列 HOME 預留；`admitBeside`／`inflateInMemory` 觸發容量拒絕的做法見 plan 檔尾。
+
+### 驗證（Windows）
+
+- Step 0：
+  - RED：M-1 `HOME_START_LEAKED_AFTER_CHECKED_ARMING`、M-2 `HOME_RELEASE_ERROR_FLOOD count=30`、M-8 `HOME_ROLL_FORWARD_REWRITTEN_SAME_TICK hits=2`。M-10 的 RED 會讓 GameTest server 停服，以讀碼論證代替（見 plan 檔尾）。
+  - mutation S0-M1、S0-M2、S0-M8 各由具名測試殺掉，逐位元還原。
+  - 規格審查另以 Step 0 RED root 的 sources jar 比對 T5-2 build，四個 production 檔逐位元相同，確認 RED 跑在未修的程式上。RED root 的 `launch.json` 把 `MeasuredWorldSaveCheckpoint.java`、`SessionRecoveryManager.java` 列為 dirty，是 CRLF 換行造成的假象，不是內容不同（規格 M-6）。
+- 本體：
+  - RED（乾淨 `7a8ae04`，root `t5-3-red-pin-1a548735`，XML SHA-256 `75FA9E957CD302CA9EECEF6998C35A9F15CE7433B908BBEAF0FC77ADFC107D7B`）：`home_remap_builds_no_second_home_door`、`formal_tick_capacity_pending_preserves_home_mapping` 都以 `HOME_REMAP_NOT_ATTEMPTED` 失敗。
+  - GREEN（乾淨 `19f3bd9`，root `t5-3-green-pin-7ad07819`，XML SHA-256 `A986963293F328F2706AECE69A3F632951B8D98BC3A5FE781E7A690A79C74BD5`）：HOME 走廊 18 案＋`m7_home_capacity_windows`，19/19。
+  - mutation M-A（容量拒絕改送 RETURNING）以 `CAPACITY_SENT_RETURNING` 殺、M-B（不撤回多保留的 slot）以 `REMAP_RESERVE_NOT_WITHDRAWN` 殺，逐位元還原。
+- focused 第 1 輪（乾淨 `19f3bd9`，root `t5-3-focus-1-ef7f2d18`）FAIL，原判保留：M7 Main 75 案 4 failure（XML SHA-256 `A16A6859068F7DCAA7216DBEB0FD240605F45B1ADEF22EDD0A025F2DD83B08B3`）。兩個換頁案的聯集已 checked，但新租約周邊的走廊 chunk 在負載下生成太慢，600 tick 內沒完成；另外兩案被殘留的 RETURNING 列連坐（`PRIOR_TEST_RESIDUE`）。implementer 依止損停下，使用者裁示 fix1（見下方「使用者裁示」第 1 點）。
+- fix1（乾淨 `852f27c`）：
+  - targeted `t5-3-fix1-targeted-d9d10e29` 19/19（XML SHA-256 `71285400D6D877ED7BDC5377D20A83EAE67630ADC5B356E088B358D788AC08B7`）。每筆預生成 570 chunk、耗時 42～159 ms。
+  - focused 第 1 輪 `t5-3-focus-1-456fe6c4`：JUnit 四類、M7 Main（junit 59、gametest 75，XML SHA-256 `BED1275FDE478480AC00618BBFF80444FF22C27062E40790313412AFEDA5D5FC`，250 秒）、SelfTest 全 PASS。
+  - focused 第 2 輪 `t5-3-focus-2-deedbe0c` FAIL，原判保留：M7 Main 75 案 3 failure（XML SHA-256 `3466D49B9DEF3404867A3353CFEE9DED9F7DA54BDD3CDB99DAA3F5B671FE0E66`）。起點是 `permanent_sealed_origin_dismantles_after_disable_and_power_off` 的 fixture 寫出遇到真實 AccessDenied（真實 journal 檔的 atomic move；latest.log 的 `TESTMOD_FIXTURE_WRITE_FAILED`），`passable_door_closes_out_as_ordinary_open`、`last_checkpoint_fails_after_native_moves` 被它連坐。同一份 log 另有 3 則路徑含 `m7-t4p2-native-fault` 的刻意注入，不算真實。使用者裁示重跑一次（見下方第 2 點）。
+  - 重跑 `t5-3-focus-2-123baf63`：JUnit 四類 PASS；M7 Main `M7_VERIFIED PASS platform=Windows junit=59 gametest=75`（XML SHA-256 `79ED0B10B4554D8ECF5E492E209E8EFE708E971A13733AA8DAB128B2F3F27E19`，236 秒），真實 AccessDenied 0；SelfTest PASS。
+  - default 子集 `t5-3-default-subset-8ee020bd`：17 個 M2 換頁 batch 17/17（XML SHA-256 `7560120897E825AB452FC8D8C9B89B2ED9D625D260610AF28A53EA80F75FD590`）。驅動誤讀 `prior-build/` 舊 XML 寫出的原 `verified.json`（FAIL）保留，改讀本次 `result-build` 另寫 `verified-result-build.json`（PASS）；這是工具錯誤，不是測試失敗。
+- fix2：
+  - RED（乾淨 `43e82c1`，root `t5-3-fix2-red-50596049`，XML SHA-256 `6B8018F26ABAFA86333C8CEDC1E834281E2CA20B1DF67D91D3561978FDE8C948`）：兩個新案依預期失敗。退休案同時重現 `HOME_ROLL_FORWARD_REWRITTEN_SAME_TICK hits=2` 與原因誤標；聯集案 hits=2。
+  - GREEN（乾淨 `62dacdd`，root `t5-3-fix2-green-adecdf64`，XML SHA-256 `74F34A0298001D08D1B360DDCB85E2855A2555EE1B2BAEAD37A3521A385CB3BC`）：新 2 案＋HOME 走廊 18 案＋`m7_home_capacity_windows`，21/21。
+  - mutation f2-M1（移除 settle 呼叫）以 `HOME_RETIRED_SLOT_NOT_SETTLED` 殺、f2-M2（移除聯集寫出未確認時的補票）以 `HOME_UNION_PENDING_TICKETS_MISSING` 殺、f2-M3（移除共用退避）兩案都以 hits=2 殺，逐位元還原。
+  - focused 兩輪：`t5-3-focus-1-0a4a324d`（M7 Main gametest 77，XML SHA-256 `48B950BAFB1A716484CFD14CCBD3921EBB6564D744923C88BF741991147FB24A`，239 秒）、`t5-3-focus-2-22307dab`（XML SHA-256 `02246F46DAA09567B08FF5064BE4B8A9C6EE1E690D4AE14624D14813966709F0`，256 秒），JUnit 四類與 SelfTest 都 PASS，兩輪真實 AccessDenied 都是 0。
+  - default 子集沒有重跑：fix2 沒有改到 legacy 路徑（新增那一行在 legacy 迴圈之後，沒有 HOME 列時不執行）。
+- 拆段（`c0dbdd7`）：
+  - 兩段在乾淨 pin 上都 PASS（`m7split-run2-297b6983`；`gates.ps1 -Mode M7GameTest` 入口 `m7split-gate-add78c69`），本機 Gradle 時間 Main 157～175 秒、Corridor 112～152 秒。兩段 GameTest 互斥、合計 77，JUnit 59 不變，Scale 段不變。
+  - SelfTest 兩段各 28 例；VerifyOnly 合成負控 18 例（`m7split-neg-75927831`）；真的啟動 JVM 的負控 4 例（`m7split-jvmneg-5b4d59e3`：未知段名、沒給段名、類別重疊、類別遺漏，都在開跑前拒絕）。
+  - 工具錯誤 2 次（driver 參數與陣列攤平，都在呼叫被測程式之前），root `m7split-run1-bf8dd5e0`、`m7split-runall-a79e8449` 保留。
+  - JVM 負控曾暫改 tracked 的 inventory 約 1 分鐘，之後以原 bytes 寫回並核對 SHA 與 git status；審查判定這次可接受，之後改在拋棄式副本執行。
+- 拆段 fix1（`eb10bc8`）：守門正例 PASS，多一段、少一段、只改順序三種都以 `M7_CI_SEGMENT_SET` 失敗（`m7split-fix1-e1e50483`）；ci-rule-check 的 M7 fixture 逐字執行到守門後 PASS。
+- legacy 方法本體（C13）：規格審查逐處核對，只有加法分派與等價改寫，m4-recovery／m5-collapse probe 留 T5-5。
+
+### 審查
+
+- T5-3 規格一席：✅，C0／I0／M6。
+- T5-3 品質一席：Changes requested，C0／I1／M8。I-1 是換頁退休的寫出未確認時，程式說明寫原地等待，實際上同一個 tick 就以「B 身分或完整 cohort 效果失效」的錯誤原因整組回 B；兩條收斂路徑（settle、聯集寫出未確認時補票）都沒有測試。fix2 處理 I-1 與 M-7，原品質席窄複審 Approved，C0／I0／M2。
+- 拆段一席：Changes requested，C0／I1／M9。I1 是 README 說加第三段只改清單，但 CI 的段名寫死，照做會讓新段一案都不跑而 CI 仍全綠。拆段 fix1 處理 I1 與 M1（Main 兩個 CI step 加時限），原席窄複審 Approved，C0／I0／M1（S `m7-ci-split-review-fix1.md`，SHA-256 `ac1ba7d07fb2f5655ff1edddc537ee9008b130d87941bd63c9813611431f2fe7`）。
+
+### 使用者裁示（2026-11-25，AskUserQuestion，題目與選項由 controller 撰寫）
+
+1. 換頁案的修法：使用者選「測試先生成走廊 chunk（建議）」。選項說明原文：「只改測試。三個換頁案在租約寫入確認後，先把新租約外擴 2 圈的走廊 chunk 同步生成好，等待時間維持 600 tick。做法比照你先前對冷 B 案選的「測試先生成 B 地形」。修完照原門檻重跑 focused 兩輪、default 子集並實量耗時。止損計數從修法起重算，同一案第 3 次非預期失敗再停。」原文檔：S `user-t5-3-fix1-ruling-20261125.md`（題目、三個選項與 controller 註記）；派工見 S `task-5-3-fix1-brief.md`。
+2. AccessDenied 加連坐（兩題，原文檔 S `user-t5-3-accessdenied-ruling-20261125.md`）：
+   - 第 1 題選「換新 nonce 重跑一次（建議）」。選項說明原文：「保留原 root 與原判，對同一版本 852f27c 重跑 focused 第 2 輪一次，接著跑 SelfTest 與 default 子集。這次重跑用掉這個版本的 AccessDenied 重跑額度；再失敗（任何原因）就停下回報。」
+   - 第 2 題選「併入，追得到起點才算（建議）」，成為 AGENTS「M7 Windows atomic-move AccessDenied 單次重跑規則」的 2026-11-25 擴充。選項說明原文：「M7 之後的完整回歸與 focused：唯一的起點是真實 AccessDenied，而且其餘失敗都能從 log 追到是被它連帶時，視同只有 AccessDenied，保留原 root、換新 nonce 重跑一次，不必再問。每個版本仍只一次，同一版本第 2 次就停報；追不到連帶關係就停下問你。」
+3. CI 時限：使用者選「拆成兩段（建議）」。選項說明原文：「把 M7 Main 的 GameTest 依測試類別拆成兩段（例如 HOME 走廊／換頁一段、其餘一段），各自一次 Gradle 呼叫、各自 600 秒上限，約 450 秒回報線改成逐段計算。比照 11-18 把規模測試拆成獨立一段的做法。只改驗證腳本、CI 設定與清單，不改遊戲程式；走一席審查＋定向驗證＋CI，在 fix2 push 之前完成。」原文檔：S `user-m7-ci-split-ruling-20261125.md`。實際分配與建議範例不同（見 plan 檔尾）。
+
+controller 的決定（不是使用者裁示）：品質 I-1 採「寫出未確認即回 B」；品質 M-3 維持與 legacy 一致；品質 M-7 併入 fix2；容量案以記憶體加大壓力列觸發；接受 implementer 提出、與使用者選項說明範例不同的拆段分配；拆段審查 M1 採建議加 Main step 時限。理由見 plan 檔尾。
+
+題目原文：都在上列原文檔。第 1 點的題目是：「T5-3（HOME 走廊換頁）在 focused 第 1 輪的 M7 Main 有 4 案失敗，已依止損停下。查到的原因：換頁要寫的新舊租約已寫入並確認，但新租約周圍的走廊 chunk 在負載下生成很慢。單獨跑時 30～60 tick 就好，整批跑時約 989 tick，所以 600 tick 內換頁沒完成，另外 2 案被它留下的殘留列連帶失敗。換頁和容量判讀的程式本身沒有錯，等得夠久就會完成。要怎麼修？」題目中「整批跑時約 989 tick」是 controller 當時的轉述，不精確：989 tick 量自開發輪 dev6 的單案實驗，整批 focused 沒有量到完成時間（見 plan 檔尾）。
+
+### 止損計數（只計 Windows）
+
+- fix1 之前：
+  - `legacy_candidate_append_cannot_spend_home_remap_reserve` 3 次（開發輪 dev1、dev2，以及 focus-1 的連坐），依規則停下；dev3～dev5 是刻意的診斷重跑，不計入。
+  - 另外兩個換頁案各 1 次；既有 `candidate_and_remap_capacity_retry_keeps_published_team` 1 次（被本段新案的殘留連坐）。
+  - Step 0 新案 `home_release_waits_for_exact_b_without_error_flood` 1 次：Step 0 RED root `t5-3-step0-red-a939c12d` 被 M-8 RED 留下的 pending roll-forward 連坐，之後補上收尾。
+- 計數從 fix1 起重算（使用者選項說明「止損計數從修法起重算」）。重算的範圍是 T5-3 的全部新案，以及被本段影響的既有案（controller 的讀法，不是使用者原文）：
+  - 換頁三案 0；`852f27c` 第 2 輪的三案各 1（真實 AccessDenied 與它的連坐），重跑時都是 0。
+  - fix2 的新案與既有案 0。
+- 真實 AccessDenied：`852f27c` 1 次，額度已用；`62dacdd` 0 次。
+- 既有冷 B 案、門故障案：0。
+- 工具錯誤：default 子集驅動 1 次、拆段驅動 2 次，root 都保留。
+
+### CI
+
+- `852f27c` 的 CI 45508192969 attempt 1 success（2026-11-25 00:00:22Z），10 個 job 全 success；原件 S `ci-45508192969-852f27c/terminal-run.json`（SHA-256 `5ad8401319bca8283d73004a9ed35c8fbccaff5e661f50a507bd245dd67ffe35`）。但 Windows「執行 M7 獨立 GameTest」步驟 602 秒（Gradle `BUILD SUCCESSFUL in 9m 57s`，離 Invoke-Gradle 600 秒總時限只剩約 3 秒），超過約 450 秒的 U1 回報線；回報使用者後裁示拆段。
+- `c0dbdd7` 的 CI 45532643386 attempt 1 success（02:50:09Z），10 個 job 全 success；原件 S `ci-45532643386-c0dbdd7/terminal-run.json`（SHA-256 `657c23749770df5d737127b1cc305ff26abe7bdfe643857afa24bb168bf29c6a`）。這個 run 包含 T5-3 的最終 code `62dacdd`，Windows 逐段：Main 300 秒、Corridor 261 秒、規模 186 秒，都低於約 450 秒。
+- `eb10bc8` 的 CI 45537137999 attempt 1 success（03:47:57Z），10 個 job 全 success；原件 S `ci-45537137999-eb10bc8/terminal-run.json`（SHA-256 `afdb5ff3c9189df78aeaf7655337cf60f7db530c33399b826afc6542b42b70e5`）。Windows 逐段：Main 258 秒、Corridor 215 秒、規模 164 秒。
+- Ubuntu：上述三個 run 的 Ubuntu 兩個 job（`build`、`m7-validation (ubuntu-latest, Ubuntu)`）都 success，只照錄、不採計（暫停雙平台驗證）。
+
+### 補記
+
+- T5-1、T5-2 結案 docs `8d868e7` 的 CI 45406804011 attempt 1 failure（2026-11-24 14:26:49Z），依 M5 熔岩偶發常駐規則不阻擋、不重跑，不能算 CI 全綠。逐筆：
+  - job `windows-native`；
+  - step 8「Windows 原生 M5 GameTest」：M5 60 案中 1 failure，`m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids`，對照組等待逾時（tick 239）、`controlPistonPushed=true waterMoved=false`、`wet=Block{minecraft:cobblestone}`；
+  - step 9「Windows M6 JUnit 與獨立 GameTest」：連帶的 `M6_SCOPE_MISMATCH：GameTest run 範圍不符（m5）：expected=60 actual=60 缺 [] 多 []`，M6 本身 35/0；
+  - step 12「確認 Windows 原生案例確實執行」因前面的 step 失敗而 skipped；
+  - 同一 run 的其他 9 個 job 都 success，沒有其他失敗。這是同簽章第 4 次。原件 S `ci-45406804011-8d868e7/`（`terminal-run.json` SHA-256 `da3d354ec4345304be38a553f16fb94dbad3782d4f603e463e81f7dba77590ed`，核對紀錄 `signature-check.md`）。
+- 本筆 docs commit 的 CI 終局先記在 S `STATUS.md`，下次文件提交再收錄。
+
+### 下一步
+
+1. T5-4（唯一 HOME 選擇與保留式返 B）。開頭的 Step 0 先處理 plan 檔尾分給 T5-4 Step 0 的項目，加上 T5-2 已分配的 T5-4 Step 0 項目；T5-4 本體要先定案「選門與換頁、退休的互斥」。
+2. 之後 T5-5（含 corridor-recovery 原生鏈與完整 run-all；完整回歸的採計改為兩段加總，並列入 m4-recovery／m5-collapse probe）。main 合併、tag、人工代操作、worktree 退役仍各自另問使用者。
 
 ## 最新：T5-1、T5-2 結案（2026-11-24）
 

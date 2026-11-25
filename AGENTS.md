@@ -121,7 +121,15 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-24 最新：T5-1、T5-2 依段落結案，下一步 T5-3。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-1、T5-2 結案（2026-11-24）」節，以及 plan 檔尾「T5-1、T5-2 的追加（controller，2026-11-24）」小節（設計決定，以及審查 Minor 與交接事項分配到 T5-3 Step 0／T5-3／T5-4 Step 0／T5-4／T5-5／T6／T7／T8）。
+**2026-11-25 最新：T5-3 依段落結案，M7 Main GameTest 已拆成兩段，下一步 T5-4。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-3 結案（2026-11-25）」節，以及 plan 檔尾「T5-3 的追加（2026-11-25）」小節（設計決定，以及審查 Minor 與交接事項分配到 T5-4 Step 0／T5-4／T5-5／T8）。
+- T5-3：`8d868e7..62dacdd`（Step 0、RED、GREEN、fix1、fix2），規格審查 C0／I0／M6，品質審查 fix2 後 C0／I0。拆段：`62dacdd..eb10bc8`，一席審查 fix1 後 C0／I0。CI 45532643386（`c0dbdd7`，含 T5-3 最終 code）與 45537137999（`eb10bc8`）的 Windows 各 job 都 success。Ubuntu 只照錄、不採計。
+- 使用者 2026-11-25 的三項裁示（選項原文與第 1 點的題目見 note 該節「使用者裁示」，第 2、3 點的題目見該節所列的 SDD 原文檔）：換頁案「測試先生成走廊 chunk（建議）」；AccessDenied 加連坐「換新 nonce 重跑一次（建議）」與「併入，追得到起點才算（建議）」（規則見下方「M7 Windows atomic-move AccessDenied 單次重跑規則」的 2026-11-25 擴充）；CI 時限「拆成兩段（建議）」。
+- 拆段之後（分配與規則見 plan 檔尾）：`m7-ci-gametest.ps1` 的 `-Segment` 沒有預設值，Main 與 Corridor 各自一次 Gradle 呼叫、各自 600 秒；U1 改為逐段，任一段的 Windows CI 步驟超過約 450 秒先報使用者（`c0dbdd7`：Main 300 秒、Corridor 261 秒；`eb10bc8`：Main 258 秒、Corridor 215 秒）。加段要同時改 CI step 與 `M7_CI_SEGMENT_SET` 守門。
+- `8d868e7`（docs）的 CI 45406804011 是 M5 熔岩偶發（同簽章第 4 次），依常駐規則不阻擋、不重跑，逐筆紀錄在 note 該節「補記」。
+- 止損不變：既有冷 B 案或門故障案再有任何非預期失敗即停下問使用者；T5 新案各自起算，同一 fixture 第三次非預期失敗才停；只計 Windows。AccessDenied 額度：`852f27c` 已用；`62dacdd` 0 次、未用；`c0dbdd7`（testmod、腳本、workflow）與 `eb10bc8`（workflow、README）都有非 docs 的變更，算新的 code pin，各自一次、都未用。這裡的「code pin」指任何含非 docs 變更的 commit，和 note 結案節說的「production 的最後一筆」不同義；只改 docs 的 commit 不算新 pin，不得以換 docs SHA 迴避止損（比照 M6 規則原文）。這是 controller 的讀法。
+- main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-24：T5-1、T5-2 依段落結案，下一步 T5-3。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-1、T5-2 結案（2026-11-24）」節，以及 plan 檔尾「T5-1、T5-2 的追加（controller，2026-11-24）」小節（設計決定，以及審查 Minor 與交接事項分配到 T5-3 Step 0／T5-3／T5-4 Step 0／T5-4／T5-5／T6／T7／T8）。
 - T5-1：`a1468c3..79c232e`，CI 45362017556 的 Windows 各 job success。T5-2：`79c232e..bc87df0`（含 fix1），CI 45395450940 的 Windows 各 job success。兩次 CI 的 Ubuntu 兩個 job 也 success，只照錄、不採計。原件在 M7 SDD 的 `ci-*` 目錄。
 - 段落結案判定（controller 的判定）：完整 run-all 以外的 production 門檻都做到，加上同 SHA CI 的 Windows 各 job success；完整 run-all 在 T5-5 跑一次。T5 整體未完成，plan Task 5 的核取框在 T5-5 之前都不勾。
 - 止損不變：既有冷 B 案或門故障案再有任何非預期失敗即停下問使用者；T5 新案各自起算，同一 fixture 第三次非預期失敗才停（T5 新案的計法是 controller 的決定，已告知使用者）；只計 Windows。
@@ -243,9 +251,11 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 - 簽章的辨識方式見「開發與 review 流程」的判定說明補充；該段寫明 M7 GameTest 與原生列刻意注入、路徑含 `m7-t4p2-native-fault` 的不算真實簽章。
 - 2026-11-18 T4 完整回歸那次 FAIL 混有連坐，不屬本規則，是由同日 09:14 第 1 題的單次授權重跑。
 - 本規則取代下方各節的舊規則：M7 AccessDenied 額度 1/1 已用完、不刷新，再遇到就停下來問使用者（各節原文用詞不完全相同）；舊文保留為歷史。
+- **2026-11-25 擴充（使用者裁示）**：題目「這是 M7 第 2 次碰到「AccessDenied 加上它連帶的失敗」（上次是 11-18 T4 完整回歸，當時你也授權重跑一次）。之後再遇到同樣情況，要不要也併入「每個版本重跑一次」的規則，不必每次問你？」，使用者選「併入，追得到起點才算（建議）」。選項說明原文：「M7 之後的完整回歸與 focused：唯一的起點是真實 AccessDenied，而且其餘失敗都能從 log 追到是被它連帶時，視同只有 AccessDenied，保留原 root、換新 nonce 重跑一次，不必再問。每個版本仍只一次，同一版本第 2 次就停報；追不到連帶關係就停下問你。」原文檔：M7 SDD `user-t5-3-accessdenied-ruling-20261125.md`。
+  - controller 的執行說明（不是使用者裁示）：「版本」指 code pin，只改 docs 不重置次數；「真實 AccessDenied」依上方「判定說明補充」辨識，路徑含 `m7-t4p2-native-fault` 的刻意注入不算；`852f27c` 的額度已由同日第 1 題授權的重跑用掉。上面「混有其他 FAIL 不適用」那一點，對能追到起點的連坐失敗由本擴充取代。focused 只遇到真實 AccessDenied、沒有其他失敗時，「其餘失敗」是空集合，同樣適用本擴充：每個 code pin 一次。完整回歸與 focused 共用同一個 code pin 的一次額度。
 
 **M5 投影不變格熔岩偶發的 CI 處理（使用者 2026-11-18）：** 題目「M5 既有測試「投影不變格」在 Windows CI 約 3.5% 會因自然熔岩搶先流入而失敗（和 M7 無關）。要怎麼處理？」，三個選項（修測試 fixture、記為已知偶發並可重跑一次、維持現狀每次都問）使用者都沒有選，以「Other」自行輸入，原文：「可以忽略，我記的玩家穿越到水底下或岩漿裡面就要承擔風險，盒子照樣生成」。原文檔：M7 SDD `user-m5-water-flake-ruling-20261118.md`，題目與選項由 controller 撰寫；選項原文與調查見 M7 note「最新：T4A CLOSED（2026-11-18）」節的「M5 熔岩偶發與使用者裁示」小節。
-- 對象：M5 既有 GameTest `m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids` 的對照組，在 normal 地形上被自然熔岩搶先流入而等待逾時（M7 SDD `m5-water-control-flake-investigation.md`）。同簽章已出現 3 次：42355698932（`dfed554`）、44078380354（`a8755ce`）、44259424086（`c091581`）。
+- 對象：M5 既有 GameTest `m5universeprojectiongametests.projection_invariant_cells_resist_breaking_placing_explosions_pistons_and_fluids` 的對照組，在 normal 地形上被自然熔岩搶先流入而等待逾時（M7 SDD `m5-water-control-flake-investigation.md`）。同簽章已出現 4 次：42355698932（`dfed554`）、44078380354（`a8755ce`）、44259424086（`c091581`）、45406804011（`8d868e7`，2026-11-24，依這條讀法不阻擋，逐筆紀錄見 M7 note「最新：T5-3 結案（2026-11-25）」節「補記」）。
 - controller 的讀法（不是使用者裁示；原文檔記為已在回報中告知使用者，使用者可更正）：
   - 不改 fixture、不重跑、不再為這個簽章停下詢問；
   - 只限完全相同的簽章：失敗案恰為上述 M5 案、訊息為對照組等待逾時且 `waterMoved=false`，以及它連帶造成的 `M6_SCOPE_MISMATCH（m5）`（expected=actual、缺與多都是空集合）；
