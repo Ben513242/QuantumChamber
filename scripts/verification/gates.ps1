@@ -136,6 +136,101 @@ function Copy-Build([string]$dest) {
         if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination $dest -Recurse}
     }
 }
+# M7Runtime idle 卡住取證（使用者 2026-11-25「讓 CI 卡住時自動留快照（建議）」）：Invoke-Gradle 的 idle 判定成立、送 stop 之前呼叫 Save-M7IdleThreadDumps。
+# 對象只限 Get-OwnedIdentity（java.exe、nonce 命令列、啟動時間）相符且尚未退出的 owned M7 JVM；每個對象兩次，開始時間相隔約 10 秒，寫進 <evidence>：
+# m7-jstack-<pid>-<n>.txt（工具 stdout 原始位元組）與 m7-jstack.json（pid、時間、工具路徑、exit code、位元組數、SHA-256、狀態）。沒有相符的 JVM 時不取快照，
+# 只寫 m7-jstack-skipped.json（含原因）。工具依序是目標 JVM 執行檔同一個 bin 的 jstack.exe -l、jcmd.exe Thread.print -l，都沒有才用 JAVA_HOME/bin 的同兩者。
+# 每次呼叫最多 12 秒（也不超過剩餘預算），逾時只結束自己啟動的工具程序、再等最多 3 秒；預算 30 秒用完就不再啟動新呼叫，最壞約 33 秒，在 60 秒 grace 內。
+# 任何失敗只記在 json 的 status，不丟出：gate 的判定、reason 與原失敗訊息不變。Get-OwnedIdentity 由呼叫端 Invoke-Gradle 在 M7Runtime 時自 probe-common.ps1 載入。
+function Resolve-M7ThreadDumpTool([string]$JavaExe,[int]$TargetPid) {
+    $bins=@()
+    if($JavaExe){$bins+=[pscustomobject]@{dir=[IO.Path]::GetDirectoryName($JavaExe);source='target-bin'}}
+    if($env:JAVA_HOME){$bins+=[pscustomobject]@{dir=(Join-Path $env:JAVA_HOME 'bin');source='JAVA_HOME'}}
+    foreach($bin in $bins){
+        foreach($tool in @(@{name='jstack.exe';arguments=@('-l',[string]$TargetPid)},@{name='jcmd.exe';arguments=@([string]$TargetPid,'Thread.print','-l')})){
+            $path=Join-Path $bin.dir $tool.name
+            if(Test-Path -LiteralPath $path -PathType Leaf){return [pscustomobject]@{path=$path;source=$bin.source;arguments=$tool.arguments}}
+        }
+    }
+    return $null
+}
+# 啟動一次快照工具：stdout 原樣寫進 $OutFile、stdin 立即關閉；逾時只 Kill 這一個工具程序（不含整棵樹）。啟動失敗記在 startError，不丟出。
+function Invoke-M7ThreadDumpTool($Tool,[string]$OutFile,[int]$TimeoutMilliseconds,[int]$KillWaitMilliseconds) {
+    $run=[ordered]@{toolPid=$null;startError=$null;exitCode=$null;timedOut=$false;toolKilled=$false;toolExited=$false;bytes=$null;sha256=$null;stderr=$null}
+    $info=[Diagnostics.ProcessStartInfo]::new($Tool.path)
+    foreach($argument in $Tool.arguments){$info.ArgumentList.Add($argument)}
+    $info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.RedirectStandardInput=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+    $child=[Diagnostics.Process]::new();$child.StartInfo=$info
+    try {
+        try{[void]$child.Start()}catch{$run.startError=$_.Exception.Message;return $run}
+        $run.toolPid=$child.Id;$child.StandardInput.Close()
+        $file=[IO.File]::Create($OutFile)
+        try {
+            $copy=$child.StandardOutput.BaseStream.CopyToAsync($file);$err=$child.StandardError.ReadToEndAsync()
+            if($child.WaitForExit($TimeoutMilliseconds)){$run.toolExited=$true}
+            else{$run.timedOut=$true;try{$child.Kill();$run.toolKilled=$true}catch{};$run.toolExited=$child.WaitForExit($KillWaitMilliseconds)}
+            if($run.toolExited){$run.exitCode=$child.ExitCode}
+            try{[void]$copy.Wait(2000)}catch{}
+            try{if($err.Wait(2000)){$text=$err.Result;$run.stderr=if($text.Length -gt 4000){$text.Substring(0,4000)}else{$text}}}catch{}
+        } finally {$file.Dispose()}
+        $run.bytes=(Get-Item -LiteralPath $OutFile).Length;$run.sha256=(Get-FileHash -LiteralPath $OutFile -Algorithm SHA256).Hash
+    } finally {
+        # 例外路徑的保底：只結束這次自己啟動、仍在執行的工具程序。
+        if($run.toolPid){try{if(-not $child.HasExited){$child.Kill()}}catch{}}
+        $child.Dispose()
+    }
+    return $run
+}
+function Save-M7IdleThreadDumps($Handles,[string]$Token,[string]$Evidence,$Trigger) {
+    $limits=[ordered]@{intervalSeconds=10;perCallTimeoutSeconds=12;killWaitSeconds=3;budgetSeconds=30;graceSeconds=60}
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    $report=[ordered]@{schema=1;status='ERROR';reason=$null;trigger=$Trigger;startedUtc=[DateTimeOffset]::UtcNow.ToString('o');endedUtc=$null;elapsedSeconds=$null;limits=$limits;targets=@();snapshots=@();error=$null}
+    try {
+        $targets=@()
+        foreach($owned in @($Handles)){
+            $check=Get-OwnedIdentity $owned.process $owned.start 'java.exe' $Token;$exe=$null
+            if($check.matched){try{$exe=(Get-CimInstance Win32_Process -Filter "ProcessId=$($owned.process.Id)").ExecutablePath}catch{$exe=$null}}
+            $report.targets+=[ordered]@{pid=$owned.process.Id;identity=$check;executablePath=$exe}
+            if($check.matched){$targets+=[pscustomobject]@{owned=$owned;exe=$exe}}
+        }
+        if(-not $targets.Count){$report.status='SKIPPED';$report.reason=$(if(@($Handles).Count){'NO_MATCHED_LIVE_OWNED_JVM'}else{'NO_OWNED_JVM_OBSERVED'});return}
+        $firstRound=$clock.ElapsedMilliseconds
+        for($round=1;$round -le 2;$round++){
+            if($round -gt 1){$wait=$firstRound+$limits.intervalSeconds*1000-$clock.ElapsedMilliseconds;if($wait -gt 0){Start-Sleep -Milliseconds $wait}}
+            foreach($target in $targets){
+                $targetPid=$target.owned.process.Id;$callStart=$clock.ElapsedMilliseconds
+                $entry=[ordered]@{pid=$targetPid;n=$round;status=$null;startedUtc=[DateTimeOffset]::UtcNow.ToString('o');seconds=$null;file=$null;tool=$null;toolSource=$null;arguments=$null;timeoutSeconds=$null;identity=$null;error=$null}
+                try {
+                    $remaining=$limits.budgetSeconds*1000-$callStart
+                    if($remaining -lt 1000){$entry.status='BUDGET_EXHAUSTED'}
+                    else{
+                        $entry.identity=Get-OwnedIdentity $target.owned.process $target.owned.start 'java.exe' $Token
+                        $tool=if($entry.identity.matched){Resolve-M7ThreadDumpTool $target.exe $targetPid}else{$null}
+                        if(-not $entry.identity.matched){$entry.status='TARGET_GONE'}
+                        elseif($null -eq $tool){$entry.status='TOOL_NOT_FOUND'}
+                        else{
+                            $entry.tool=$tool.path;$entry.toolSource=$tool.source;$entry.arguments=$tool.arguments
+                            $timeout=[int][Math]::Min($limits.perCallTimeoutSeconds*1000,$remaining);$entry.timeoutSeconds=$timeout/1000
+                            $file=Join-Path $Evidence "m7-jstack-$targetPid-$round.txt"
+                            $run=Invoke-M7ThreadDumpTool $tool $file $timeout ($limits.killWaitSeconds*1000)
+                            foreach($key in @($run.Keys)){$entry[$key]=$run[$key]}
+                            if(Test-Path -LiteralPath $file){$entry.file=[IO.Path]::GetFileName($file)}
+                            $entry.status=if($run.startError){'START_FAILED'}elseif($run.timedOut){'TIMEOUT'}elseif($run.exitCode -ne 0){'EXIT_NONZERO'}elseif(-not $run.bytes){'EMPTY_OUTPUT'}else{'OK'}
+                        }
+                    }
+                } catch {$entry.status='ERROR';$entry.error=$_.Exception.Message}
+                $entry.seconds=($clock.ElapsedMilliseconds-$callStart)/1000
+                $report.snapshots+=$entry
+            }
+        }
+        $ok=@($report.snapshots | Where-Object {$_.status -ceq 'OK'}).Count
+        $report.status=if($ok -eq @($report.snapshots).Count){'COMPLETE'}elseif($ok){'PARTIAL'}else{'FAILED'}
+    } catch {$report.status='ERROR';$report.error=$_.Exception.Message}
+    finally {
+        $report.endedUtc=[DateTimeOffset]::UtcNow.ToString('o');$report.elapsedSeconds=$clock.Elapsed.TotalSeconds
+        try{Save-Json (Join-Path $Evidence $(if($report.status -ceq 'SKIPPED'){'m7-jstack-skipped.json'}else{'m7-jstack.json'})) $report}catch{Write-Warning "M7 執行緒快照紀錄寫入失敗（不影響 gate 判定）：$($_.Exception.Message)"}
+    }
+}
 function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[string]$stopMode='',[int]$timeout=600,[ValidateSet('minecraft','junit','compile-only')][string]$runtimeLogMode='minecraft',[ValidateRange(1,3600)][int]$idleSeconds=90) {
     # 只有明確不啟動 Minecraft 的 JUnit／編譯 invocation 可以豁免當次日誌；不可拿它略過任何 run task。
     if($runtimeLogMode -cne 'minecraft' -and @($tasks | Where-Object {($_ -split ':')[-1] -cmatch '^run'}).Count){throw '日誌不適用模式不可包含 run task'}
@@ -221,7 +316,11 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
             }
             $expired=if($m6Mode){$null -ne $deadlineState.deadline}else{([DateTimeOffset]::Now-$start).TotalSeconds -gt $timeout}
             if(-not $process.HasExited -and $expired){
-                if(-not $stopSent){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
+                if(-not $stopSent){
+                    # 只在 M7Runtime 的 idle 判定成立、送 stop 之前取執行緒快照（Save-M7IdleThreadDumps）；reason=total 與其他模式不取。失敗不丟出、不改判定。
+                    if($Mode -ceq 'M7Runtime' -and $deadlineState.deadline.reason -ceq 'idle'){try{Save-M7IdleThreadDumps $m7Handles.Values "-Dquantumchamber.m7game.nonce=$M7Nonce" $evidence $deadlineState.deadline}catch{Write-Warning "M7 執行緒快照失敗（不影響 gate 判定）：$($_.Exception.Message)"}}
+                    $process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true
+                }
                 if($m6Mode -and ([DateTimeOffset]::Now-$deadlineState.observedAt).TotalSeconds -gt 60){throw "M6_PHASE_DEADLINE_EXCEEDED reason=$($deadlineState.deadline.reason)；grace後尚未退出：$evidence"}
                 if(-not $m6Mode -and ([DateTimeOffset]::Now-$start).TotalSeconds -gt ($timeout+60)){throw "逾時且 stdin stop 未完成：$evidence"}
             }

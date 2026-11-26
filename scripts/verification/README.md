@@ -964,6 +964,16 @@ T5-4 新增 `M7HomeSelectGameTests`（13 案，全是 `_windows`；T5-4 fix1 補
 - 本機：`gates.ps1 -Mode M7GameTest` 依清單逐段執行，root 底下是 `m7`、`m7-corridor`、`m7-select`；run-all 依清單接各段，`SUMMARY` 行尾是 `m7game=Main:36,Corridor:37,Select:25`（T5-4 fix1 之後）。
 - 約 450 秒的回報線逐段計算，三段（`Main`、`Corridor`、`Select`）任一個 Windows CI step 超過約 450 秒就先回報。
 
+### M7 idle 卡住時的執行緒快照（使用者 2026-11-25「讓 CI 卡住時自動留快照（建議）」）
+
+CI 45569149943（`238ade6`）的 Windows 走廊段卡住超過 90 秒、被 idle 守門結束時沒有執行緒快照，查不到根因。現在 `gates.ps1 -Mode M7Runtime` 的 `Invoke-Gradle` 在 idle 判定成立、送 `stop` 之前，先呼叫 `Save-M7IdleThreadDumps`。總時限 600 秒、idle 90 秒與送 stop 後的 60 秒 grace 都沒有改。
+
+- 對象只限 `$m7Handles` 中 `Get-OwnedIdentity` 相符（`java.exe`、命令列含本次的 `-Dquantumchamber.m7game.nonce=<nonce>`、啟動時間相同）且還沒退出的 JVM。沒有相符的 JVM 時不取快照，只寫 `m7-jstack-skipped.json`，`reason` 是 `NO_OWNED_JVM_OBSERVED` 或 `NO_MATCHED_LIVE_OWNED_JVM`。
+- 每個對象取兩次，開始時間相隔約 10 秒，寫在該次 gate 的 `execution/`：`m7-jstack-<pid>-1.txt`、`m7-jstack-<pid>-2.txt`（工具 stdout 的原始位元組）與一份 `m7-jstack.json`（每次的 pid、時間、工具路徑與來源、exit code、位元組數、SHA-256、stderr 與 `status`）。CI 的 `m7-validation-<平台>`、`m7-corridor-<平台>`、`m7-select-<平台>` artifact 本來就以 `if: always()` 上傳整個 OutputRoot，所以 `build.yml` 沒有改。
+- 工具依序是目標 JVM 執行檔同一個 `bin` 的 `jstack.exe -l <pid>`、`jcmd.exe <pid> Thread.print -l`，兩者都沒有才用 `JAVA_HOME/bin` 的同兩者。每次呼叫最多 12 秒（也不超過剩餘預算），逾時只結束自己啟動的工具程序（再等最多 3 秒）；總預算 30 秒，用完就不再啟動新的呼叫。一般約 11～13 秒，最壞約 33 秒，都在 60 秒 grace 之內。
+- 找不到工具、啟動失敗、逾時、exit code 不是 0、對象已退出，都只記在 `m7-jstack.json` 的 `status`（`TOOL_NOT_FOUND`、`START_FAILED`、`TIMEOUT`、`EXIT_NONZERO`、`TARGET_GONE` 等），不丟出：gate 的判定與 `M6_PHASE_DEADLINE_EXCEEDED reason=idle` 的失敗訊息不變，FAIL 不會變成 PASS。
+- 不取快照的情況：`reason=total`、`M7Runtime` 以外的模式（包括 `M7ScaleRuntime` 與 M6），以及 Ubuntu（直接呼叫 Gradle，不經 `Invoke-Gradle`）。grace 從判定成立起算，快照會把送 stop 往後延（一般約 11～13 秒），server 在 stop 之後可用來退出的時間跟著變短；本來來得及在 grace 內退出、現在來不及時，失敗訊息的結尾會從「已安全退出但逾時仍FAIL」變成「grace後尚未退出」，兩者都是 FAIL、reason 都是 idle。
+
 ### run-all 與 CI 接線（T4 B2b-3）
 
 run-all 新 step `m7-home-native`（在 `m6-native` 之後）：
