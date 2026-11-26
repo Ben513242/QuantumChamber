@@ -705,8 +705,9 @@ jobs:
               if (-not (Test-Path -LiteralPath $logRoot -PathType Container) -or @(Get-ChildItem -LiteralPath $logRoot -Force).Count -ne 0) { throw "M4_PRESET_SOURCE：啟動前日誌目錄非空 $logRoot" }
             }
           }
+      # 使用者 2026-11-26 裁示「記錄，上限調到 45 分鐘（建議）」：CI 45776041411 runner 變慢跑滿 30 分鐘被逾時結束，上限 30 → 45 分（job 90 分不變）。
       - name: Windows 原生建置與 GameTest
-        timeout-minutes: 30
+        timeout-minutes: 45
         run: ./gradlew.bat clean build runGameTest --rerun-tasks --no-daemon
       # default GameTest 失敗時仍跑 M5 GameTest，兩邊的失敗都看得到；前一步失敗時 job 已是紅燈，下方檢查 step 維持預設（略過）。
       - name: Windows normal 選門回歸 GameTest
