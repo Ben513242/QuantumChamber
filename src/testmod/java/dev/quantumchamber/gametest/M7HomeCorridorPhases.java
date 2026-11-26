@@ -755,6 +755,8 @@ final class M7HomeCorridorPhases {
             start.put("tick", startedTick);
             proof.put("start", start);
             if (row.earlyLogin()) for (int i = 0; i < ids.size(); i++) login(i);
+            // 第 2 列的 M-4 見證放在 SERVER_STARTED（第一個 tick 之前）：清理一定還沒開始，不受「走廊門格 chunk 載入」與「返還」誰先的時序影響。
+            if (row == Row.SUPERPOSITION) doorWitness(pages, flushed);
             step = Step.REOPEN;
             stepTicks = 0;
         }
@@ -806,7 +808,6 @@ final class M7HomeCorridorPhases {
             var current = homeRow(journal.allSessions().get(sid));
             if (flushed != null && flushed.state() == SessionState.RETURNING) converted = true;
             if (flushed != null && flushed.home().selection() instanceof Selected || current != null && current.home().selection() instanceof Selected) selectedSeen = true;
-            if (row == Row.SUPERPOSITION && !doorWitnessed) doorWitness(pages, flushed);
             prevBPlayers = b.getPlayers().size();
             if (endMissing(journal, pages).isEmpty()) {
                 verifyEnd(journal, pages);
@@ -817,14 +818,16 @@ final class M7HomeCorridorPhases {
         }
 
         /**
-         * 第 2 列的 M-4 見證（N-3）：清理開始之前（reservation 仍在、列仍未全員 Returned）、HOME 門格的 chunk 已載入、格上仍是 home_marker 時，重建 space 的 HOME 門格回
-         * {@code current=false} 的 hit，以參與者直接呼叫該格的 {@code onUse}（繞過網路層凍結）恰回 FAIL、門格不變、沒有選定列；反向見證：入口門格（marker=false）回 empty。
+         * 第 2 列的 M-4 見證（N-3）：SERVER_STARTED、參與者剛登入（第一個 tick 之前，清理一定還沒開始：reservation 仍在、列仍未全員 Returned），先讓走廊的門格 chunk 載入
+         * （只對走廊；B 不在此限），格上仍是 home_marker 時，重建 space 的 HOME 門格回 {@code current=false} 的 hit，以參與者直接呼叫該格的 {@code onUse}（繞過網路層凍結）
+         * 恰回 FAIL、門格不變、沒有選定列；反向見證：入口門格（marker=false）回 empty。
          */
         private void doorWitness(CorridorPageManager pages, HomeSessionRecord flushed) {
             var superposition = crash.getAsJsonObject("superposition");
             var cell = parse(text(superposition, "homeDoorCell"));
             var corridor = corridor();
-            if (participants.isEmpty() || corridor.getChunkManager().getWorldChunk(cell.getX() >> 4, cell.getZ() >> 4) == null) return;
+            require(!participants.isEmpty(), "doorWitness：參與者尚未登入");
+            corridor.getChunk(cell.getX() >> 4, cell.getZ() >> 4);
             doorWitnessed = true;
             var state = corridor.getBlockState(cell);
             expect("doorWitnessPrecondition", pages.hasReservation(sid) && flushed != null && flushed.participants().stream().noneMatch(SessionRecoveryRecord.Participant::returned)
