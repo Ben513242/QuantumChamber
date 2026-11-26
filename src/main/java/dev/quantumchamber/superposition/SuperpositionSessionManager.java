@@ -21,7 +21,7 @@ import net.minecraft.util.math.*;
 public final class SuperpositionSessionManager implements ChamberSessionGateway {
     private static boolean initialized;
     private static final ChunkTicketType<UUID> SOURCE_TICKET=ChunkTicketType.create("quantumchamber_source",Comparator.comparing(UUID::toString));
-    sealed interface Owner permits SuperpositionSession, Provisional, HomeRuntime {}
+    sealed interface Owner permits SuperpositionSession, Provisional, HomeRuntime, HomeResume {}
     private static final class Provisional implements Owner {
         final UUID sid;
         final int claimedAt;
@@ -63,11 +63,29 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             this.entryWorld=entryWorld; this.controller=controller; this.frame=frame; this.effects=effects; this.prepared=prepared; this.initial=initial;
         }
     }
+    /**
+     * M7 T5-5：開服接手（attach）時需要 B 的 checked HOME 列的唯一 owner（spec §6 :180，沿 {@link #sessions} 的 Chamber UUID key）。不建 {@link HomeRuntime}（它需要
+     * {@code startHome} 才有的 B Controller、藥效交易與 PreparedMappings）；busy 仍來自 journal。第一個 tick 起由 {@link #resumeHomes} 把未選定的 ARMING／SUPERPOSITION
+     * 轉 RETURNING（{@code convert}）、在 exact live B 出現之後取 Entry=B 來源票；返還、清理與 checkpoint 沿用既有引擎；{@link #finishResumedHomes} 收尾（ack、釋票、移除自己）。
+     * <p>T6 契約（設計稿 5.1）：T6 以自己的 runtime 取代時，把 {@link #sessions} 的值原地換掉，{@link #homeTickets} 裡以 SID 為 key 的 B 來源票原地沿用，不先釋放再取
+     * （spec §7 :203「不雙重取得」）；被取代的 HomeResume 已不在 sessions，收尾段不會碰到它。
+     */
+    static final class HomeResume implements Owner {
+        final UUID sid, chamber;
+        final HomeSessionRecord.EntryEndpoint entry;
+        final boolean convert;
+        /** exact live B 解析不到（托管等待）時，本 instance 只記一次 WARN。 */
+        boolean pendingWarned;
+        HomeResume(UUID sid,UUID chamber,HomeSessionRecord.EntryEndpoint entry,boolean convert) {
+            this.sid=sid; this.chamber=chamber; this.entry=entry; this.convert=convert;
+        }
+    }
     private static UUID ownerSid(Owner owner) {
         return switch(owner) {
             case Provisional provisional -> provisional.sid;
             case SuperpositionSession runtime -> runtime.initial.sessionUuid();
             case HomeRuntime home -> home.initial.sessionUuid();
+            case HomeResume resume -> resume.sid;
         };
     }
     private final Map<UUID,Owner> sessions=new LinkedHashMap<>();
@@ -230,6 +248,12 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
                     && home.home().selection() instanceof HomeSessionRecord.Unselected;
         });
         for(var record : journal.flushedRecords().values()) attachRecord(record);
+        // M7 T5-5（設計稿第 2、3 節）：需要 B 的 checked HOME 列登記 HomeResume。attach 只建記憶體：不寫 journal、不取 B 票（attach 當下 lifecycle 的 context
+        // 還不存在，exact B 一定解析不到）；轉 RETURNING 與取票在第一個 tick 起由 resumeHomes 做。
+        for(var row : journal.allFlushedSessions().values()) if(row instanceof HomeSessionRecord home) {
+            var action=CorridorPageManager.homeAttachAction(home);
+            if(action.ticket()) sessions.put(home.chamberUuid(),new HomeResume(home.sessionUuid(),home.chamberUuid(),home.entryEndpoint(),action.convert()));
+        }
     }
     /**
      * 開服時依一筆 flushed record 接手。M4 狀態：非 DORMANT 一律取得來源 ticket 並轉 RETURNING（MEASURED 改為保留式 recovery）。
@@ -605,16 +629,89 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     }
     private void releaseHomeRuntime(HomeRuntime runtime) {
         sessions.remove(runtime.initial.chamberUuid(),runtime);
-        var ticket=homeTickets.remove(runtime.initial.sessionUuid());
-        if(ticket!=null) ticket.world().getChunkManager().removeTicket(SOURCE_TICKET,ticket.chunk(),2,runtime.initial.sessionUuid());
+        releaseHomeTicket(runtime.initial.sessionUuid());
+    }
+    /** 釋放這個 SID 的 Entry=B 來源票（沒有時不做事）。 */
+    private void releaseHomeTicket(UUID sid) {
+        var ticket=homeTickets.remove(sid);
+        if(ticket!=null) ticket.world().getChunkManager().removeTicket(SOURCE_TICKET,ticket.chunk(),2,sid);
     }
     /** Entry=B 的來源票（spec §7 :203：B 的來源票由原 owner 持有；比照 legacy 的 {@code sourceTicket}，票在 B 的 Controller chunk）。 */
     private void homeSourceTicket(HomeRuntime runtime) {
-        var sid=runtime.initial.sessionUuid();
+        homeSourceTicket(runtime.initial.sessionUuid(),runtime.entryWorld,runtime.frame.controllerPos());
+    }
+    /** 同上，給沒有 runtime 的開服接手（{@link HomeResume}）用；依 SID 冪等。 */
+    private void homeSourceTicket(UUID sid,ServerWorld entry,BlockPos controllerPos) {
         if(homeTickets.containsKey(sid)) return;
-        var chunk=new ChunkPos(runtime.frame.controllerPos());
-        runtime.entryWorld.getChunkManager().addTicket(SOURCE_TICKET,chunk,2,sid);
-        homeTickets.put(sid,new HomeTicket(runtime.entryWorld,chunk));
+        var chunk=new ChunkPos(controllerPos);
+        entry.getChunkManager().addTicket(SOURCE_TICKET,chunk,2,sid);
+        homeTickets.put(sid,new HomeTicket(entry,chunk));
+    }
+    private List<HomeResume> homeResumes() {
+        return sessions.values().stream().filter(HomeResume.class::isInstance).map(HomeResume.class::cast).toList();
+    }
+    /**
+     * M7 T5-5（設計稿第 3 節）：開服接手的 HOME 列，第一個 tick 起。
+     * <ol>
+     * <li>{@code convert} 而 checked 列仍是未選定的 ARMING／SUPERPOSITION：per-SID 退避允許時以既有 {@link #homeReturning} 轉 RETURNING（有 pending 時先做一次 checked 寫出，
+     *     {@code commitHomeEdge} 在 pending 非空時拒絕）；失敗只記 WARN（去重），退避後重試，不丟出。</li>
+     * <li>還沒有 B 票、exact live B 已出現：取 Entry=B 來源票。exact B 解析不到時不取（托管等待，spec §9.2 :271），本 instance 每個 SID 只記一則 WARN。</li>
+     * </ol>
+     * 取到票、B 載入、端點 VALID 之前，返還引擎不動任何人（{@code SessionRecoveryManager.recoverHome}）。
+     */
+    private void resumeHomes(MinecraftServer owner) {
+        var pages=CorridorPageManager.forServer(owner);
+        for(var resume : homeResumes()) {
+            var sid=resume.sid;
+            if(resume.convert && journal.allFlushedSessions().get(sid) instanceof HomeSessionRecord row && row.home().selection() instanceof HomeSessionRecord.Unselected
+                    && (row.state()==SessionState.ARMING || row.state()==SessionState.SUPERPOSITION) && !pages.operationInProgress(sid)) {
+                var backoff=homeReturnRetries.computeIfAbsent(sid,ignored -> new dev.quantumchamber.collapse.CollapseBackoff());
+                if(backoff.ready(owner.getTicks())) {
+                    try {
+                        if(!journal.pendingSessions().isEmpty()) journal.flush(owner);
+                        homeReturning(sid);
+                        backoff.reset(); homeWarnings.remove(sid);
+                    } catch(RuntimeException failure) {
+                        backoff.failed(owner.getTicks());
+                        warnHome(sid,"開服接手的 HOME 返還（RETURNING）尚未 checked，依退避重試",failure);
+                    }
+                }
+            }
+            if(homeTickets.containsKey(sid)) continue;
+            var entry=exactEntry(resume.entry);
+            if(entry!=null) homeSourceTicket(sid,entry,resume.entry.controllerPos());
+            else if(!resume.pendingWarned) {
+                resume.pendingWarned=true;
+                org.slf4j.LoggerFactory.getLogger("quantumchamber").warn("開服接手的 HOME 旅程：exact B 目前不是 live（宇宙未啟用或端點不在），保持托管，不取 B 來源票、不移動任何人：chamber={} session={} entry={}",
+                        resume.chamber,sid,resume.entry.worldKey());
+            }
+        }
+    }
+    /**
+     * M7 T5-5（設計稿 5.1）：開服接手的 HOME 列的收尾。每 tick 依 SID 重讀 journal，不快取列：
+     * <ol>
+     * <li>列已從 current、flushed、pending 消失，不在隔離，也沒有 reservation：有完成收據就 ack（以 {@code releaseComplete} 守門），釋放 B 票，移除自己；</li>
+     * <li>選定的 MEASURED、租約空、current＝flushed、沒有 reservation（DORMANT，有沒有 stop 都一樣）：釋放 B 票，移除自己；有 stop 時之後由 T4 {@code HomeClosure} 獨立 CLOSE；</li>
+     * <li>列變成 SEALED（任何原因）：釋放 B 票，移除自己（比照 {@link #releaseOnSealed}；T5 不會產生）。</li>
+     * </ol>
+     * COLLAPSING 只在第 1 或第 3 款時釋放（已清理的 COLLAPSING 持票，交 T6 的 PREPARE 原地接手）。移除時一併清 per-SID 的退避與 WARN 狀態。
+     */
+    private void finishResumedHomes(MinecraftServer owner) {
+        var pages=CorridorPageManager.forServer(owner);
+        for(var resume : homeResumes()) {
+            var sid=resume.sid;
+            var row=journal.allFlushedSessions().get(sid) instanceof HomeSessionRecord home ? home : null;
+            boolean gone=!homeResidue(sid) && !pages.hasReservation(sid);
+            boolean dormant=row!=null && row.state()==SessionState.MEASURED && pages.homeMeasuredReleaseComplete(sid);
+            boolean sealed=row!=null && row.state()==SessionState.SEALED;
+            if(!gone && !dormant && !sealed) continue;
+            if(gone && pages.releaseComplete(sid)) pages.acknowledgeRelease(sid);
+            sessions.remove(resume.chamber,resume);
+            releaseHomeTicket(sid);
+            homeReturnRetries.remove(sid); homeWarnings.remove(sid);
+            org.slf4j.LoggerFactory.getLogger("quantumchamber").info("開服接手的 HOME 旅程已收尾（{}），釋放 B 來源票：chamber={} session={}",
+                    gone ? "列已移除" : dormant ? "MEASURED DORMANT 持鎖" : "SEALED",resume.chamber,sid);
+        }
     }
     /** 只核對凍結的 Entry 權威（exact live B、Controller 實例、PROJECTION、投影端點 VALID），不把供電、cohort 或藥效當成返還目的的身分。 */
     private boolean entryAuthority(HomeRuntime runtime) {
@@ -1138,6 +1235,8 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         // M7 HOME（T5-2）：START_CHECK 的續行與 HOME runtime；legacy 的迴圈只看 SuperpositionSession。
         // T5-3 Step 0（品質 M-10）：HOME 各段各自隔離意外例外（isolateHome）。不隔離時例外會從 END_SERVER_TICK 丟出：本 tick 其後的 legacy、reposition、recovery
         // 與之後註冊的 tick owner 都被跳過，原版的 server 迴圈還會把它當成未預期例外而停服。
+        // M7 T5-5：開服接手的 HOME 列排在最前面（同一個 END tick 的 recovery 之前先轉 RETURNING，JOIN 的凍結期內就已是返還中）。
+        isolateHome("resumeHomes",() -> resumeHomes(owner));
         isolateHome("continueHomeStarts",() -> continueHomeStarts(owner));
         // M7 T5-4：選門請求的 SELECT_CHECK 續行排在 tickHomeRuntimes 之前：FULL 當下的重驗看的是 gateway 尚未處理的狀態（例如藥效剛失效），不能依 gateway 已取消才拒絕。
         isolateHome("continueHomeSelects",() -> continueHomeSelects(owner));
@@ -1175,6 +1274,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
         reposition.tick(owner); recovery.tick(owner); finishAbandoned();
         isolateHome("finishHomeAbandoned",() -> finishHomeAbandoned(owner));
         isolateHome("completeHomeReturns",() -> completeHomeReturns(owner));
+        isolateHome("finishResumedHomes",() -> finishResumedHomes(owner));
         isolateHome("releaseDormantHomeRuntimes",() -> releaseDormantHomeRuntimes(owner));
         // 只有 DORMANT 的 MEASURED 在保留式清理完成後釋放 runtime 與來源 ticket。COLLAPSING 的清理收尾走 CorridorPageManager 延伸後的同一路徑，
         // runtime 與來源 ticket 保留到塌縮流程的終局或進入 SEALED 才釋放（spec §5：releaseAfterTerminal、releaseOnSealed）。
