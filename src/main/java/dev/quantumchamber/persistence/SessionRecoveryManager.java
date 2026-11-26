@@ -559,7 +559,11 @@ public final class SessionRecoveryManager {
         }
     }
 
-    /** 返還引擎的範圍（T5-4，C12）：未選定的 RETURNING，或選定之後、租約仍在的 MEASURED／COLLAPSING。 */
+    /**
+     * 返還引擎的範圍（T5-4，C12）：未選定的 RETURNING，或選定之後、租約仍在的 MEASURED／COLLAPSING。
+     * <p>T5-4 fix1（品質 M-10）：與 {@code CorridorPageManager.homeReturnable} 刻意不同——這裡也決定凍結與返還，所以 Selected 另要求租約非空：清 lease 之後的
+     * DORMANT（全員已返還、空租約）不凍結、不占玩家（spec §6 :189）；走廊那一側只在 space 還在時使用，租約由呼叫端自己核。
+     */
     static boolean homeReturning(HomeSessionRecord home) {
         if(home.home().selection() instanceof HomeSessionRecord.Unselected) return home.state()==SessionState.RETURNING;
         return (home.state()==SessionState.MEASURED || home.state()==SessionState.COLLAPSING) && !home.spaceLeases().isEmpty();
@@ -585,7 +589,10 @@ public final class SessionRecoveryManager {
         return null;
     }
 
-    /** 斷線：未選定的 ARMING／SUPERPOSITION 以 checked restore CAS 轉 RETURNING（只回 B）；RETURNING 已在返還；選定之後屬 T5-4。 */
+    /**
+     * 斷線：未選定的 ARMING／SUPERPOSITION 以 checked restore CAS 轉 RETURNING（只回 B）；RETURNING 已在返還。已選定的 MEASURED／COLLAPSING 不轉 RETURNING、不撤銷選擇：
+     * 列保留，離線者由保留式返還引擎在他 JOIN 的下一個 tick 送回 exact B（spec §8 :207）。
+     */
     private void markHomeReturning(HomeSessionRecord home) {
         if(home.state()!=SessionState.ARMING && home.state()!=SessionState.SUPERPOSITION
                 || !(home.home().selection() instanceof HomeSessionRecord.Unselected)) return;

@@ -121,7 +121,6 @@ public final class M7HomeSelectGameTests implements FabricGameTest {
     public void same_key_new_generation_or_player_never_selects(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new M7HomeCorridorGameTests.HomeEntry(c, 2, hooks, true);
-        e.settleOnFailure();
         e.guard(() -> {
             e.requireStarted();
             var label = "same_key_new_generation_or_player_never_selects";
@@ -484,7 +483,6 @@ public final class M7HomeSelectGameTests implements FabricGameTest {
     public void retiring_old_home_door_never_selects_and_selection_cleans_all_leases(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new M7HomeCorridorGameTests.HomeEntry(c, 2, hooks, true);
-        e.settleOnFailure();
         e.guard(() -> {
             e.requireStarted();
             var label = "retiring_old_home_door_never_selects_and_selection_cleans_all_leases";
@@ -532,7 +530,6 @@ public final class M7HomeSelectGameTests implements FabricGameTest {
     public void select_during_new_instance_build_is_refused(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new M7HomeCorridorGameTests.HomeEntry(c, 2, hooks, true);
-        e.settleOnFailure();
         e.guard(() -> {
             e.requireStarted();
             var label = "select_during_new_instance_build_is_refused";

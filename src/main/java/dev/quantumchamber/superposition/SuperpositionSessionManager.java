@@ -819,6 +819,9 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
     /**
      * 選門請求的續行（spec §4.2 :100–:103、§7 :198）：受理之後 200 tick 內，A 的 SELECT_CHECK 票 FULL 的那個 tick 進該 SID 的 operation guard，重抓並重驗全部條件
      * （{@link #homeSelectValid}，含 A 此刻的電位），全過才以 restore CAS checked MEASURED＋HOME（first-wins）。請求只用一次；不論結果都只釋放自己的 SELECT_CHECK 票。
+     * <p>T5-4 fix1：runtime 已不是 SUPERPOSITION，或 checked 列已不是 SUPERPOSITION／未選定（取消、牛奶、離線、B 失效或另一個已確認狀態）時，請求已不可能提交：立即釋票、
+     * 丟請求，不等滿 200 tick（品質 M-6，設計稿 §1.2「票已失效：釋票、丟請求」）。選門 checked 之後的釋票失敗只記 WARN，仍完成 runtime 的 MEASURED 與 INFO（品質 M-5；
+     * 票由原艙票 owner 之後續清，比照 {@link #releaseHomeSelect}）。
      */
     private void continueHomeSelects(MinecraftServer owner) {
         var pages=CorridorPageManager.forServer(owner);
@@ -827,6 +830,12 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             if(request==null) continue;
             var sid=runtime.initial.sessionUuid();
             if(owner.getTicks()-request.requestedAt()>=200) { releaseHomeSelect(runtime); continue; }
+            boolean stale;
+            try {
+                stale=runtime.state!=SessionState.SUPERPOSITION || !(journal.allFlushedSessions().get(sid) instanceof HomeSessionRecord row)
+                        || row.state()!=SessionState.SUPERPOSITION || !(row.home().selection() instanceof HomeSessionRecord.Unselected);
+            } catch(RuntimeException unreadable) { stale=true; }
+            if(stale) { releaseHomeSelect(runtime); continue; }
             if(pages.operationInProgress(sid)) continue;
             boolean full;
             try { full=request.lease().full(); }
@@ -834,13 +843,17 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
             if(!full) continue;
             runtime.select=null;
             SessionRecoveryState.CommitResult result=null;
+            boolean released=false;
             try { result=pages.exclusiveOperation(sid,() -> commitHomeSelect(owner,runtime,request)); }
             catch(RuntimeException failure) { warnHome(sid,"HOME 選門的重驗或提交丟出例外，保持未選定",failure); }
-            finally { dev.quantumchamber.collapse.HomeRootTickets.release(owner,sid); }
+            finally {
+                try { dev.quantumchamber.collapse.HomeRootTickets.release(owner,sid); released=true; }
+                catch(RuntimeException failure) { warnHome(sid,"HOME 選門之後的 SELECT_CHECK 票釋放失敗（原艙票 owner 之後續清）",failure); }
+            }
             if(result!=null && result.committed()) {
                 runtime.state=SessionState.MEASURED;
-                org.slf4j.LoggerFactory.getLogger("quantumchamber").info("HOME 選門已 checked（MEASURED＋HOME），SELECT_CHECK 票已釋放：chamber={} session={} player={}",
-                        runtime.initial.chamberUuid(),sid,request.player());
+                org.slf4j.LoggerFactory.getLogger("quantumchamber").info("HOME 選門已 checked（MEASURED＋HOME），SELECT_CHECK 票{}：chamber={} session={} player={}",
+                        released ? "已釋放" : "釋放失敗、由原艙票 owner 續清",runtime.initial.chamberUuid(),sid,request.player());
             }
         }
     }
@@ -931,7 +944,7 @@ public final class SuperpositionSessionManager implements ChamberSessionGateway 
 
     /**
      * C4：未選定的走廊取消沿用 gateway 的 {@link #returnToOrigin}，B（PROJECTION）的 Controller 走這個 HOME 分支：以投影索引辨識 exact B 的 Chamber，
-     * 未選定的 ARMING／SUPERPOSITION checked 轉 RETURNING（只回 B）；回傳是否已沒有這座艙的旅程。已選定的 HOME 列屬 T5-4，這裡不動。
+     * 未選定的 ARMING／SUPERPOSITION checked 轉 RETURNING（只回 B）；回傳是否已沒有這座艙的旅程。已選定的 HOME 列這裡不動（選定之後 B 端的操作屬 T6）。
      */
     private boolean returnToEntry(ServerWorld world,ChamberControllerBlockEntity controller) {
         var id=ChamberCollapsePort.projections().entryChamber(world,controller);

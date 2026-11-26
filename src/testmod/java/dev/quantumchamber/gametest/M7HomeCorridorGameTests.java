@@ -758,7 +758,6 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
     public void home_remap_builds_no_second_home_door(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new HomeEntry(c, 1, hooks, true);
-        e.settleOnFailure();
         e.guard(() -> {
             e.requireStarted();
             var label = "home_remap_builds_no_second_home_door";
@@ -822,7 +821,6 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
     public void formal_tick_capacity_pending_preserves_home_mapping(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new HomeEntry(c, 1, hooks, true);
-        e.settleOnFailure();
         e.guard(() -> {
             e.requireStarted();
             var label = "formal_tick_capacity_pending_preserves_home_mapping";
@@ -925,7 +923,6 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
     public void legacy_candidate_append_cannot_spend_home_remap_reserve(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new HomeEntry(c, 1, hooks, true);
-        e.settleOnFailure();
         e.guard(() -> {
             var legacy = new M2CorridorGameTests.NativeEntry(c, 1, net.minecraft.util.math.Direction.NORTH, true, new BlockPos(32, 0, 0));
             e.beforeClose(legacy::close);
@@ -1010,7 +1007,6 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
     public void home_retirement_write_pending_returns_to_b_with_reason(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new HomeEntry(c, 1, hooks, true);
-        e.settleOnFailure();
         e.guard(() -> {
             var capture = new LogCapture("quantumchamber");
             hooks.add(capture::close);
@@ -1078,7 +1074,6 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
     public void home_remap_union_write_pending_tickets_new_lease_and_returns_to_b(TestContext c) {
         var hooks = new M2CorridorGameTests.TestHooks();
         var e = new HomeEntry(c, 1, hooks, true);
-        e.settleOnFailure();
         e.guard(() -> {
             e.requireStarted();
             var label = "home_remap_union_write_pending_tickets_new_lease_and_returns_to_b";
@@ -1176,15 +1171,11 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
         void beforeClose(Runnable cleanup) { beforeClose.push(Objects.requireNonNull(cleanup, "cleanup")); }
 
         /**
-         * T5-3 fix2（品質 M-8 第 2 點，只給選用的案）：失敗路徑不立即斷開假玩家。先請求正式返還（取消暫占、未選定的 ARMING／SUPERPOSITION 送返還），列還在或艙仍 busy 時
-         * 交 {@link FailureSettle} 每個 server tick 核對，正式返還收尾（列移除、艙不再 busy）或逾時之後才釋放 B 的測試票並斷開；避免 RETURNING 列因假玩家離線而永久留下。
-         * T5-4 Step 0（T5-3 fix2 複審 N-2）：operator 不參與返還，延後時立即斷開；停服時清空等待；換頁五案都套用。
+         * 成功路徑（{@link #finish}）的收尾；不走失敗路徑的延後斷開。失敗路徑（每一案都一樣）見 {@link #requestSettle}：T5-3 fix2（品質 M-8 第 2 點）起不立即斷開假玩家，
+         * 先請求正式返還，列還在或艙仍 busy 時交 {@link FailureSettle} 每個 server tick 核對，正式返還收尾或逾時之後才釋放 B 的測試票並斷開；T5-4 Step 0 審查 M-4 起是全部案的
+         * 預設，T5-4 fix1（品質 M-9）移除已無作用的 opt-in setter。operator 不參與返還，延後時立即斷開；停服時清空等待（T5-3 fix2 複審 N-2）。
          */
-        private boolean settleOnFailure = true;
-        /** 成功路徑（{@link #finish}）的收尾；不走失敗路徑的延後斷開。 */
         private boolean finishing;
-
-        void settleOnFailure() { settleOnFailure = true; }
 
         HomeEntry(TestContext c, int count, M2CorridorGameTests.TestHooks hooks, boolean powerA) {
             this.c = c; this.hooks = hooks;
@@ -1700,7 +1691,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             }
             boolean deferred = false;
             try {
-                if (settleOnFailure && !finishing) deferred = requestSettle();
+                if (!finishing) deferred = requestSettle();
                 else closeOutResidue();
             } finally {
                 if (!deferred) {
@@ -1718,7 +1709,7 @@ public final class M7HomeCorridorGameTests implements FabricGameTest {
             catch (RuntimeException failure) { LOG.warn("M7_GT_FAILURE_SETTLE 斷開假玩家丟出例外：chamber={}", chamber, failure); }
         }
 
-        /** 失敗路徑（{@link #settleOnFailure}）：請求正式返還；列還在或艙仍 busy 時排入 {@link FailureSettle}，回傳是否已排入（之後才斷開）。 */
+        /** 失敗路徑（全部案的預設）：請求正式返還；列還在或艙仍 busy 時排入 {@link FailureSettle}，回傳是否已排入（之後才斷開）。 */
         private boolean requestSettle() {
             try {
                 var sid = provisionalSid(chamber);

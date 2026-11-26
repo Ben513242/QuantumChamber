@@ -40,7 +40,8 @@ public final class ChamberCollapsePort {
 
     /**
      * 回程走廊 HOME 門的互動（M7 spec §4.2，T5-4）：{@code QuantumBulkheadBlock.onUse} 在候選門與一般艙門之前、server thread 上呼叫。回傳 empty 表示這一格不是 HOME 門，
-     * 交回既有流程；有值時互動已由回程 owner 處理（消耗），呼叫端直接回傳。實作不得丟出例外。
+     * 交回既有流程；有值時呼叫端直接回傳，不交回候選門與一般艙門。回 FAIL 時原版仍可能接著使用手上的物品（{@code ItemStack.useOnBlock}，與候選門的 FAIL 相同）。
+     * 實作不得丟出例外。
      */
     @FunctionalInterface
     public interface HomeDoors {

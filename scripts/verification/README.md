@@ -898,7 +898,7 @@ strict 趟抽樣（T4 B2b-4，B2b3-M1）：CI 44107563893 的「執行 M7 獨立
 
 CI 45508192969（`852f27c`）的 Windows「執行 M7 獨立 GameTest」step 耗時 602 秒（Gradle 597 秒，`Invoke-Gradle` 總時限 600 秒），超過約 450 秒的回報線；T5-3 fix2 再加 2 案，T5-4～T7 的案例大多也會加在 `M7HomeCorridorGameTests`。使用者選「拆成兩段」：M7 GameTest 依測試類別拆成兩段，各自一次 Gradle 呼叫、各自的總時限 600 秒與 idle 90 秒（數值沒有改），約 450 秒的回報線改為逐段計算。測試內容、斷言與時限都不變；遊戲程式沒有改。
 
-- 分配（`m7-inventory.json` schema 5 的 `gametestSegments`，段名區分大小寫）。本機的 `m7-ci-gametest.ps1`、testmod mixin、`gates.ps1 -Mode M7GameTest` 與 run-all 都從這份清單讀段名；CI 不是，`m7-validation` 的 step 是寫死的 `Main` 與 `Corridor`。日後加段（或改段名、改順序）時，除了改清單，還要在 `m7-validation` 新增該段的執行、驗證、上傳三個 step，並更新「確認 M7 精確集合與隔離」裡的段名守門（見下方 CI）；只改清單時，CI 會以 `M7_CI_SEGMENT_SET` 失敗，不會靜默少跑新段：
+- 分配（`m7-inventory.json` schema 5 的 `gametestSegments`，段名區分大小寫）。本機的 `m7-ci-gametest.ps1`、testmod mixin、`gates.ps1 -Mode M7GameTest` 與 run-all 都從這份清單讀段名；CI 不是，`m7-validation` 的 step 依段名寫死（目前是 `Main`、`Corridor`、`Select`，見下一節）。日後加段（或改段名、改順序）時，除了改清單，還要在 `m7-validation` 新增該段的執行、驗證、上傳三個 step，並更新「確認 M7 精確集合與隔離」裡的段名守門（見下方 CI）；只改清單時，CI 會以 `M7_CI_SEGMENT_SET` 失敗，不會靜默少跑新段：
   - `Main`：`M7HomeSpikeGameTests`、`M7HomeClosureGameTests`、`M7HomeEntryTicketGameTests`，另含全部非規模 JUnit（`portable.junit`＋`<平台>.junit`）與兩個 JAR。
   - `Corridor`：`M7HomeCorridorGameTests`、`M7HomeAuthorityGameTests`、`M7RearmGameTests`、`M7SealReleaseGameTests`，只跑 GameTest（不跑 JUnit、不封裝）。
   - 理由：會繼續長大的是走廊類別，所以它那一段只配較輕的類別，留最多餘量；`Main` 留收尾類（Closure、B 收尾票）與 Spike（平台／scope 基線，也是 `ci-rule-check.ps1` M7 fixture 的 source mutation 對象）。兩段在 Ubuntu 也都有案例（走廊類別全是 `_windows`）。以 CI 45508192969 的各案 time、每 batch 約 0.73 秒、固定開銷（編譯、開服、停服；Main 另加 JUnit 與封裝）估 Windows CI：`Main` 約 367 秒、`Corridor` 約 328 秒；派工建議的「走廊＋B 收尾票一段」約 378／317 秒，走廊那段的餘量較少。
@@ -942,7 +942,7 @@ CI 45508192969（`852f27c`）的 Windows「執行 M7 獨立 GameTest」step 耗�
 
 ### M7 GameTest 第三段（T5-4，使用者 2026-11-25「加第三段（建議）」）
 
-T5-4 新增 `M7HomeSelectGameTests`（13 案，全是 `_windows`）。照較高的 CI 基準（`971bbb8`：Main 337 秒、Corridor 351 秒）估，放進任一個既有段都會超過約 400 秒，使用者選加第三段。本節取代上一節的分配與預期數字；上一節其餘規則（段名核對、同 JVM 選取、證據、SelfTest、執行方式）對三段都照舊適用，只有段名序列與 CI step 改變。
+T5-4 新增 `M7HomeSelectGameTests`（13 案，全是 `_windows`；T5-4 fix1 補 6 案成為 19 案）。照較高的 CI 基準（`971bbb8`：Main 337 秒、Corridor 351 秒）估，放進任一個既有段都會超過約 400 秒，使用者選加第三段。本節取代上一節的分配與預期數字；上一節其餘規則（段名核對、同 JVM 選取、證據、SelfTest、執行方式）對三段都照舊適用，只有段名序列與 CI step 改變。
 
 - 分配：
   - `Main`：`M7HomeSpikeGameTests`、`M7HomeClosureGameTests`、`M7HomeEntryTicketGameTests`（不變），另含全部非規模 JUnit 與兩個 JAR。
@@ -955,13 +955,13 @@ T5-4 新增 `M7HomeSelectGameTests`（13 案，全是 `_windows`）。照較高�
   |---|---|---|---|---|
   | `Main` | 59 | 36 | 59 | 35 |
   | `Corridor` | 0 | 37 | 0 | 13 |
-  | `Select` | 0 | 19 | 0 | 6 |
+  | `Select` | 0 | 25 | 0 | 6 |
   | `Scale`（不變） | 11 | 0 | 11 | 0 |
 
-  三個 GameTest 段合計 Windows 92、Ubuntu 54。
-- CI（`m7-validation`）：在走廊段的兩個 step 之後新增「執行 M7 選門段 GameTest」（`-Segment Select -OutputRoot .superpowers/m7-select`，`if: ${{ !cancelled() }}`、20 分）與「確認 M7 選門段精確集合與隔離」（`-VerifyOnly -SelfTest`，`!cancelled()`、10 分），證據另存 artifact `m7-select-<平台>`（`if: always()`）。「確認 M7 精確集合與隔離」開頭的段名守門改為 `-ceq 'Main,Corridor,Select'`（`M7_CI_SEGMENT_SET`）。前一段失敗時其他段照跑、互不連坐（job 仍是失敗）。
+  三個 GameTest 段合計 Windows 98、Ubuntu 54（T5-4 fix1 之後；本體時是 Select 19、合計 92）。
+- CI（`m7-validation`）：在走廊段的兩個 step 之後新增「執行 M7 選門段 GameTest」（`-Segment Select -OutputRoot .superpowers/m7-select`，`if: ${{ !cancelled() }}`、20 分）與「確認 M7 選門段精確集合與隔離」（`-VerifyOnly -SelfTest`，`!cancelled()`、10 分），證據另存 artifact `m7-select-<平台>`（`if: always()`）。「確認 M7 精確集合與隔離」開頭的段名守門改為：段名依清單順序串接，`-cne 'Main,Corridor,Select'` 就丟出 `M7_CI_SEGMENT_SET`（也就是必須區分大小寫地恰等於這個字串）。前一段失敗時其他段照跑、互不連坐（job 仍是失敗）。
 - SelfTest：`Select` 段與 `Corridor` 段同一套 28 例（GameTest 段的反例 `wrong-game-segment`、`foreign-class`、`class-missing`、`class-extra`、`summary-segment` 與清單負控都依清單自動套用；沒有 JUnit／JAR 的段另核 `junit-present`、`summary-extra-field`）。腳本沒有改。
-- 本機：`gates.ps1 -Mode M7GameTest` 依清單逐段執行，root 底下是 `m7`、`m7-corridor`、`m7-select`；run-all 依清單接各段，`SUMMARY` 行尾是 `m7game=Main:36,Corridor:37,Select:19`。
+- 本機：`gates.ps1 -Mode M7GameTest` 依清單逐段執行，root 底下是 `m7`、`m7-corridor`、`m7-select`；run-all 依清單接各段，`SUMMARY` 行尾是 `m7game=Main:36,Corridor:37,Select:25`（T5-4 fix1 之後）。
 - 約 450 秒的回報線逐段計算，三段（`Main`、`Corridor`、`Select`）任一個 Windows CI step 超過約 450 秒就先回報。
 
 ### run-all 與 CI 接線（T4 B2b-3）

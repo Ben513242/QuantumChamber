@@ -31,7 +31,9 @@ public final class HomeDoorInteraction {
             if (!(ChamberSessions.gateway() instanceof SuperpositionSessionManager sessions)) return Optional.of(ActionResult.FAIL);
             return Optional.of(sessions.requestHomeSelect(world, pos, player, hit.get()));
         } catch (RuntimeException rejected) {
-            LOGGER.debug("HOME 門互動拒絕：{}: {}", rejected.getClass().getName(), rejected.getMessage());
+            // T5-4 fix1（CI 45749878698，CollapseLogMarkerGuardTest）：collapse package 的每一則 log 都帶塌縮 marker。攔截範圍維持 fail-closed（規格 M-5 的判定：例外時改回
+            // empty 會落到一般艙門邏輯，可能把 HOME 門當普通門打開）。
+            LOGGER.debug(CollapseService.LOG_MARKER, "HOME 門互動拒絕：{}: {}", rejected.getClass().getName(), rejected.getMessage());
             return Optional.of(ActionResult.FAIL);
         }
     }

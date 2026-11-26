@@ -1088,7 +1088,8 @@ public final class CorridorPageManager {
 
     /**
      * HOME Space 的故障：未選定的 ARMING／SUPERPOSITION 在該 SID 的 operation guard 內以 checked restore CAS 轉 RETURNING（返還由 recovery 進行，只回 B）；
-     * 同 SID 已有進行中的操作或寫不出時保留，由 gateway 依 {@link #homeFailed} 重試。
+     * 同 SID 已有進行中的操作或寫不出時保留，由 gateway 依 {@link #homeFailed} 重試。ERROR 對同一個 space、同一個原因（{@link FailureText#dedupeKey}）只記一次
+     * （T5-4 fix1，品質 I-2：收尾分支每 tick 丟出時不再每 tick 一則）。
      */
     private void failHome(Space space,Exception failure) {
         space.selectable=Map.of(); space.failed=true;
@@ -1102,6 +1103,9 @@ public final class CorridorPageManager {
                 if (!result.committed()) failure.addSuppressed(result.failure().orElseGet(() -> new IllegalStateException(result.status().name())));
             }
         } catch (RuntimeException persistence) { failure.addSuppressed(persistence); }
+        var key=FailureText.dedupeKey(failure);
+        if (key.equals(space.homeFailureLogged)) return;
+        space.homeFailureLogged=key;
         org.slf4j.LoggerFactory.getLogger("quantumchamber").error("HOME 走廊保留租約等待安全返回 B：{}",space.id,failure);
     }
 
@@ -1419,7 +1423,12 @@ public final class CorridorPageManager {
         return owners.size()==1 ? Optional.of(owners.getFirst()) : Optional.empty();
     }
 
-    /** HOME 列是否在返還引擎的範圍（C12）：未選定的 RETURNING，或選定之後的 MEASURED／COLLAPSING。 */
+    /**
+     * HOME 列是否在返還引擎的範圍（C12）：未選定的 RETURNING，或選定之後的 MEASURED／COLLAPSING。
+     * <p>T5-4 fix1（品質 M-10）：與 {@code SessionRecoveryManager.homeReturning} 刻意不同——那裡的 Selected 另要求租約非空（DORMANT 不凍結、不占玩家、不再返還）；
+     * 這裡只給走廊 space 的操作（pins、保留式清理的前置）用，呼叫時一定已有 space 與 durable 核對，租約是否為空由各呼叫端自己核（{@code releaseHomeMeasured}、
+     * {@code tickHomeMeasuredRelease} 都另要求非空）。
+     */
     private static boolean homeReturnable(HomeSessionRecord record) {
         return record.home().selection() instanceof HomeSessionRecord.Unselected ? record.state()==SessionState.RETURNING
                 : record.state()==SessionState.MEASURED || record.state()==SessionState.COLLAPSING;
@@ -1479,29 +1488,46 @@ public final class CorridorPageManager {
             return journal.commitHomeRollForward(server,row,next);
         });
         if (result==null) return;
-        if (result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) { homeRollForwardPendingTick=server.getTicks(); return; }
+        if (result.status()==SessionRecoveryState.CommitResult.Status.ROLL_FORWARD_PENDING) {
+            // T5-4 fix1（品質 I-2）：記下已送出的清 lease，供 settle 判斷「確認之後同一個 tick 已由回程終局 owner 結案移除」。
+            space.homeMeasuredClearSent=next;
+            homeRollForwardPendingTick=server.getTicks(); return;
+        }
         if (!result.committed()) {
             scheduleHomeReleaseRetry(space,row,"HOME 選定之後的清 lease 尚未 checked（"+result.status()+"），保留選擇與占用，退避後重做",
                     result.failure().orElseGet(() -> new IllegalStateException(result.status().name())));
             return;
         }
-        releaseHomeMeasuredSpace(space,row);
+        releaseHomeMeasuredSpace(space,row.state(),false);
     }
 
-    /** 選定 HOME 的清 lease 寫出未確認、之後被其他寫出確認：checked 列已沒有租約，補做原生釋放。回傳是否已釋放（space 已移除）。 */
+    /**
+     * 選定 HOME 的清 lease 寫出未確認、之後被其他寫出確認：checked 列已沒有租約，補做原生釋放。回傳是否已釋放（space 已移除）。
+     * <p>T5-4 fix1（品質 I-2）：確認寫出的重試（SSM 的 recovery）與回程終局 owner（{@code HomeRootFence}／{@code HomeClosure}）都排在走廊之後；cleaned＋stop 時同一個
+     * tick 內就能結案並 checked 移除列。這時清 lease 已送出（{@code homeMeasuredClearSent}），而 current、flushed、pending 都已沒有這個 SID、也不在隔離：HOME 列只經
+     * {@code terminateHome} 的 checked 移除才會從三份都消失，而它要求 current＝flushed、沒有未確認的 roll-forward，所以清 lease 一定已確認、走廊幾何已清空並 checkpoint；
+     * 沒有任何 durable 列再引用這些租約，補做原生釋放（票、slot、保護範圍）。之後 gateway 的 {@code removed} 分支釋放 HOME runtime 與 B 來源票。
+     */
     private boolean settleConfirmedHomeMeasuredRelease(Space space) {
         if (!space.home || !space.homeMeasuredReleasing || space.operations!=0) return false;
+        if (space.homeMeasuredClearSent!=null && !journal.allSessions().containsKey(space.id) && !journal.allFlushedSessions().containsKey(space.id)
+                && !journal.pendingSessions().containsKey(space.id) && !journal.quarantinedSessions().contains(space.id) && !space.leases.isEmpty()) {
+            releaseHomeMeasuredSpace(space,space.homeMeasuredClearSent.state(),true);
+            return true;
+        }
         if (!(journal.allFlushedSessions().get(space.id) instanceof HomeSessionRecord checked) || !checked.equals(journal.allSessions().get(space.id))
                 || !(checked.home().selection() instanceof HomeSessionRecord.Selected) || !checked.spaceLeases().isEmpty() || space.leases.isEmpty()) return false;
-        releaseHomeMeasuredSpace(space,checked);
+        releaseHomeMeasuredSpace(space,checked.state(),false);
         return true;
     }
 
-    private void releaseHomeMeasuredSpace(Space space,HomeSessionRecord row) {
+    private void releaseHomeMeasuredSpace(Space space,SessionState state,boolean rowRemoved) {
         for (int slot : space.leases.keySet()) { releaseTickets(space,slot); allocator.release(slot); protectedLeases.remove(slot); }
         spaces.remove(space.id);
-        org.slf4j.LoggerFactory.getLogger("quantumchamber").info("HOME 選定之後的保留式清理完成：全員已返回 B、走廊清除、原生 checkpoint 與清 lease 都已 checked，選擇保留：session={} state={}",
-                space.id,row.state());
+        var logger=org.slf4j.LoggerFactory.getLogger("quantumchamber");
+        if (rowRemoved) logger.info("HOME 選定之後的清 lease 寫出確認之後，列已由回程終局 owner checked 結案移除；補做走廊的原生釋放（票、slot、保護範圍）：session={} state={}",
+                space.id,state);
+        else logger.info("HOME 選定之後的保留式清理完成：全員已返回 B、走廊清除、原生 checkpoint 與清 lease 都已 checked，選擇保留：session={} state={}",space.id,state);
     }
 
     private boolean cohortHasBuff(List<SessionRecoveryRecord.Participant> people) {
@@ -1985,6 +2011,10 @@ public final class CorridorPageManager {
         boolean queued,frontOpen,rearOpen,failed,releasing,provisionalCancelled,measuredRecoveryRequested,measuredReleasing;
         /** M7 T5-4：選定 HOME（MEASURED／COLLAPSING）的保留式清理已開始（{@link #releaseHomeMeasured}）。 */
         boolean homeMeasuredReleasing;
+        /** T5-4 fix1（品質 I-2）：保留式清理已送出、寫出未確認（ROLL_FORWARD_PENDING）的清 lease 列；沒有時為 null。 */
+        HomeSessionRecord homeMeasuredClearSent;
+        /** T5-4 fix1（品質 I-2）：HOME 走廊故障上一次記 ERROR 的原因（{@link FailureText#dedupeKey}）；同一 space、同一原因只記一次。 */
+        String homeFailureLogged;
         int operations,batchTick,prepareTick; long instanceEpoch,prepareNanos;
         SessionRecoveryRecord finalizing,authority;
         Map<DoorKey,MappingRef> selectable=Map.of();
