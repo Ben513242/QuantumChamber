@@ -194,8 +194,9 @@ jobs:
             run/m6-universe-*/world/dimensions/quantumchamber/universe/**
           if-no-files-found: error
 
-  # M7 T4 B2b-3：Windows 原生 M7 回程終局跨 JVM 鏈（47 列，T4B 起）分四片平行執行：三個門態各 13 列，restart 與 receipt 兩族（4＋4 列）同一片依序執行。
-  # 分片的單份驗證只算分片 PASS（M7_HOME_VERIFIED_SHARD），T4 完整 PASS 只由下方彙總 job 的 -VerifyAggregate 給出。
+  # M7 T4 B2b-3：Windows 原生 M7 回程終局跨 JVM 鏈（57 列；T4B 起 47 列，T5-5 起多 corridor 族 10 列）分五片平行執行：三個門態各 13 列，restart 與 receipt 兩族（4＋4 列）同一片依序執行，
+  # corridor 族（10 列）獨立一片。分片的單份驗證只算分片 PASS（M7_HOME_VERIFIED_SHARD），T4 完整 PASS 只由下方彙總 job 的 -VerifyAggregate 給出。
+  # 各片共用下方同一組上限（job 90 分鐘、執行 step 60 分鐘），corridor 片沒有另設。
   m7-home-native:
     strategy:
       fail-fast: false
@@ -213,6 +214,9 @@ jobs:
           - shard: restart-receipt
             selector: Family
             values: restart,receipt
+          - shard: corridor
+            selector: Family
+            values: corridor
     runs-on: windows-latest
     timeout-minutes: 90
     env:
@@ -288,7 +292,7 @@ jobs:
             run/m7-home-*/world/data/**
           if-no-files-found: error
 
-  # 彙總：下載四片的 summary 與原件（同一個 Windows workspace 路徑，summary 內的絕對路徑才對得上），-VerifyAggregate 必須是 doorState 組合的 T4 完整 PASS。
+  # 彙總：下載五片的 summary 與原件（同一個 Windows workspace 路徑，summary 內的絕對路徑才對得上），-VerifyAggregate 必須是 doorState 組合的 T4 完整 PASS。
   m7-home-native-aggregate:
     needs: m7-home-native
     runs-on: windows-latest
@@ -306,7 +310,7 @@ jobs:
         timeout-minutes: 15
         shell: pwsh
         run: |
-          # 四片的清單恰為 ordinary、passable、restart-receipt、sealed，合計 5 份 summary；summary 引用的原件都必須已下載到同一路徑。
+          # 五片的清單恰為 corridor、ordinary、passable、restart-receipt、sealed，合計 6 份 summary；summary 引用的原件都必須已下載到同一路徑。
           # T4 B2b-4（B2b3-M3）：先比對各片記下的 workspace 絕對路徑與 runner image（M7_HOME_CI_AGGREGATE_WORKSPACE／IMAGE），再做原本的檢查；
           # 任何錯誤都先把完整內容附加到上傳的 log，再原樣丟出（判定不變）。
           $log = 'build/m7-home-native-aggregate.log'
@@ -316,7 +320,7 @@ jobs:
             $here = [ordered]@{ workspace = [IO.Path]::GetFullPath($env:GITHUB_WORKSPACE); imageOS = "$env:ImageOS"; imageVersion = "$env:ImageVersion" }
             "M7_HOME_CI_AGGREGATE_RUNNER workspace=$($here.workspace) imageOS=$($here.imageOS) imageVersion=$($here.imageVersion)" | Tee-Object -FilePath $log -Append
             $lists = @(Get-ChildItem -LiteralPath build/m7-home-native -File -Filter '*.txt' | Sort-Object Name)
-            if (($lists.Name -join ',') -cne 'ordinary.txt,passable.txt,restart-receipt.txt,sealed.txt') { throw "M7_HOME_CI_AGGREGATE_LISTS：$($lists.Name -join ',')" }
+            if (($lists.Name -join ',') -cne 'corridor.txt,ordinary.txt,passable.txt,restart-receipt.txt,sealed.txt') { throw "M7_HOME_CI_AGGREGATE_LISTS：$($lists.Name -join ',')" }
             foreach ($list in $lists) {
               $record = Join-Path $list.DirectoryName ($list.BaseName + '.runner.json')
               if (-not (Test-Path -LiteralPath $record -PathType Leaf)) { throw "M7_HOME_CI_AGGREGATE_RUNNER：缺 $($list.BaseName) 的 runner 記錄：$record" }
@@ -329,7 +333,7 @@ jobs:
               if ($shard.imageVersion -cne $here.imageVersion) { "M7_HOME_CI_AGGREGATE_IMAGE_VERSION_DIFFERS $where（同一個 image 的版本不同，不影響路徑，只記錄）" | Tee-Object -FilePath $log -Append }
             }
             $summaries = @($lists | ForEach-Object { Get-Content -LiteralPath $_.FullName } | Where-Object { $_ })
-            if ($summaries.Count -ne 5) { throw "M7_HOME_CI_AGGREGATE_INPUT：$($summaries.Count)" }
+            if ($summaries.Count -ne 6) { throw "M7_HOME_CI_AGGREGATE_INPUT：$($summaries.Count)" }
             foreach ($path in $summaries) {
               if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "M7_HOME_CI_AGGREGATE_MISSING：$path" }
               foreach ($row in @((Get-Content -LiteralPath $path -Raw | ConvertFrom-Json).rows)) {
@@ -337,7 +341,7 @@ jobs:
               }
             }
             & ./scripts/verification/m7-home-probe.ps1 -VerifyAggregate ($summaries -join ',') -ExpectedHead $env:GITHUB_SHA -SelfTest | Tee-Object -FilePath $log -Append | Tee-Object -Variable aggregateOutput
-            $complete = @($aggregateOutput | Where-Object { "$_" -cmatch ('^M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=47 phases=94 .* HEAD=' + [regex]::Escape($env:GITHUB_SHA) + '（') })
+            $complete = @($aggregateOutput | Where-Object { "$_" -cmatch ('^M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=6 rows=57 phases=114 .* HEAD=' + [regex]::Escape($env:GITHUB_SHA) + '（') })
             if ($complete.Count -ne 1) { throw 'M7_HOME_CI_AGGREGATE_NOT_COMPLETE' }
           } catch {
             @("M7_HOME_CI_AGGREGATE_FAIL $($_.Exception.Message)", '--- error record ---', ($_ | Out-String).TrimEnd(), '--- exception ---', $_.Exception.ToString(), '--- script stack ---', "$($_.ScriptStackTrace)") | Add-Content -LiteralPath $log -Encoding utf8

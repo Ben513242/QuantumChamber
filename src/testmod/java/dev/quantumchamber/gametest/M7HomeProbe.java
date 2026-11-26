@@ -15,6 +15,8 @@ public final class M7HomeProbe implements ModInitializer {
     interface Phase {
         void start();
         void reached(String event, UUID session, Object detail);
+        /** T5-5 corridor 族的獨立事件通道（{@code mixin.M7HomeCorridorWindowMixin}）；只有 corridor runner 覆寫，其他族不錄。 */
+        default void corridor(String event, UUID session, Object detail) {}
     }
 
     private static volatile Phase active;
@@ -22,7 +24,8 @@ public final class M7HomeProbe implements ModInitializer {
     @Override public void onInitialize() {
         var config = M7HomeClosurePhases.Configuration.read();
         if (config == null) return;
-        Phase run = M7HomeChainPhases.NAMES.contains(config.row()) ? new M7HomeChainPhases.Run(config) : new M7HomeClosurePhases.Run(config);
+        Phase run = M7HomeChainPhases.NAMES.contains(config.row()) ? new M7HomeChainPhases.Run(config)
+                : M7HomeCorridorPhases.NAMES.contains(config.row()) ? new M7HomeCorridorPhases.Run(config) : new M7HomeClosurePhases.Run(config);
         active = run;
         run.start();
     }
@@ -34,5 +37,11 @@ public final class M7HomeProbe implements ModInitializer {
     public static void reached(String event, UUID session, Object detail) {
         var run = active;
         if (run != null) run.reached(event, session, detail);
+    }
+
+    /** T5-5：corridor 族的 cut 點（journal 讀回之前、HOME checkpoint 的 HEAD／RETURN）。probe 沒有啟用，或不是 corridor runner 時不做任何事。 */
+    public static void corridorReached(String event, UUID session, Object detail) {
+        var run = active;
+        if (run != null) run.corridor(event, session, detail);
     }
 }

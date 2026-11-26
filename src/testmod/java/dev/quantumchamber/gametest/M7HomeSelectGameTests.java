@@ -973,6 +973,183 @@ public final class M7HomeSelectGameTests implements FabricGameTest {
         });
     }
 
+    // ---- T5-5：覆蓋缺口（設計稿第 9 節；在 42877e8 的 production 上就應通過，不是 RED） ----
+
+    /**
+     * plan :706 前半（T5-5 設計稿第 9 節第 1 案、設計審查 M-6、第二版複審 N-5）：{@code admitHome} 走 QUARANTINED 時，ARMING 從未落盤、玩家零移動、沒有 B 票；
+     * 未確認的嘗試收斂之前，暫占與走廊 reservation 一直持鎖，收斂之後才解除；WARN 帶 {@code QUARANTINED}。
+     * <ul>
+     * <li>注入：flush 探針（{@code M5GameTestSupport.installFlushProbe}）在第一次「current 帶本 SID 的 ARMING、尚未隔離」的寫出（{@code admitHome} 的 checked flush）HEAD
+     *     呼叫 {@code journal.quarantine(sid)}。這次寫出以 flushed 取代隔離列、flushed 沒有就不寫（{@code SessionRecoveryState.writable}），讀回不等於 next，
+     *     {@code finishHome} 因此走隔離分支（{@code SessionRecoveryState.java:888}）回 QUARANTINED。</li>
+     * <li>觀察點：同一個 tick 內依序是 QUARANTINED（{@code continueHomeStarts}）、recovery 的收斂寫出（{@code convergeUnchecked}）、{@code finishHomeAbandoned} 解除，
+     *     tick 之間看不到鎖（M-6），所以在收斂寫出的 HEAD 見證暫占（{@code globalChamberBusy}）與 reservation 仍在。收斂寫出以狀態辨識（N-5）：第一次觸發之後，flush HEAD 時
+     *     本 SID 已不在隔離、也不在 current（{@code convergeQuarantined} 已以移除取代並解除隔離），不以「下一次寫出」的順序認定。收斂那個 tick 的 END tick（testmod 觀察者，
+     *     排在正式 owner 之後）兩者都已解除。</li>
+     * <li>與 plan :706 字面的差異：plan 寫的是「admitHome CAS 不符」；本案以預先隔離讓 {@code finishHome} 走到同一個 quarantine 分支，前提不同、終局相同。</li>
+     * </ul>
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_select_arming_quarantined_windows", tickLimit = 2000)
+    public void home_arming_quarantined_keeps_lock_until_converged(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new M7HomeCorridorGameTests.HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            var label = "home_arming_quarantined_keeps_lock_until_converged";
+            var capture = new LogCapture("quantumchamber");
+            hooks.add(capture::close);
+            var player = e.player(0);
+            var pose = player.getPos();
+            e.requireStarted();
+            var sid = M7HomeCorridorGameTests.provisionalSid(e.chamber);
+            c.assertTrue(sid != null && HomeTicketFaultFixture.count(e.a, sid) > 0, "前提：startHome 受理後有暫占與 A 的 START_CHECK 票");
+            var w = watchQuarantinedArming(e, sid);
+            M7HomeClosureGameTests.until(c, label + "/converged", 300,
+                    () -> w.endTick >= 0 || w.error != null || (w.quarantinedTick >= 0 && !w.quarantineAccepted), e.step(() -> {
+                var warned = capture.matching(Level.WARN, "ARMING", "（QUARANTINED）", sid.toString());
+                c.assertTrue(w.error == null && w.quarantinedTick >= 0 && w.quarantineAccepted && w.convergedTick >= w.quarantinedTick && warned.size() == 1,
+                        "QUARANTINED_PATH_NOT_TAKEN：admitHome 必須走 QUARANTINED（WARN 帶 QUARANTINED 恰一則），之後由 recovery 收斂：" + w + " warned=" + warned.size());
+                c.assertTrue(w.busyAtConvergence && w.reservationAtConvergence,
+                        "QUARANTINED_LOCK_NOT_HELD_AT_CONVERGENCE：收斂寫出的 HEAD 暫占與走廊 reservation 都必須仍在（收斂之前一直持鎖）：" + w);
+                c.assertTrue(!w.onDisk && e.homeRow() == null && !journalMentions(e.journal, sid),
+                        "QUARANTINED_ARMING_ON_DISK：被隔離的 ARMING 不得落盤（flushed 與 pending 從未出現本 SID），收斂之後 journal 不留本 SID：" + w);
+                c.assertTrue(e.inB(player) && pose.equals(player.getPos()) && noEntryTickets(e, sid),
+                        "QUARANTINED_ARMING_ON_DISK：沒有 checked ARMING 就不得有入場副作用（玩家零移動、沒有 B 票）：pos=" + player.getPos() + " " + ticketState(e, sid));
+                c.assertTrue(w.releasedAtEnd && w.endTick == w.convergedTick && !gate().globalChamberBusy(e.server, e.chamber) && !e.pages.hasReservation(sid)
+                                && M7HomeCorridorGameTests.provisionalSid(e.chamber) == null && HomeTicketFaultFixture.count(e.a, sid) == 0,
+                        "QUARANTINED_NOT_RELEASED：收斂那個 tick 結束時暫占、走廊 reservation 與 START_CHECK 票都必須已解除：" + w + " " + ticketState(e, sid));
+                e.finish();
+            }), e.step(() -> {
+                throw new GameTestException((w.quarantinedTick < 0 ? "QUARANTINED_PATH_NOT_TAKEN" : "QUARANTINED_NOT_RELEASED")
+                        + "：300 tick 內沒有走完 QUARANTINED、收斂與解除：" + w + " busy=" + gate().globalChamberBusy(e.server, e.chamber)
+                        + " reservation=" + e.pages.hasReservation(sid) + " provisional=" + M7HomeCorridorGameTests.provisionalSid(e.chamber));
+            }));
+        });
+    }
+
+    /**
+     * plan :706 後半（T5-5 設計稿第 9 節第 2 案）：{@code admitHome} 在寫出之前 REJECTED。注入：startHome 受理之後、A 的 START_CHECK FULL 之前（同一個 callback；FULL 最早在
+     * 本 tick 的 END tick），在收據目錄放一個同 SID 的檔（{@link #occupyReceipt}），{@code HomeReceiptStore.requireAdmissible} 讀它時丟出 IOException，{@code admitHome} 在
+     * {@code stageHome} 之前回 REJECTED（{@code SessionRecoveryState.java:774}、:776）。這時走廊 reservation 已經取得（{@code reserveHomeInitial} 在 {@code admitHome} 之前），
+     * 所以走的是 {@code homeAbandons} 的「沒有任何殘留、立即解除」：journal 的三份與隔離從未出現本 SID、玩家零移動、沒有 B 票，WARN 之後 1 tick 內解除暫占、reservation 與
+     * START_CHECK 票，不再 busy。觀察點是 testmod 的 END tick 觀察者（排在正式 owner 之後）與 flush 探針。
+     * <p>與設計稿第 9 節的差異：放的是非 NBT 的位元組，{@code lookup} 讀檔時就丟出 IOException（gzip 標頭錯），不是「旅程識別碼已有歷史」那一行；兩者都在
+     * {@code requireAdmissible} 內、走同一個 IOException 分支回 REJECTED（WARN 的 cause 是 {@code UncheckedIOException}，與前置條件不符的 {@code IllegalStateException} 區分）。
+     * 合法的結案收據要用 package-private 的編碼器才寫得出來，testmod 不偽造。hooks 收尾刪除這個檔。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_select_arming_rejected_windows", tickLimit = 2000)
+    public void home_arming_rejected_before_write_releases_at_once(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new M7HomeCorridorGameTests.HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            var label = "home_arming_rejected_before_write_releases_at_once";
+            var capture = new LogCapture("quantumchamber");
+            hooks.add(capture::close);
+            var player = e.player(0);
+            var pose = player.getPos();
+            e.requireStarted();
+            var sid = M7HomeCorridorGameTests.provisionalSid(e.chamber);
+            c.assertTrue(sid != null && HomeTicketFaultFixture.count(e.a, sid) > 0 && gate().globalChamberBusy(e.server, e.chamber),
+                    "前提：startHome 受理後有暫占與 A 的 START_CHECK 票");
+            occupyReceipt(e, sid);
+            var w = watchRejectedArming(e, sid, capture);
+            M7HomeClosureGameTests.until(c, label + "/released", 300, () -> w.releasedTick >= 0 || w.error != null, e.step(() -> {
+                var warned = capture.matching(Level.WARN, "ARMING", "（REJECTED）", sid.toString());
+                c.assertTrue(w.error == null && w.warnTick >= 0 && warned.size() == 1 && warned.getFirst().thrown() instanceof java.io.UncheckedIOException,
+                        "REJECTED_BEFORE_WRITE_NOT_TAKEN：admitHome 必須在寫出之前因收據 admission 的 IOException 回 REJECTED（WARN 恰一則、cause 是 UncheckedIOException）：" + w
+                                + " warned=" + warned.stream().map(entry -> String.valueOf(entry.thrown())).toList());
+                c.assertTrue(!w.inJournal && !journalMentions(e.journal, sid) && e.homeRow() == null,
+                        "REJECTED_ARMING_RESIDUE：寫出之前被拒的 ARMING 不得出現在 journal（current、flushed、pending、隔離）：" + w);
+                c.assertTrue(e.inB(player) && pose.equals(player.getPos()) && noEntryTickets(e, sid),
+                        "REJECTED_ARMING_RESIDUE：寫出之前被拒不得有入場副作用（玩家零移動、沒有 B 票）：pos=" + player.getPos() + " " + ticketState(e, sid));
+                c.assertTrue(w.releasedTick - w.warnTick <= 1 && !gate().globalChamberBusy(e.server, e.chamber) && !e.pages.hasReservation(sid)
+                                && M7HomeCorridorGameTests.provisionalSid(e.chamber) == null && HomeTicketFaultFixture.count(e.a, sid) == 0,
+                        "REJECTED_LOCK_HELD：寫出之前被拒時 1 tick 內解除暫占、走廊 reservation 與 START_CHECK 票，不再 busy：" + w + " " + ticketState(e, sid));
+                e.finish();
+            }), e.step(() -> {
+                throw new GameTestException((w.warnTick < 0 ? "REJECTED_BEFORE_WRITE_NOT_TAKEN" : "REJECTED_LOCK_HELD") + "：300 tick 內沒有走完寫出前 REJECTED 與解除：" + w
+                        + " busy=" + gate().globalChamberBusy(e.server, e.chamber) + " reservation=" + e.pages.hasReservation(sid)
+                        + " provisional=" + M7HomeCorridorGameTests.provisionalSid(e.chamber) + " " + ticketState(e, sid));
+            }));
+        });
+    }
+
+    /**
+     * T5-5 設計稿第 9 節第 3 案（F-2）：選定之後、返還之前在走廊內死亡。checked MEASURED＋HOME（尚未有人返還）的同一個 callback 以原版死亡流程讓選門者死亡；返還引擎跳過
+     * 死亡中的玩家（{@code SessionRecoveryManager.recoverHome} 的 dead-skip，:518），死亡期間不記 Returned、不清 lease、選擇保留。之後照真客戶端重生
+     * （{@code onClientStatus(PERFORM_RESPAWN)}，比照 {@link #corridor_death_returns_to_exact_b_with_returned}），返還引擎把新的玩家實體送回 exact B、記 Returned（在重生之後
+     * 才變真），清 lease 成 DORMANT，選擇不變；收尾以原艙停止 latch 交回程終局 owner 結案（{@link #closeOut}）。與未選定的死亡案共用同一段 dead-skip。
+     */
+    @GameTest(templateName = "quantumchamber:m1_empty", batchId = "m7_home_select_selected_death_windows", tickLimit = 2400)
+    public void selected_corridor_death_returns_to_exact_b(TestContext c) {
+        var hooks = new M2CorridorGameTests.TestHooks();
+        var e = new M7HomeCorridorGameTests.HomeEntry(c, 1, hooks, true);
+        e.guard(() -> {
+            e.requireStarted();
+            var label = "selected_corridor_death_returns_to_exact_b";
+            e.awaitSuperposition(label, row -> {
+                var sid = row.sessionUuid();
+                var player = e.player(0);
+                var uuid = player.getUuid();
+                e.walkHome(sid, player, 11.5);
+                requireAccepted(e, sid, click(e, player, doorCell(e, sid)));
+                M7HomeClosureGameTests.until(c, label + "/selected", 300, () -> selected(e, sid), e.step(() -> {
+                    var measured = e.homeRow();
+                    var selection = measured.home().selection();
+                    c.assertTrue(measured.state() == SessionState.MEASURED && selection instanceof Selected s && s.selectedBy().equals(uuid) && !measured.spaceLeases().isEmpty()
+                                    && measured.participants().stream().noneMatch(SessionRecoveryRecord.Participant::returned) && player.getServerWorld() == e.corridor(),
+                            "前提：checked MEASURED＋HOME（他是選門者）、租約仍在、尚未有人返還、他仍在走廊：" + measured);
+                    // 原生 damage 在傳送確認之前（假連線不回確認）會被 invulnerable 擋下，所以直接以原版的死亡流程（health 0＋onDeath），比照未選定的死亡案。
+                    player.setHealth(0.0f);
+                    player.onDeath(player.getDamageSources().genericKill());
+                    c.assertTrue(!player.isAlive(), "前提：選門者在選定之後、返還之前於走廊內死亡");
+                    int[] respawnTick = {-1};
+                    var returned = watchReturned(e, sid, uuid, respawnTick);
+                    e.hold(5, () -> {
+                        var held = e.homeRow();
+                        if (held == null || !selection.equals(held.home().selection()))
+                            throw new GameTestException("SELECTED_DEATH_SELECTION_LOST：死亡期間選擇必須保留：row=" + held);
+                        if (held.spaceLeases().isEmpty() || held.participants().stream().anyMatch(person -> person.playerUuid().equals(uuid) && person.returned()))
+                            throw new GameTestException("SELECTED_DEATH_NOT_RETURNED：返還引擎必須跳過死亡中的玩家（死亡期間不記 Returned、不清 lease）：row=" + held);
+                    }, () -> {
+                        // 真客戶端的重生（比照未選定的死亡案）：重生封包讓連線改指向新的玩家實體；之後每 tick 有原生 teleport 封包就 ACK。
+                        var connection = e.f.players.get(0);
+                        player.networkHandler.onClientStatus(new net.minecraft.network.packet.c2s.play.ClientStatusC2SPacket(
+                                net.minecraft.network.packet.c2s.play.ClientStatusC2SPacket.Mode.PERFORM_RESPAWN));
+                        var respawned = e.server.getPlayerManager().getPlayer(uuid);
+                        respawnTick[0] = e.server.getTicks();
+                        c.assertTrue(respawned != null && respawned != player && respawned.isAlive() && respawned.networkHandler.player == respawned,
+                                "前提：真重生之後是新的、活著的玩家實體，連線指向它");
+                        hooks.add(() -> { if (e.server.getPlayerManager().getPlayer(uuid) == respawned) e.server.getPlayerManager().remove(respawned); });
+                        ack(connection);
+                        M7HomeClosureGameTests.until(c, label + "/returned", 600, () -> {
+                            ack(connection);
+                            var current = e.homeRow();
+                            return current != null && current.participants().stream().allMatch(SessionRecoveryRecord.Participant::returned);
+                        }, e.step(() -> awaitDormant(e, sid, label, () -> {
+                            var now = e.server.getPlayerManager().getPlayer(uuid);
+                            c.assertTrue(now == respawned && now.isAlive() && e.inB(now), "SELECTED_DEATH_NOT_RETURNED：選定之後死亡、重生的玩家最終回到 exact B：world="
+                                    + (now == null ? null : now.getServerWorld().getRegistryKey().getValue()) + " pos=" + (now == null ? null : now.getPos()));
+                            c.assertTrue(returned.last != null && returned.last.participants().stream().anyMatch(person -> person.playerUuid().equals(uuid) && person.returned())
+                                            && returned.earlyReturn < 0 && returned.firstReturned >= respawnTick[0] && respawnTick[0] >= 0,
+                                    "SELECTED_DEATH_NOT_RETURNED：死亡者的 Returned 必須記在列上，而且在重生之後才變真：last=" + returned.last
+                                            + " firstReturned=" + returned.firstReturned + " early=" + returned.earlyReturn + " respawn=" + respawnTick[0]);
+                            var dormant = e.homeRow();
+                            c.assertTrue(dormant.state() == SessionState.MEASURED && selection.equals(dormant.home().selection()),
+                                    "SELECTED_DEATH_SELECTION_LOST：死亡、重生與返還之後選擇保留、列仍是 MEASURED DORMANT：" + dormant.home().selection());
+                            e.assertNoSourceTicket(sid);
+                            closeOut(e, sid, label, e::finish);
+                        })), e.step(() -> {
+                            var now = e.server.getPlayerManager().getPlayer(uuid);
+                            throw new GameTestException("SELECTED_DEATH_NOT_RETURNED：選定之後死亡、重生之後沒有回到 exact B 記 Returned：row=" + e.homeRow()
+                                    + " world=" + (now == null ? null : now.getServerWorld().getRegistryKey().getValue()) + " pos=" + (now == null ? null : now.getPos())
+                                    + " teleporting=" + (now != null && now.isInTeleportationState()));
+                        }));
+                    });
+                }), e.step(() -> { throw new GameTestException("HOME_NOT_SELECTED：row=" + e.homeRow()); }));
+            });
+        });
+    }
+
     // ---- 支援 ----
 
     /**
@@ -1193,6 +1370,139 @@ public final class M7HomeSelectGameTests implements FabricGameTest {
             return true;
         });
         return window;
+    }
+
+    /**
+     * T5-5 第 1 案（{@code home_arming_quarantined_keeps_lock_until_converged}）的觀察；flush 探針與 END tick 觀察者共用，只在 server thread。
+     * {@code quarantinedTick}／{@code quarantineAccepted}：第一次觸發（admitHome 的寫出 HEAD 隔離本 SID）的 tick 與 {@code quarantine} 的回傳；{@code convergedTick} 與兩個
+     * {@code AtConvergence}：以狀態辨識的收斂寫出（N-5）的 tick 與那一刻的鎖；{@code endTick}／{@code releasedAtEnd}：收斂之後第一個 END tick 與那時是否已解除；
+     * {@code onDisk}：任一觀察點 flushed 或 pending 帶本 SID；{@code error}：觀察本身丟出的例外（不丟進 production）；hooks 釋放時 {@code closed} 設為真。
+     */
+    private static final class QuarantineWatch {
+        int quarantinedTick = -1;
+        boolean quarantineAccepted;
+        int convergedTick = -1;
+        boolean busyAtConvergence;
+        boolean reservationAtConvergence;
+        int endTick = -1;
+        boolean releasedAtEnd;
+        boolean onDisk;
+        String error;
+        boolean closed;
+
+        @Override public String toString() {
+            return "quarantinedTick=" + quarantinedTick + " accepted=" + quarantineAccepted + " convergedTick=" + convergedTick + " busyAtConvergence=" + busyAtConvergence
+                    + " reservationAtConvergence=" + reservationAtConvergence + " endTick=" + endTick + " releasedAtEnd=" + releasedAtEnd + " onDisk=" + onDisk + " error=" + error;
+        }
+    }
+
+    private static QuarantineWatch watchQuarantinedArming(M7HomeCorridorGameTests.HomeEntry e, UUID sid) {
+        var w = new QuarantineWatch();
+        e.hooks.add(() -> w.closed = true);
+        // flush 探針在 production 的寫出裡執行，不得丟出（丟出會讓那次寫出受控失敗）：例外只記在 error。
+        M5GameTestSupport.installFlushProbe(e.c, state -> {
+            if (w.closed) return;
+            try {
+                if (state.allFlushedSessions().containsKey(sid) || state.pendingSessions().containsKey(sid)) w.onDisk = true;
+                if (w.quarantinedTick < 0) {
+                    if (state.allSessions().get(sid) instanceof HomeSessionRecord row && row.state() == SessionState.ARMING && !state.quarantinedSessions().contains(sid)) {
+                        w.quarantinedTick = e.server.getTicks();
+                        w.quarantineAccepted = state.quarantine(sid);
+                    }
+                    return;
+                }
+                // N-5：收斂寫出以狀態辨識——第一次觸發之後，本 SID 已不在隔離、也不在 current。
+                if (w.convergedTick < 0 && !state.quarantinedSessions().contains(sid) && !state.allSessions().containsKey(sid)) {
+                    w.convergedTick = e.server.getTicks();
+                    w.busyAtConvergence = gate().globalChamberBusy(e.server, e.chamber);
+                    w.reservationAtConvergence = e.pages.hasReservation(sid);
+                }
+            } catch (RuntimeException failure) { if (w.error == null) w.error = String.valueOf(failure); }
+        }, e.hooks);
+        EndTick.watch(e.server, () -> {
+            if (w.closed) return true;
+            try {
+                if (e.journal.allFlushedSessions().containsKey(sid) || e.journal.pendingSessions().containsKey(sid)) w.onDisk = true;
+                if (w.convergedTick < 0) return false;
+                w.endTick = e.server.getTicks();
+                w.releasedAtEnd = !gate().globalChamberBusy(e.server, e.chamber) && !e.pages.hasReservation(sid) && M7HomeCorridorGameTests.provisionalSid(e.chamber) == null;
+                return true;
+            } catch (RuntimeException failure) { if (w.error == null) w.error = String.valueOf(failure); return true; }
+        });
+        return w;
+    }
+
+    /**
+     * T5-5 第 2 案（{@code home_arming_rejected_before_write_releases_at_once}）的觀察；只在 server thread。{@code warnTick}：第一次看到 admitHome REJECTED 的 WARN 的 END tick；
+     * {@code releasedTick}：之後第一個暫占、reservation 都已解除、不再 busy 的 END tick；{@code inJournal}：任一觀察點（END tick 與 flush HEAD）journal 帶本 SID。
+     */
+    private static final class RejectWatch {
+        int warnTick = -1;
+        int releasedTick = -1;
+        boolean inJournal;
+        String error;
+        boolean closed;
+
+        @Override public String toString() {
+            return "warnTick=" + warnTick + " releasedTick=" + releasedTick + " inJournal=" + inJournal + " error=" + error;
+        }
+    }
+
+    private static RejectWatch watchRejectedArming(M7HomeCorridorGameTests.HomeEntry e, UUID sid, LogCapture capture) {
+        var w = new RejectWatch();
+        e.hooks.add(() -> w.closed = true);
+        M5GameTestSupport.installFlushProbe(e.c, state -> {
+            if (w.closed) return;
+            try { if (journalMentions(state, sid)) w.inJournal = true; }
+            catch (RuntimeException failure) { if (w.error == null) w.error = String.valueOf(failure); }
+        }, e.hooks);
+        EndTick.watch(e.server, () -> {
+            if (w.closed) return true;
+            try {
+                if (journalMentions(e.journal, sid)) w.inJournal = true;
+                if (w.warnTick < 0 && !capture.matching(Level.WARN, "ARMING", "（REJECTED）", sid.toString()).isEmpty()) w.warnTick = e.server.getTicks();
+                if (w.warnTick < 0 || gate().globalChamberBusy(e.server, e.chamber) || e.pages.hasReservation(sid)
+                        || M7HomeCorridorGameTests.provisionalSid(e.chamber) != null) return false;
+                w.releasedTick = e.server.getTicks();
+                return true;
+            } catch (RuntimeException failure) { if (w.error == null) w.error = String.valueOf(failure); return true; }
+        });
+        return w;
+    }
+
+    /**
+     * 第 2 案的注入：在收據目錄放一個同 SID 的檔（{@code HomeReceiptStore.receiptPath} 的格式：{@code <save>/data/quantumchamber_home_receipts/<SID>.dat}）。內容不是 NBT，
+     * {@code requireAdmissible} 的 {@code lookup} 讀它時丟出 IOException。先登記 hooks 刪除再寫，失敗路徑也會刪。
+     */
+    private static void occupyReceipt(M7HomeCorridorGameTests.HomeEntry e, UUID sid) {
+        var receipt = e.server.getSavePath(WorldSavePath.ROOT).resolve("data").resolve("quantumchamber_home_receipts").resolve(sid + ".dat");
+        e.hooks.add(() -> {
+            try { java.nio.file.Files.deleteIfExists(receipt); }
+            catch (java.io.IOException failure) { LOG.warn("M7_T55_REJECTED_RECEIPT 同 SID 的收據檔刪除失敗：{}", receipt, failure); }
+        });
+        try {
+            java.nio.file.Files.createDirectories(receipt.getParent());
+            java.nio.file.Files.write(receipt, "M7_T55_REJECTED_BEFORE_WRITE".getBytes(java.nio.charset.StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.CREATE_NEW);
+        } catch (java.io.IOException failure) { throw new GameTestException("REJECTED_FIXTURE：收據目錄放不進同 SID 的檔：" + receipt + "：" + failure); }
+        e.c.assertTrue(java.nio.file.Files.isRegularFile(receipt), "前提：同 SID 的收據檔已放好：" + receipt);
+    }
+
+    /** journal 的 current、flushed、pending 或隔離是否帶這個 SID。 */
+    private static boolean journalMentions(SessionRecoveryState journal, UUID sid) {
+        return journal.allSessions().containsKey(sid) || journal.allFlushedSessions().containsKey(sid) || journal.pendingSessions().containsKey(sid)
+                || journal.quarantinedSessions().contains(sid);
+    }
+
+    /** 這個 SID 在 B 沒有 Entry=B 來源票與 B 收尾票，A 也沒有來源票（只讀原生 ticket 表）。 */
+    private static boolean noEntryTickets(M7HomeCorridorGameTests.HomeEntry e, UUID sid) {
+        return M5GameTestSupport.tickets(e.b, "quantumchamber_source", sid).isEmpty() && M5GameTestSupport.tickets(e.b, "quantumchamber_home_entry", sid).isEmpty()
+                && M5GameTestSupport.tickets(e.a, "quantumchamber_source", sid).isEmpty();
+    }
+
+    /** 票的診斷（只放進失敗訊息）：B 的來源票與收尾票、A 的來源票與 START_CHECK 票數。 */
+    private static String ticketState(M7HomeCorridorGameTests.HomeEntry e, UUID sid) {
+        return "sourceB=" + M5GameTestSupport.tickets(e.b, "quantumchamber_source", sid) + " entryB=" + M5GameTestSupport.tickets(e.b, "quantumchamber_home_entry", sid)
+                + " sourceA=" + M5GameTestSupport.tickets(e.a, "quantumchamber_source", sid) + " startCheck=" + HomeTicketFaultFixture.count(e.a, sid);
     }
 
     /** checkpoint 當下的清 lease 狀態（給探針的 observe）：current 仍有租約、等於 flushed 是 {@code before-clear}。 */

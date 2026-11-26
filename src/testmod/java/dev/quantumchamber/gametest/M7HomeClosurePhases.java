@@ -133,6 +133,8 @@ final class M7HomeClosurePhases {
     static List<String> rows() {
         var rows = new ArrayList<>(closeRows());
         rows.addAll(M7HomeChainPhases.NAMES);
+        // T5-5：開服接手與走廊恢復的 corridor 族（M7HomeCorridorPhases）。
+        rows.addAll(M7HomeCorridorPhases.NAMES);
         return List.copyOf(rows);
     }
 

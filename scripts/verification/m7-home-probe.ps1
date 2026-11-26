@@ -1,22 +1,23 @@
 # M7 T4 Phase B1／B2a／P1：Windows 原生跨 JVM 鏈。close 矩陣 close-{ordinary|sealed|passable}-{cut}（39 列，B1）與 B2a 的其餘鏈（restart-*、receipt-*，5 列），
 # 以及 T4 P1 的 receipt-mismatch-stop（收據不符時正常停服；halt 點在停服完成之後）、T4 P2 的 receipt-write-fail-stop（journal 正式寫出故障期間正常停服）
-# 與 T4B 的 restart-close-unloaded-b（reopen 時 B 無人無票，由正式 B 收尾票收尾）。
+# 與 T4B 的 restart-close-unloaded-b（reopen 時 B 無人無票，由正式 B 收尾票收尾）；T5-5 起另有 corridor 族 10 列（corridor-*：開服接手與走廊恢復，plan :327，
+# M7HomeCorridorPhases；crash 在入場、選門、返還與清理的各切點 halt，reopen 由正式 attach／返還引擎從磁碟續做），合計 57 列。
 # 每列一個全新 owned root（永久保留），兩個 phase 各一個獨立 JVM：crash 在預定點 halt(77)，reopen 以新 JVM 重開、正常停服 exit 0。沿 probe-common.ps1 的 owned phase 機制
 # （PID＋啟動時間身分、逾時停止、log 收集）與 m6-universe-probe.ps1 的 readonly summary＋VerifySummary＋SelfTest 做法。
 # 參數：
 #   -Only <列名,...>     只跑指定列（manifest 順序）；-DoorState ordinary|sealed|passable 只跑 close 矩陣該門態的 13 列（B2 CI 分片）；
-#   -Family close|restart|receipt 只跑該族的列（close＝39 列）。三個 -DoorState 分片與 restart、receipt 兩族的聯集恰為全部列、互不重疊。
-#   -VerifySummary <檔>  唯讀重驗已存 summary（逐列、逐 phase、逐退出碼與 receipt hash／內容）；-SelfTest 另跑負控（不改原件）。只有選擇 all、恰為 windows.native 全部 47 列（T4B 起）、
+#   -Family close|restart|receipt|corridor 只跑該族的列（close＝39 列、corridor＝10 列）。三個 -DoorState 分片與 restart、receipt、corridor 三族的聯集恰為全部列、互不重疊。
+#   -VerifySummary <檔>  唯讀重驗已存 summary（逐列、逐 phase、逐退出碼與 receipt hash／內容）；-SelfTest 另跑負控（不改原件）。只有選擇 all、恰為 windows.native 全部 57 列（T5-5 起）、
 #                        treeClean=true 的那一份才輸出 M7_HOME_VERIFIED_COMPLETE PASS（T4 完整 PASS）；其他（-Only、-DoorState、-Family）只輸出 M7_HOME_VERIFIED_SHARD PASS
 #                        （分片 PASS）。-RequireComplete 時分片以 M7_HOME_NOT_COMPLETE 失敗。treeClean 不是 true 的 summary 一律以 M7_HOME_SAVED_TREE_DIRTY 拒絕。
 #   -VerifyAggregate <檔,...>  唯讀彙總多份分片 summary（T4 B2b-2）：成員全部 treeClean、同一個 HEAD、各自通過單份驗證，列的聯集恰為 windows.native、沒有重疊；
-#                        合法組合只有「三個 -DoorState 分片＋restart＋receipt」與「close＋restart＋receipt」。PASS 輸出 M7_HOME_AGGREGATE_COMPLETE PASS（T4 完整 PASS）。
+#                        合法組合只有「三個 -DoorState 分片＋restart＋receipt＋corridor」與「close＋restart＋receipt＋corridor」。PASS 輸出 M7_HOME_AGGREGATE_COMPLETE PASS（T4 完整 PASS）。
 #                        -SelfTest 另跑彙總負控與每一份成員的單份負控。
 #   SelfTest 預算（使用者 2026-11-19 11:5x 裁示「上限改 1000 個＋時限 120 秒」）：每一次 -VerifySummary -SelfTest 或 -VerifyAggregate -SelfTest 呼叫各自最多
 #                        1000 個負控、SelfTest 計時 120 秒；超過個數以 M7_HOME_SELFTEST_BUDGET、超過時限以 M7_HOME_SELFTEST_TIME 失敗，不抽樣、不略過負控。
 #   -ExpectedHead <sha>  summary 的 HEAD；未給時用目前 HEAD
 # phase receipt 位置由 testmod M7HomeProbe 固定為 <repo>/.superpowers/verification/m7-home-<nonce>/<phase>/（halt.json 或 final.json）。
-param([string[]]$Only=@(),[ValidateSet('','ordinary','sealed','passable')][string]$DoorState='',[ValidateSet('','close','restart','receipt')][string]$Family='',
+param([string[]]$Only=@(),[ValidateSet('','ordinary','sealed','passable')][string]$DoorState='',[ValidateSet('','close','restart','receipt','corridor')][string]$Family='',
       [string]$VerifySummary='',[string[]]$VerifyAggregate=@(),[switch]$RequireComplete,[string]$ExpectedHead='',[switch]$SelfTest,
       [string]$EvidenceRoot='',[string]$Gradle='',
       [int]$IdleSeconds=90,[int]$PhaseMinutes=5,[int]$BlockMinutes=240,
@@ -76,11 +77,41 @@ $extras=@(
             'stopRetriedWrite','journalHeldAfterStop','journalFileUnchangedAfterStop','journalRowAfterStop','receiptKeptAfterStop','nativeErrorOnce','noSessionError'))
         reopenObserved=@($extraReopen+@('aDoorAtStart','playerClosedDoor','closeFromCrash','busyAtStart','stopSavedLevel','stopSavedMarkers'))}
 )
-$manifest=@(@(foreach($door in $doors){for($i=0;$i -lt $cuts.Count;$i++){[pscustomobject]@{row="close-$door-$($cuts[$i])";family='close';door=$door;cut=$cuts[$i];index=$i}}})+$extras)
+# T5-5：corridor 族（M7HomeCorridorPhases；設計稿 7.1、7.4）。crash／reopen 的事件序列只有 HOME checkpoint 的 HEAD／RETURN（本 SID）與第 10 列的 close 13 cut；
+# readback 通知只當 cut、不錄。crashObserved／reopenObserved 是兩個 phase 必須成立的 Java 斷言。
+$cpHead='home-checkpoint-head';$cpReturn='home-checkpoint-return'
+$corridorCrashSetup=@('freshJournal','freshCatalog','freshReceipts','originRegistered','projectionWritten','entryValid','bDoorClosed','bPowered','participantsInB','baselineSaved','homeStarted')
+$corridorSelect=@('corridorBaselineSaved','selectAccepted')
+$corridorReopen=@('crashReceiptMatches','journalBytesFromCrash','bMaterializedAtStart','journalRowFromCrash','reservationRestoredAtStart','corridorProtectedAtStart','noTicketBeforeLifecycle',
+    'busyAtStart','aPresenceBusy','bTicketFormal','bLoadedByFormalTicket','participantLoginPose','fenceReadyAtFirstMove','neverInA','returnedToB','participantsAvailable','checkpointOnce',
+    'corridorClearedAtEnd','quietKept')
+$corridorNoClose=@('noEntryTicket','noRootTicket','noCloseEvents')
+$corridorRemoved=@('convertedToReturning','releaseAcked','ticketReleased','notBusy')
+$corridorDormant=@('selectionKept','ticketReleased','dormantLockHeld')
+$corridorSpecs=[ordered]@{
+    'arming'=@(@('checkedArming'),@($corridorNoClose+$corridorRemoved+@('stayedInB')),@())
+    'superposition'=@(@('corridorBaselineSaved'),@($corridorNoClose+$corridorRemoved+@('doorWitnessPrecondition','restoredHomeDoorConsumed','entranceDoorNotHome')),@())
+    'select-pending'=@(@($corridorSelect+@('selectPendingAtHalt')),@($corridorNoClose+$corridorRemoved+@('noSelectionEver')),@())
+    'select-unconfirmed'=@(@($corridorSelect+@('selectUnconfirmedAtHalt')),@($corridorNoClose+$corridorDormant+@('selectionFromDisk')),@())
+    'measured'=@(@($corridorSelect+@('selectedNoneReturned')),@($corridorNoClose+$corridorDormant),@())
+    'partial-returned'=@(@($corridorSelect+@('selectedNoneReturned','secondDisconnected','firstReturnedInB')),@($corridorNoClose+$corridorDormant),@())
+    'cleanup-before'=@(@($corridorSelect+@('selectedNoneReturned','cleanupBeforeAtHalt')),@($corridorNoClose+$corridorDormant),@($cpHead))
+    'cleanup-after'=@(@($corridorSelect+@('selectedNoneReturned','cleanupAfterAtHalt')),@($corridorNoClose+$corridorDormant),@($cpHead,$cpReturn))
+    'collapsing-partial'=@(@($corridorSelect+@('selectedNoneReturned','secondDisconnected','firstReturnedInB','checkedCollapsing')),@($corridorNoClose+@('ticketHeld','collapsingLockHeld','noPrepare')),@())
+    'measured-stopped'=@(@($corridorSelect+@('selectedNoneReturned','rootDisabledAcked','stopLatchedDurable','registrySaved')),
+        @('sourceTicketReleasedBeforeClose','entryTicketNeverTaken','closedByRootDisabled','registryStillDisabled','aDoorUnchanged','bDoorOpen','notBusy'),@())
+}
+$corridors=@(foreach($cut in $corridorSpecs.Keys){
+    $s=$corridorSpecs[$cut]
+    [pscustomobject]@{row="corridor-$cut";family='corridor';door='ordinary';cut=$cut;index=-1;players=$(if($cut -cin @('partial-returned','collapsing-partial')){2}else{1})
+        crash=@($s[2]);reopen=@(@($cpHead,$cpReturn)+$(if($cut -ceq 'measured-stopped'){$cuts}else{@()}))
+        crashObserved=@($corridorCrashSetup+$s[0]);reopenObserved=@($corridorReopen+$s[1])}
+})
+$manifest=@(@(foreach($door in $doors){for($i=0;$i -lt $cuts.Count;$i++){[pscustomobject]@{row="close-$door-$($cuts[$i])";family='close';door=$door;cut=$cuts[$i];index=$i}}})+$extras+$corridors)
 $inventory=Get-Content -LiteralPath (Join-Path $PSScriptRoot 'm7-inventory.json') -Raw | ConvertFrom-Json
 if(@($inventory.windows.native).Count -ne $manifest.Count -or (@($inventory.windows.native) -join ',') -cne ($manifest.row -join ',')){throw 'M7_HOME_INVENTORY：m7-inventory.json windows.native 與固定矩陣不符'}
-$shards=@(@(foreach($door in $doors){,@($manifest | Where-Object {$_.family -ceq 'close' -and $_.door -ceq $door} | ForEach-Object row)})+@(foreach($name in 'restart','receipt'){,@($manifest | Where-Object family -CEQ $name | ForEach-Object row)}))
-if(((@($shards | ForEach-Object {$_.Count})) -join ',') -cne '13,13,13,4,4' -or ((@($shards | ForEach-Object {$_}) | Sort-Object) -join ',') -cne (($manifest.row | Sort-Object) -join ',') -or @($shards | ForEach-Object {$_} | Sort-Object -Unique).Count -ne $manifest.Count){throw 'M7_HOME_SHARDS：三個 -DoorState 分片與 restart、receipt 兩族的聯集必須恰為全部列且互不重疊'}
+$shards=@(@(foreach($door in $doors){,@($manifest | Where-Object {$_.family -ceq 'close' -and $_.door -ceq $door} | ForEach-Object row)})+@(foreach($name in 'restart','receipt','corridor'){,@($manifest | Where-Object family -CEQ $name | ForEach-Object row)}))
+if(((@($shards | ForEach-Object {$_.Count})) -join ',') -cne '13,13,13,4,4,10' -or ((@($shards | ForEach-Object {$_}) | Sort-Object) -join ',') -cne (($manifest.row | Sort-Object) -join ',') -or @($shards | ForEach-Object {$_} | Sort-Object -Unique).Count -ne $manifest.Count){throw 'M7_HOME_SHARDS：三個 -DoorState 分片與 restart、receipt、corridor 三族的聯集必須恰為全部列且互不重疊'}
 
 function Get-M7Group($spec) {
     if($spec.family -cne 'close'){return $spec.family.ToUpperInvariant()}
@@ -330,8 +361,68 @@ function Assert-M7ExtraReopen($receipt,$spec,$crash,[string]$Nonce,[string]$Star
     if($receipt.quiet.bDoor -cne 'CLOSED/NONE' -or $receipt.quiet.ticks -ne 40){throw "M7_HOME_REOPEN_QUIET：$($spec.row)"}
     Assert-M7Observed $receipt $spec 'reopen' $spec.reopenObserved 'M7_HOME_REOPEN_OBSERVED'
 }
+# T5-5 corridor 族的 crash：halt 乾淨、事件序列恰為預定、Java 斷言，以及 crash 當下 journal（記憶體三份與磁碟的 strict decode）依設計稿 7.4 的預期。
+function Assert-M7CorridorCrash($receipt,$spec,[string]$Nonce,[string]$StartupNonce) {
+    Assert-M7Identity $receipt $spec 'crash' $Nonce $StartupNonce
+    if($receipt.status -cne 'HALT' -or $receipt.ending -cne 'HALT' -or $receipt.hit -ne 1 -or @($receipt.refused).Count){throw "M7_HOME_HALT_NOT_CLEAN：$($spec.row)"}
+    $names=@($receipt.events | ForEach-Object event)
+    if(($names -join ',') -cne (@($spec.crash) -join ',')){throw "M7_HOME_CRASH_EVENTS：$($spec.row) $($names -join ',')"}
+    Assert-M7Observed $receipt $spec 'crash' $spec.crashObserved 'M7_HOME_CRASH_OBSERVED'
+    $h=$receipt.atHalt;$f=$h.flushed;$d=$h.disk
+    $common=$f.present -and $h.current.present -and $d.decoded -eq $true -and $h.busy -eq $true -and $h.reservation -eq $true -and @($f.leases).Count -ge 1 -and
+        [int]$f.participants -eq $spec.players -and @($receipt.setup.participants).Count -eq $spec.players -and @($receipt.expectedLogin).Count -eq $spec.players
+    $unselected=$f.selected -eq $false -and [int]$f.returned -eq 0 -and -not $h.pending.present -and $d.text -ceq $f.text
+    $measured=$f.state -ceq 'MEASURED' -and $f.selected -eq $true -and -not $h.pending.present -and $d.text -ceq $f.text
+    $ok=$common -and $(switch($spec.cut){
+        'arming' {$unselected -and $f.state -ceq 'ARMING' -and $h.homeSourceTicket -eq $true -and $h.rootTicket -eq $false -and [int]$h.inB -eq $spec.players}
+        'superposition' {$unselected -and $f.state -ceq 'SUPERPOSITION' -and $h.homeSourceTicket -eq $true -and $h.rootTicket -eq $false -and [int]$h.inB -eq 0}
+        'select-pending' {$unselected -and $f.state -ceq 'SUPERPOSITION' -and $h.homeSourceTicket -eq $true -and $h.rootTicket -eq $true -and [int]$h.inB -eq 0}
+        'select-unconfirmed' {$f.state -ceq 'SUPERPOSITION' -and $f.selected -eq $false -and $h.pending.present -and $h.pending.state -ceq 'MEASURED' -and $h.pending.selected -eq $true -and
+            $d.state -ceq 'MEASURED' -and $d.selected -eq $true -and $d.text -ceq $h.pending.text}
+        'measured' {$measured -and [int]$f.returned -eq 0 -and $f.stopReason -ceq 'NONE'}
+        'partial-returned' {$measured -and [int]$f.returned -eq 1 -and $f.stopReason -ceq 'NONE'}
+        'cleanup-before' {$measured -and [int]$f.returned -eq $spec.players -and $h.corridorClearedInMemory -eq $true}
+        'cleanup-after' {$measured -and [int]$f.returned -eq $spec.players -and $h.corridorClearedInMemory -eq $true}
+        'collapsing-partial' {$f.state -ceq 'COLLAPSING' -and $f.selected -eq $true -and [int]$f.returned -eq 1 -and -not $h.pending.present -and $d.text -ceq $f.text}
+        'measured-stopped' {$measured -and [int]$f.returned -eq 0 -and $f.stopReason -ceq 'ROOT_DISABLED' -and $null -ne $receipt.baseline.stoppedAt}
+        default {$false}
+    })
+    if(-not $ok){throw "M7_HOME_CORRIDOR_CRASH：$($spec.row) flushed=$($f.state)/$($f.selected)/$($f.returned) pending=$($h.pending.present)"}
+}
+# T5-5 corridor 族的 reopen：從磁碟續做的事件序列、B 由正式 B 來源票載入、參與者從未出現在 A、各列終局（設計稿 7.4）、靜止期與 Java 斷言。
+function Assert-M7CorridorReopen($receipt,$spec,$crash,[string]$Nonce,[string]$StartupNonce) {
+    Assert-M7Identity $receipt $spec 'reopen' $Nonce $StartupNonce
+    if($receipt.status -cne 'PASS' -or $receipt.ending -cne 'STOP' -or $receipt.stopRequested -ne $true -or $receipt.stoppingSeen -ne $true -or $receipt.stoppedSeen -ne $true){throw "M7_HOME_REOPEN_FAILED：$($spec.row)"}
+    if(-not (Test-M7Json $receipt.setup $crash.setup)){throw "M7_HOME_REOPEN_SETUP：$($spec.row)"}
+    $names=@($receipt.events | ForEach-Object event)
+    if(($names -join ',') -cne (@($spec.reopen) -join ',')){throw "M7_HOME_REOPEN_EVENTS：$($spec.row) $($names -join ',')"}
+    if($receipt.startFiles.journalSha256 -cne $crash.atHalt.journalSha256){throw "M7_HOME_REOPEN_START_FILES：$($spec.row)"}
+    # B 由正式 B 來源票載入；第 10 列的 close 事件當下 B 來源票已釋放、不取 B 收尾票；任何事件都不持 B 收尾票。
+    $ticketBad=@(@($receipt.events) | Where-Object {$_.entryTicket -ne $false -or ($_.event -cnotin @($cpHead,$cpReturn) -and $_.homeSourceTicket -ne $false)})
+    if($receipt.observed.PSObject.Properties.Name -cnotcontains 'bLoadedByFormalTicket' -or $receipt.observed.bLoadedByFormalTicket -ne $true -or $ticketBad.Count){
+        throw "M7_HOME_CORRIDOR_B_TICKET：$($spec.row) $(@($ticketBad | ForEach-Object {"$($_.event):$($_.homeSourceTicket)/$($_.entryTicket)"}) -join ',')"}
+    $trace=@($receipt.trace)
+    if($trace.Count -lt $spec.players -or @($trace | Where-Object {$_.world -ceq 'minecraft:overworld'}).Count){throw "M7_HOME_CORRIDOR_NEVER_A：$($spec.row)"}
+    $e=$receipt.end
+    $common=$e.entryTicket -eq $false -and $e.rootTicket -eq $false -and $e.participantsAvailable -eq $true -and $e.reservation -eq $false -and $e.pending -eq $false -and
+        [int]$e.inB -eq $spec.players -and $e.releaseComplete -eq $false
+    $removed=-not $e.flushed.present -and -not $e.current.present -and $e.homeSourceTicket -eq $false -and $e.busy -eq $false
+    $settled=$e.flushed.present -and $e.flushed.selected -eq $true -and @($e.flushed.leases).Count -eq 0 -and [int]$e.flushed.returned -eq $spec.players -and $e.busy -eq $true
+    $ok=$common -and $(switch($spec.cut){
+        {$_ -cin @('arming','superposition','select-pending','measured-stopped')} {$removed}
+        'collapsing-partial' {$settled -and $e.flushed.state -ceq 'COLLAPSING' -and $e.homeSourceTicket -eq $true}
+        default {$settled -and $e.flushed.state -ceq 'MEASURED' -and $e.homeSourceTicket -eq $false}
+    })
+    if(-not $ok){throw "M7_HOME_CORRIDOR_END：$($spec.row) present=$($e.flushed.present) ticket=$($e.homeSourceTicket) busy=$($e.busy)"}
+    if($receipt.quiet.ticks -ne 40){throw "M7_HOME_REOPEN_QUIET：$($spec.row)"}
+    Assert-M7Observed $receipt $spec 'reopen' $spec.reopenObserved 'M7_HOME_REOPEN_OBSERVED'
+}
 function Assert-M7PhaseReceipt($receipt,$spec,[string]$Phase,$crash,[string]$Nonce,[string]$StartupNonce) {
     $close=$spec.family -ceq 'close'
+    if($spec.family -ceq 'corridor'){
+        if($Phase -ceq 'crash'){Assert-M7CorridorCrash $receipt $spec $Nonce $StartupNonce}else{Assert-M7CorridorReopen $receipt $spec $crash $Nonce $StartupNonce}
+        return
+    }
     if($Phase -ceq 'crash'){if($close){Assert-M7Crash $receipt $spec $Nonce $StartupNonce}else{Assert-M7ExtraCrash $receipt $spec $Nonce $StartupNonce}}
     else{if($close){Assert-M7Reopen $receipt $spec $crash $Nonce $StartupNonce}else{Assert-M7ExtraReopen $receipt $spec $crash $Nonce $StartupNonce}}
 }
@@ -367,7 +458,7 @@ function Assert-M7SavedGlobal($summary) {
     $expected=@(switch -CaseSensitive ($summary.selection.mode){
         'all' {@($manifest.row)}
         'doorState' {if($summary.selection.doorState -cnotin $doors){throw 'M7_HOME_SAVED_SELECTION'};@($manifest | Where-Object {$_.family -ceq 'close' -and $_.door -ceq $summary.selection.doorState} | ForEach-Object row)}
-        'family' {if($summary.selection.family -cnotin @('close','restart','receipt')){throw 'M7_HOME_SAVED_SELECTION'};@($manifest | Where-Object family -CEQ $summary.selection.family | ForEach-Object row)}
+        'family' {if($summary.selection.family -cnotin @('close','restart','receipt','corridor')){throw 'M7_HOME_SAVED_SELECTION'};@($manifest | Where-Object family -CEQ $summary.selection.family | ForEach-Object row)}
         'only' {@($manifest | Where-Object {$_.row -cin @($summary.selection.only)} | ForEach-Object row)}
         default {throw 'M7_HOME_SAVED_SELECTION'}
     })
@@ -392,8 +483,8 @@ function Assert-M7Complete($summary) {
 # 多份分片的彙總：只接受 -DoorState 與 -Family 分片；成員全部 treeClean、同一個 HEAD、各自通過單份驗證；列的聯集恰為 windows.native、沒有重疊。
 # 在這些條件下合法組合只有兩種（下表）；最後仍明確比對，防止日後加了新的分片種類卻漏改這裡。
 $aggregateCombinations=[ordered]@{
-    doorState=@('doorState:ordinary','doorState:sealed','doorState:passable','family:restart','family:receipt')
-    family=@('family:close','family:restart','family:receipt')
+    doorState=@('doorState:ordinary','doorState:sealed','doorState:passable','family:restart','family:receipt','family:corridor')
+    family=@('family:close','family:restart','family:receipt','family:corridor')
 }
 function Get-M7ShardKey($summary) {
     switch -CaseSensitive ($summary.selection.mode){
@@ -489,9 +580,9 @@ function Invoke-M7SummarySelfTest($summary) {
         Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-status-$i" 'M7_HOME_REOPEN_FAILED'
         $bad=Copy-M7Json $reopenReceipt;$bad.events=@(@($bad.events)+@([pscustomobject]@{event='before-door';serverTick=0;gameTime=0;detail='OPEN/NONE'}))
         Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-events-$i" 'M7_HOME_REOPEN_EVENTS'
-        # T4B 的 B 收尾票判定（T4B 審查 M-5；T5 Step 0）：restart／receipt 族才記這兩欄，close 矩陣的 phase 表不記。
+        # T4B 的 B 收尾票判定（T4B 審查 M-5；T5 Step 0）：restart／receipt 族才記這兩欄，close 矩陣的 phase 表不記；corridor 族另有自己的負控（T5-5，見下）。
         $spec=Get-M7Spec @($summary.rows)[$i].row
-        if($spec.family -cne 'close'){
+        if($spec.family -cin @('restart','receipt')){
             # M7_HOME_REOPEN_B_TICKET：第一個收尾事件一律不持票（B 無人無票列的 before-close 也還沒有票），改成持票就要被拒。
             # reopen 沒有事件的列（receipt-player-closed）沒有可改的事件。
             if(@($reopenReceipt.events).Count){
@@ -513,6 +604,24 @@ function Invoke-M7SummarySelfTest($summary) {
             # entryTicketLease：收尾之後不得仍持 B 收尾票。
             $bad=Copy-M7Json $reopenReceipt;$bad.end.entryTicketLease=$true
             Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "reopen-entry-ticket-lease-$i" 'M7_HOME_REOPEN_END'
+        }
+        if($spec.family -ceq 'corridor'){
+            # T5-5（設計稿 7.7、N-4）：終局的 B 來源票（第 9 列持票、其他列釋放）、B 由正式 B 來源票載入、參與者從未出現在 A。
+            $bad=Copy-M7Json $reopenReceipt;$bad.end.homeSourceTicket=-not [bool]$bad.end.homeSourceTicket
+            Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "corridor-end-source-ticket-$i" 'M7_HOME_CORRIDOR_END'
+            $bad=Copy-M7Json $reopenReceipt;$bad.observed.bLoadedByFormalTicket=$false
+            Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "corridor-b-formal-ticket-$i" 'M7_HOME_CORRIDOR_B_TICKET'
+            $bad=Copy-M7Json $reopenReceipt;@($bad.trace)[0].world='minecraft:overworld'
+            Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "corridor-never-a-$i" 'M7_HOME_CORRIDOR_NEVER_A'
+            if($spec.cut -ceq 'measured-stopped'){
+                # 第 10 列的 close 事件：B 來源票已在 DORMANT 那個 tick 釋放、B 由在場玩家保持（不取 B 收尾票）；任一 close 事件改成持票都要被拒。
+                foreach($flag in 'homeSourceTicket','entryTicket'){
+                    $bad=Copy-M7Json $reopenReceipt;$close=@(@($bad.events) | Where-Object {$_.event -cnotin @($cpHead,$cpReturn)})
+                    if(-not $close.Count){throw "M7_HOME_SELFTEST_FIXTURE：$($spec.row) 沒有 close 事件，負控無從改起"}
+                    $close[0].$flag=$true
+                    Test-M7Rejected {Assert-M7SavedRow $summary $i @{"$i/reopen"=$bad}} "corridor-close-$flag-$i" 'M7_HOME_CORRIDOR_B_TICKET'
+                }
+            }
         }
     }
     # 負控不改原件：結束再完整重驗一次。

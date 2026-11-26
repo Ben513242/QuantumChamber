@@ -838,6 +838,21 @@ public final class CorridorPageManager {
         }
     }
 
+    // ---- M7 HOME（T5-5）：開服接手（attach）的決策（SSM 與 CPM 的 attach 共用）。 ----
+
+    /** 開服時一筆 checked HOME 列要接手的資源：B 來源票、重建走廊 space、轉 RETURNING（只對未選定的 ARMING／SUPERPOSITION）。 */
+    public enum HomeAttach {
+        NONE, TICKET_ONLY, TICKET_AND_SPACE, RETURN_TICKET_AND_SPACE;
+        public boolean ticket() { return this != NONE; }
+        public boolean space() { return this == TICKET_AND_SPACE || this == RETURN_TICKET_AND_SPACE; }
+        public boolean convert() { return this == RETURN_TICKET_AND_SPACE; }
+    }
+
+    /** T5-5 RED：尚未實作，一律不接手。 */
+    public static HomeAttach homeAttachAction(HomeSessionRecord row) {
+        return HomeAttach.NONE;
+    }
+
     // ---- M7 HOME（T5-2）：從 B 入走廊與未選定的整組返回 B。legacy 方法本體不動，HOME Space 只經下列方法與 tick／fail 的 HOME 分派。 ----
 
     /**

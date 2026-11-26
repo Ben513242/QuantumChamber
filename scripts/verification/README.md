@@ -741,40 +741,46 @@ I2正式reserve錯與32slot反證移T2，不再採T1舊上界；I7超M6殘留不
 | `build.gradle` 的 `m7HomeProbe` run | Gradle `runM7HomeProbe`，runDir `run/m7-home-<nonce>`，只轉入 `-Pm7Home{Phase,Nonce,StartupNonce,Root}` |
 
 ```powershell
-pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1                                  # 全部 47 列（close 39＋restart 4＋receipt 4；T4B 起）；只要 close 矩陣請用 -Family close
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1                                  # 全部 57 列（close 39＋restart 4＋receipt 4＋corridor 10；T5-5 起，T4B 起到 T5-5 之前是 47 列）；只要 close 矩陣請用 -Family close
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -DoorState sealed                # 一個門態的 13 列（CI 分片；三片聯集恰為 39 列）
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -Only close-ordinary-before-close,close-sealed-after-remove
-pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -Family close                  # close 矩陣 39 列（restart、receipt 同理）
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -Family close                  # close 矩陣 39 列（restart、receipt、corridor 同理）
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -Family corridor               # corridor 族 10 列（T5-5，見下方「corridor 族（T5-5）」）
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifySummary <m7-home-run-*.json> -ExpectedHead <完整SHA> -SelfTest
 pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifySummary <m7-home-run-*.json> -ExpectedHead <完整SHA> -RequireComplete   # 分片時以 M7_HOME_NOT_COMPLETE 失敗
-pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifyAggregate <ordinary.json>,<sealed.json>,<passable.json>,<restart.json>,<receipt.json> -ExpectedHead <完整SHA> -SelfTest
-pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifyAggregate <close.json>,<restart.json>,<receipt.json> -ExpectedHead <完整SHA> -SelfTest
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifyAggregate <ordinary.json>,<sealed.json>,<passable.json>,<restart.json>,<receipt.json>,<corridor.json> -ExpectedHead <完整SHA> -SelfTest
+pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifyAggregate <close.json>,<restart.json>,<receipt.json>,<corridor.json> -ExpectedHead <完整SHA> -SelfTest
 ```
 
 - 每列一個新的 owned root `run/m7-home-<runId 12 hex>-<列名>`（`probe-common.ps1` 的 `New-OwnedRoot`），兩個 phase 各一個 JVM，phase evidence 在 `.superpowers/verification/m7-home-<nonce>/<phase>/`，已存在就拒絕重跑；root 與原件永久保留。
 - `crash`：fresh 世界蓋 A 原艙（不供電，參與者帶 QuantumState 在艙內，以正式 `attemptArm` 登記），物化 B 投影（COMPLETE projection ledger），經正式 journal 入口走到 HOME DORMANT，參與者站在 B 艙內；以正式 `ChamberLifecycleService.setEnabled(false)` 停用 A（`HomeRootFence` checked latch `ROOT_DISABLED`），以原生 `ChunkSaveCheckpoint.save` 做基線存檔（registry 停用、stop latch、B 門初始狀態都落盤）後 arm cut。下一個 tick 由正式 `HomeClosure` 推進，走到該 cut 時寫 `halt.json`（CREATE_NEW＋force）並 `Runtime.halt(77)`。乾淨 halt 的條件：cut 第一次 hit、Java 沒有記下失敗、停服尚未開始、事件序列恰為 cut 之前的前綴；否則 `HALT_REFUSED`、exit 78。
 - `reopen`：新 JVM 開同一個世界。開服前先讀 crash 留下的 journal 檔 hash 與收據目錄清單（必須與 halt 當下相同），開服時載入 B／A 讀門格（磁碟狀態），參與者以 crash 基線存下的 playerdata 登入；之後等正式 owner 從磁碟續做到 checked 移除，核對事件序列、收據、檔案、兩側門格、資源與零移動，再把 B 門設為 CLOSED（模擬玩家之後自己關門）觀察 40 tick 不被舊旅程打開，正常停服寫 `final.json`。
-- 正式 B 來源票到 T5 才有：兩個 phase 都以測試票保持 B 艙體外擴 4 格的 chunks（沿 Phase A 的 `holdChunks`）。例外是 T4B 的 `restart-close-unloaded-b`：reopen 不保持 B，由正式 B 收尾票載入（見「管理員說明：回程收尾的 B 收尾票（T4B）」）；其他列 B 一直由測試票保持；其中 restart／receipt 族的 7 列 reopen 另核每個收尾事件當下都沒有 B 收尾票（`noEntryTicket`、runner 的 `M7_HOME_REOPEN_B_TICKET`），close 矩陣 39 列的 phase 表（`M7HomeClosurePhases`）沒有改，不記這一欄。
+- 正式 B 來源票到 T5 才有：兩個 phase 都以測試票保持 B 艙體外擴 4 格的 chunks（沿 Phase A 的 `holdChunks`）。例外是 T4B 的 `restart-close-unloaded-b`：reopen 不保持 B，由正式 B 收尾票載入（見「管理員說明：回程收尾的 B 收尾票（T4B）」）；其他列 B 一直由測試票保持；其中 restart／receipt 族的 7 列 reopen 另核每個收尾事件當下都沒有 B 收尾票（`noEntryTicket`、runner 的 `M7_HOME_REOPEN_B_TICKET`），close 矩陣 39 列的 phase 表（`M7HomeClosurePhases`）沒有改，不記這一欄。T5-5 的 corridor 族 10 列只在 crash 以測試票保持 A、B；reopen 不加測試票，B 由正式 B 來源票載入（見下方「corridor 族（T5-5）」）。
 - 注入點數量：每個注入點 `require=1`；沒有 ordinal 的注入點另加 `allow=1`（多出第二處呼叫時套用 mixin 就失敗）。`applyTarget` 與 `verify` 靠 ordinal 0／1 定位，假設 `HomeClosure.converge` 恰有 2 次 `applyTarget`、`HomeReceiptStore.publishOrVerify` 恰有 2 次 `verify`；改這兩個方法時要同步檢查注入點與事件序列。
 - region 證據的範圍：新 JVM 在任何 tick 之前載入 B 門所在 chunk 讀門格（不是 raw MCA 解析），證明門格的磁碟內容。正式 checkpoint 呼叫的 relevant 集合只含 B、等於 `PassageTransferPolicy.homeChunks`；另以幾何獨立計算 B 門 25 格所在的 chunk（`setup.doorChunks`），斷言都在 relevant 集合內。`ChunkSaveCheckpoint.save` 實際是全伺服器存檔，A 的 dirty chunk 也會寫出；A 不變只以「A 門格各時點等於基線」證明，不宣稱 checkpoint 不寫 A。
 - 路徑預算：Windows MAX_PATH 是 260（含結尾 NUL，可用 259 字元）。root 之下已知最長的子路徑是 B 世界的 entity region（`world/dimensions/quantumchamber/universe/<UUID>/overworld/entities/r.-1.-1.mca`，含開頭分隔字元 110 字元；B1 實測全長 240＝root 130＋110）。runner 啟動前對每一個選到的列計算 `run/m7-home-<runId>-<列名>` 的絕對路徑長度，加上預留 120 字元（region 座標變長與其他檔名）超過 259 就以 `M7_HOME_PATH_BUDGET` 拒絕，不在執行中途才撞到上限。新增列名或改用更深的 checkout 路徑時，以這條規則先檢查。
 - 預期終局（群組）：A＝before-close（重開重新 mint ROOT_DISABLED，事件 13 個）；B＝after-close～before-publish（從已凍結 CLOSE 續做並發佈；checkpoint 之前的 cut 重開時 B 門仍是初始狀態、outcome APPLIED，之後 UNCHANGED；暫存檔保留）；C＝after-publish～before-remove（收據已存在只驗 exact、不覆寫，事件含 `verify-existing`）；D＝after-remove（什麼都不做、沒有 checkpoint）。細節見 SDD `t4b1-report.md` 的預期終局表；runner 的 `Assert-M7Crash`／`Assert-M7Reopen` 與 Java 各自核對同一張表。
 - 兩種結束都核對：receipt 的 PID、StartTime（±1 秒）、startupNonce 與實際 JVM 相符、標示 testmod runtime；JVM 已結束；`world/session.lock` 可獨占開啟；latest.log 恰有一行 `M7_HOME_BEGIN`（reopen 另恰有一行 `M7_HOME_END`）。crash 另要求 Gradle 非 0、JVM 77、Gradle 輸出有 `finished with non-zero exit value 77`、沒有 `final.json`；reopen 要求 Gradle 與 JVM 都是 0、沒有 `halt.json`。
 - 逾時沿 `probe-common.ps1`：`-IdleSeconds`（預設 90）、`-PhaseMinutes`（預設 5）、`-BlockMinutes`（預設 240）；逾時 FAIL、保留 root，不可同 root 重跑。啟動前已有非 daemon Java 就拒絕。
-- summary `m7-home-run-<runId>.json`（`-EvidenceRoot`，預設 `.superpowers/verification`）記錄選擇（all／doorState／only）、`selectedRows`、每列兩個 phase 的身分、退出碼、receipt 路徑與 SHA-256、耗時（每 phase、每列與總計）。`-VerifySummary` 唯讀逐列、逐 phase 重驗：列名與順序必須等於選擇的精確集合（不是只看總數）、phase 名稱恰為 crash／reopen、退出碼、receipt hash 與內容、JVM 與 root 不重用。`-SelfTest` 只改記憶體副本，負控為列缺少、多出、改名、對調、phase 改名、選擇不符、HEAD 不符，以及每列兩個 phase 的退出碼、receipt hash、crash 的 cut 與事件、reopen 的狀態與事件；每個負控都要以預期的具名錯因被拒，結束後再完整重驗原件。
+- summary `m7-home-run-<runId>.json`（`-EvidenceRoot`，預設 `.superpowers/verification`）記錄選擇（all／doorState／family／only；family 是 close、restart、receipt 或 corridor，corridor 自 T5-5 起）、`selectedRows`、每列兩個 phase 的身分、退出碼、receipt 路徑與 SHA-256、耗時（每 phase、每列與總計）。`-VerifySummary` 唯讀逐列、逐 phase 重驗：列名與順序必須等於選擇的精確集合（不是只看總數）、phase 名稱恰為 crash／reopen、退出碼、receipt hash 與內容、JVM 與 root 不重用。`-SelfTest` 只改記憶體副本，負控為列缺少、多出、改名、對調、phase 改名、選擇不符、HEAD 不符，以及每列兩個 phase 的退出碼、receipt hash、crash 的 cut 與事件、reopen 的狀態與事件；每個負控都要以預期的具名錯因被拒，結束後再完整重驗原件。
 - 完整性（T4 B2b-2，B1-M4、B2a-M5）：
   - summary 的 `treeClean` 不是 true（工作樹帶著未提交改動跑出）一律以 `M7_HOME_SAVED_TREE_DIRTY` 拒絕，不能歸到該 HEAD。
-  - 單份 summary 只有「選擇 all、列恰為 `windows.native` 全部列（T4B 起 47 列）、treeClean=true」才輸出 `M7_HOME_VERIFIED_COMPLETE PASS`（T4 完整 PASS）。`-Only`、`-DoorState`、`-Family` 的 summary 驗過內容也只輸出 `M7_HOME_VERIFIED_SHARD PASS`（分片 PASS），兩個名稱不同，不能只看 exit 0；加 `-RequireComplete` 時分片以 `M7_HOME_NOT_COMPLETE` 失敗。
-  - `-VerifyAggregate` 彙總多份分片：只接受 `-DoorState` 與 `-Family` 分片（`only`、`all` 以 `M7_HOME_AGGREGATE_SHARD` 拒絕）；至少兩份（`M7_HOME_AGGREGATE_INPUT`）；每份 treeClean（`M7_HOME_AGGREGATE_TREE`）、同一個 HEAD（`M7_HOME_AGGREGATE_HEAD`）、各自通過單份驗證（`M7_HOME_AGGREGATE_MEMBER`）；分片與列都不得重複（`M7_HOME_AGGREGATE_OVERLAP`）；列的聯集恰為 `windows.native`（`M7_HOME_AGGREGATE_UNION`）。合法組合只有「三個門態分片（13,13,13）＋restart＋receipt」與「close＋restart＋receipt」，最後再明確比對（`M7_HOME_AGGREGATE_COMBINATION`）。PASS 輸出 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState|family`，這也算 T4 完整 PASS。
-  - `-SelfTest` 另補：每份 summary 加 `tree-dirty`；分片另加「選擇改成 all」（`M7_HOME_SAVED_SELECTION`）與「分片不能通過完整性判定」（`M7_HOME_NOT_COMPLETE`）；彙總另有缺片、重複成員、不同 HEAD、treeClean=false、成員自稱 all、only 成員、只給一份、列從一片搬到另一片（聯集不變但成員不符）8 個，並對每一份成員跑單份負控。T4B 之前的總數上限是 479（T4 B2b-2 派工簡報的讀法，不是使用者裁示）；46 列時為 376、406、426，T4B 起 47 列時為 384、414、434。
+  - 單份 summary 只有「選擇 all、列恰為 `windows.native` 全部列（T4B 起 47 列，T5-5 起 57 列）、treeClean=true」才輸出 `M7_HOME_VERIFIED_COMPLETE PASS`（T4 完整 PASS）。`-Only`、`-DoorState`、`-Family` 的 summary 驗過內容也只輸出 `M7_HOME_VERIFIED_SHARD PASS`（分片 PASS），兩個名稱不同，不能只看 exit 0；加 `-RequireComplete` 時分片以 `M7_HOME_NOT_COMPLETE` 失敗。
+  - `-VerifyAggregate` 彙總多份分片：只接受 `-DoorState` 與 `-Family` 分片（`only`、`all` 以 `M7_HOME_AGGREGATE_SHARD` 拒絕）；至少兩份（`M7_HOME_AGGREGATE_INPUT`）；每份 treeClean（`M7_HOME_AGGREGATE_TREE`）、同一個 HEAD（`M7_HOME_AGGREGATE_HEAD`）、各自通過單份驗證（`M7_HOME_AGGREGATE_MEMBER`）；分片與列都不得重複（`M7_HOME_AGGREGATE_OVERLAP`）；列的聯集恰為 `windows.native`（`M7_HOME_AGGREGATE_UNION`）。合法組合只有「三個門態分片（13,13,13）＋restart＋receipt＋corridor」與「close＋restart＋receipt＋corridor」（T5-5 起；之前沒有 corridor），最後再明確比對（`M7_HOME_AGGREGATE_COMBINATION`）。PASS 輸出 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState|family`，這也算 T4 完整 PASS。
+  - `-SelfTest` 另補：每份 summary 加 `tree-dirty`；分片另加「選擇改成 all」（`M7_HOME_SAVED_SELECTION`）與「分片不能通過完整性判定」（`M7_HOME_NOT_COMPLETE`）；彙總另有缺片、重複成員、不同 HEAD、treeClean=false、成員自稱 all、only 成員、只給一份、列從一片搬到另一片（聯集不變但成員不符）8 個，並對每一份成員跑單份負控。T4B 之前的總數上限是 479（T4 B2b-2 派工簡報的讀法，不是使用者裁示）；46 列時為 376、406、426，T4B 起 47 列時為 384、414、434；T5-5 起 57 列時的總數見下方「57 列時的負控數」（516、556、576，預估）。
   - B 收尾票判定的負控（T5 Step 0；T4B 審查 M-5）：restart／receipt 族每一列（close 矩陣的 phase 表不記這兩欄）加「收尾後仍持票」（`end.entryTicketLease=true`，`M7_HOME_REOPEN_END`）；reopen 有事件的列另加「第一個收尾事件改成持票」（`M7_HOME_REOPEN_B_TICKET`；`receipt-player-closed` 沒有 reopen 事件）；`restart-close-unloaded-b` 另加「CLOSE 凍結之後的收尾事件沒有票」「該事件 B 有玩家」（都是 `M7_HOME_REOPEN_B_TICKET`）與「crash 當下持票」（`atHalt.entryTicketLease=true`，`M7_HOME_CRASH_STATE`）。47 列時 restart 族 11 個、receipt 族 7 個，合計 18 個。
+  - corridor 族（T5-5，設計稿 7.7 與複審 N-4）不套上面這組 B 收尾票負控（族判斷由「不是 close」改成「restart 或 receipt」），改用自己的：
+    - 每列 3 個：終局 B 來源票翻轉（`end.homeSourceTicket`，第 9 列預期持票、其他列預期已釋放，`M7_HOME_CORRIDOR_END`）、`bLoadedByFormalTicket=false`（`M7_HOME_CORRIDOR_B_TICKET`）、第一筆 trace 的世界改成 `minecraft:overworld`（`M7_HOME_CORRIDOR_NEVER_A`）。
+    - 第 10 列 `corridor-measured-stopped` 另 2 個：第一個 close 事件的 `homeSourceTicket` 改成 true、`entryTicket` 改成 true，都是 `M7_HOME_CORRIDOR_B_TICKET`。
+    - 合計 32 個（10×3＋2）。
   - SelfTest 預算（使用者 2026-11-19 11:5x 裁示「上限改 1000 個＋時限 120 秒（建議）」）：每一次 `-VerifySummary -SelfTest` 或 `-VerifyAggregate -SelfTest` 呼叫各自最多 1000 個負控，SelfTest 計時 120 秒（從第一個負控之前到最後的原件重驗之後）。第 1001 個負控在執行前以 `M7_HOME_SELFTEST_BUDGET` 拒絕。各負控完成後與原件重驗後核對耗時，超過以 `M7_HOME_SELFTEST_TIME` 失敗。現有預算負控各驗多一個、超時 0.1 秒的具名拒絕，恰在上限時仍接受。PASS 行在 `negativeChecks=` 之後記 `selfTestSeconds=`。M6 runner 與其他 gate 的時限不變。
   - 47 列時的負控數（T5 Step 0 實測，本機對 `run-all-b90f443e…` 的真實 summary 與由它切出的分片）：單份完整 404（2＋8＋8×47＋18），SelfTest 約 5.3 秒；family 三份彙總 434（2＋8＋10×3＋376＋18），約 5.8 秒；門態五份彙總 454（2＋8＋10×5＋376＋18），約 4.6 秒。單份分片：`-Family restart` 55、`-Family receipt` 51、`-DoorState` 116。每多一列原生 close 列多 8 個負控，restart／receipt 族另加該列的 B 收尾票負控。
+  - 57 列時的負控數（T5-5；**預估，依公式推算，待實跑核對**）：單份完整 516（2＋8＋8×57＋18＋32）；family 四份彙總 556（2＋8＋10×4＋456＋18＋32）；門態六份彙總 576（2＋8＋10×6＋456＋18＋32）；單份分片 `-Family corridor` 124（2＋8＋2＋80＋32）。`-Family restart`、`-Family receipt`、`-DoorState` 的單份分片只含原本的列，預期仍是 55、51、116（未實跑）。corridor 列每列 8＋3 個，第 10 列 8＋5 個。都在每次 1000 個、120 秒的上限之內；SelfTest 秒數未實測。
 - run-all 與 CI 接線見下方「run-all 與 CI 接線（T4 B2b-3）」。
 
 ### B2a：其餘跨 JVM 鏈（`M7HomeChainPhases.java`）
 
-manifest 在 close 矩陣 39 列之後再接 8 列（B2a 的 5 列、T4 P1 的 `receipt-mismatch-stop`、T4 P2 的 `receipt-write-fail-stop` 與 T4B 的 `restart-close-unloaded-b`；`m7-inventory.json` 的 `windows.native` 共 47 列、順序相同）；選擇器 `-Family close|restart|receipt`，三個 `-DoorState` 分片（只含 close 列）與 restart（4 列）、receipt（4 列）兩族的聯集恰為全部列、互不重疊，runner 啟動時靜態核對（`13,13,13,4,4`）。fixture、receipt、halt 與 summary 沿 B1；預期終局與假設見 SDD `t4b2a-report.md`、`t4p1-report.md`、`t4p2-report.md`。列表改變時，舊 summary 的 `rowTable` 與新 manifest 不同，`-VerifySummary` 會以 `M7_HOME_SAVED_SUMMARY` 拒絕，要在新 HEAD 重跑。
+manifest 在 close 矩陣 39 列之後再接 8 列（B2a 的 5 列、T4 P1 的 `receipt-mismatch-stop`、T4 P2 的 `receipt-write-fail-stop` 與 T4B 的 `restart-close-unloaded-b`），T5-5 起最後再接 corridor 族 10 列（見下方「corridor 族（T5-5）」）；`m7-inventory.json` 的 `windows.native` 共 57 列（T4B 起到 T5-5 之前是 47 列）、順序相同。選擇器 `-Family close|restart|receipt|corridor`，三個 `-DoorState` 分片（只含 close 列）與 restart（4 列）、receipt（4 列）、corridor（10 列）三族的聯集恰為全部列、互不重疊，runner 啟動時靜態核對（`13,13,13,4,4,10`；T5-5 之前是 `13,13,13,4,4`）。fixture、receipt、halt 與 summary 沿 B1；預期終局與假設見 SDD `t4b2a-report.md`、`t4p1-report.md`、`t4p2-report.md`。列表改變時，舊 summary 的 `rowTable` 與新 manifest 不同，`-VerifySummary` 會以 `M7_HOME_SAVED_SUMMARY` 拒絕，要在新 HEAD 重跑。
 
 | 列 | crash（halt 77 的點） | reopen 的預期 |
 | --- | --- | --- |
@@ -788,11 +794,67 @@ manifest 在 close 矩陣 39 列之後再接 8 列（B2a 的 5 列、T4 P1 的 `
 | `receipt-write-fail-stop`（T4 P2） | 同 `receipt-existing` 走到 `remove-rejected`（RESTORED，journal dirty）；同一個 tick 以 `M7NativeSaveFault` 武裝 journal 正式寫出的 atomic move 故障（`SessionJournalWindowFaultMixin` 的 `@ModifyArg` 把 `writePrepared` 的目標導向既存目錄；Windows 上是真正的 `AccessDeniedException`），先以 autosave 的同一條路徑 `saveAll(true,false,false)` 存一次（不得丟出、寫出失敗而保留 pending、journal 檔不變），放海綿標記、把 gamerule `announceAdvancements` 設為 false，然後**正常停服**：停服時的存檔先核對磁碟、重試寫出、再次失敗。halt 點 `stopped` 在 `SERVER_STOPPED` 之後：核對故障導向恰 2 次、journal 檔與停服前相同、記憶體仍 dirty 並保留 pending、收據不變、原生存檔的 ERROR（`QUANTUMCHAMBER_COLLAPSE_TICK`）恰一則、這個 SID 沒有收據 ERROR，解除故障後 halt(77) | 開服時仍占用；停服前放的兩個標記與 gamerule 都已落盤；之後同 `receipt-existing` |
 
 - 每列 reopen 收尾後，參與者以正式方塊互動（`BlockState.onUse` → `QuantumBulkheadBlock.onUse`）關 B 門，40 tick 內不得有事件、checkpoint 或收據變動。
-- runner 另核：crash／reopen 的事件序列與 outcome、各列 crash 當下的 journal／registry／收據／門狀態、開服掃描前的觀察（`early`）、收據的原因與 Evidence、收據檔案、checkpoint 範圍（含門 chunk）、移除前後的占用、零移動，以及每列必須成立的 Java 斷言名稱清單。`-SelfTest` 的逐列負控與 close 列相同（每列 8 個）。
+- runner 另核：crash／reopen 的事件序列與 outcome、各列 crash 當下的 journal／registry／收據／門狀態、開服掃描前的觀察（`early`）、收據的原因與 Evidence、收據檔案、checkpoint 範圍（含門 chunk）、移除前後的占用、零移動，以及每列必須成立的 Java 斷言名稱清單。`-SelfTest` 的逐列負控與 close 列相同（每列 8 個）；T5 Step 0 起本節的列另加上方「完整性」的 B 收尾票負控。corridor 族每列另 3 個、第 10 列另 5 個，見同一處。
 - 同 JVM 的子項（`M7HomeClosureGameTests`）：`checkpoint_failure_keeps_close_and_lock`（checkpoint 結果未知）、`existing_receipt_mismatch_keeps_lock`（發佈前目標已存在而內容不同）、`published_receipt_mismatch_keeps_lock`（收據與熱列跨檔不符；T4 P1 起不再避開原生 autosave 的窗口，改成在不符而且 journal dirty 的期間正面呼叫 `saveAll(true,false,false)`（autosave 的同一條路徑）與 `saveAll(true,true,true)`（`/save-all flush`，原版 `SaveAllCommand` 的同一條路徑），斷言例外不傳出、raids 與 level.dat（flush 時另有兩側 chunk）都存到、journal 照原樣寫出、保鎖，管理員 ERROR 只記一次）；T4 P2 的 `native_save_write_failure_keeps_pending`（`M7NativeSaveFault` 讓 journal 正式寫出的 atomic move 失敗：checked 寫出與故障期間的兩次原生存檔都不得把例外傳出、journal 檔不變、保留 dirty／pending／待確認的 roll-forward、原生存檔的 ERROR 恰一則帶 `TICK_LOG_MARKER`；解除故障後由 recovery 的 journal 退避重試自行收斂）與 `native_save_skips_unhealthy_journal`（journal 不健康時原生存檔不丟出、不寫 journal，其他資料照常存到，恢復健康後照常寫出）。M4 recovery 的 `readback-fault` 自 T4 P2 起預期正常停服：原生 save 不丟出、不寫入、journal hash 不變，PENDING 類 ERROR 恰一則（訊息寫明需要重啟伺服器才能收斂），停服完成（SERVER_STOPPED、JVM exit 0）、磁碟上仍是那份 exact attempt；`recover`、`verify` 照舊。T4 B2b-1（P2-M4）起 `pending-stopped.json` 另記 `stopSaveCalls`（SERVER_STOPPING 之後真正進入 journal save 本體的次數，save HEAD 計數、被凍結取消的不算；ERROR 已去重，不能代替）與 `universeUnchanged`（與一般停服路徑相同，停服不得改 Universe catalog／world keys），Java 與 `m4-recovery-probe.ps1` 都要求 `stopSaveCalls≥1`、`universeUnchanged=true`。
 - 共用 GT server 的殘留收尾（T4 B2b-1，P2-M3）：`M7HomeClosureGameTests.Projection` 記下 `settled()`／`dormant()` 建立的 SID，`close()` 時在釋放 B 區塊票之前，以正式路徑收掉仍在 journal 的列（必要時 checked 清租約、checked latch `ROOT_DISABLED`，再呼叫回程終局 owner 的 `HomeClosure.step`），成功記 `M7_GT_RESIDUE_CLOSED`，收不掉記 `M7_GT_LEFTOVER_HOME`（附 thresholds）；不在 test 結束後另等（下一個 batch 已開始）。`native_save_write_failure_keeps_pending` 因此先等 B 端就緒（`whenEntryReady`，最多 380 tick，tickLimit 2000→2300）。`M7CapacityFixture.admit` 先檢查共用 journal 沒有其他 HOME 列與 pending，不成立時以 `PRIOR_TEST_RESIDUE` 失敗，不誤報成容量問題。
 - 原生存檔 ERROR 的去重（T4 B2b-1，P2-M2）：同一段失敗期間每一類只記一則；讀回確認的成功寫出結束這段期間，之後再發生同類失敗仍再記一則。收據 ERROR 的去重（SID×類別）在這個 SID 的收據核對（`verifyActive`）通過時清除（T4 B2b-2，B2b1-M2）：不符期間核對一直失敗，仍只記一則；修好之後同一個 SID 再犯會再記。不以「寫出成功」清除，因為未變動的不符列每次存檔都照原樣寫出成功。收據檔路徑由 `HomeReceiptStore.receiptPath` 單一來源計算，收據讀寫與這則 ERROR 共用（P2-M5 第 4 點）。
 - `-VerifySummary` 的完整性檢查與 `-VerifyAggregate` 已在 T4 B2b-2 完成（見上方「完整性」）；run-all、CI 接線見下方「run-all 與 CI 接線（T4 B2b-3）」。
+
+### corridor 族（T5-5：開服接手與走廊恢復，`M7HomeCorridorPhases.java`）
+
+plan Task 5 :327 的切點以 Windows 原生跨 JVM 鏈驗證：crash 停在入場、選門、返還與清理的各個切點，reopen 以新 JVM 由正式的開服接手（attach）與返還引擎從磁碟續做。manifest 在上一節的 8 列之後接 10 列 `corridor-*`（`m7-inventory.json` 的 `windows.native` 同順序），以 `-Family corridor` 單獨選取。owned root、每列兩個 phase 各一個 JVM、halt／final receipt、summary 與驗證都沿 B1；runner 依族分派到 `Assert-M7CorridorCrash`／`Assert-M7CorridorReopen`。只放 Windows。
+
+| 檔案 | 內容 |
+| --- | --- |
+| `src/testmod/java/dev/quantumchamber/gametest/M7HomeCorridorPhases.java` | 10 列的 phase 表、fixture、halt／final receipt 與斷言。`M7HomeClosurePhases.rows()` 接上它的 `NAMES`，`M7HomeProbe` 依列名分派 |
+| `src/testmod/java/dev/quantumchamber/gametest/mixin/M7HomeCorridorWindowMixin.java` | cut 點，同一檔兩個 mixin 類：`M7HomeCorridorWindowMixin` 在 `SessionRecoveryState.save` 內 `JournalReadback.read` 之前（與 `SessionJournalWindowFaultMixin` 同一注入點）；`M7HomeCorridorCheckpointMixin` 在 `MeasuredWorldSaveCheckpoint.save(MinecraftServer, HomeSessionRecord)` 的 HEAD 與 RETURN（舊列的 overload 由 `MeasuredCheckpointFaultMixin` 注入，以完整 descriptor 區分）。每個注入點 `require=1`、`allow=1`，只通知，不改參數與結果，不吞例外 |
+| `M7HomeProbe.java` 的 `corridorReached`／`Phase.corridor` | corridor 族的獨立事件通道；只有 corridor runner 覆寫，其他族不錄 |
+
+- 共同 fixture（crash）：
+  - A：蓋原艙，參與者帶 QuantumState 在艙內、未供電時以正式 `attemptArm` 登記（比照 close 列）。B：物化 COMPLETE 投影，B 門 CLOSED。之後 A、B 都以紅石塊供電，參與者移到 B 艙內（第 6、9 列兩人，其他列一人），A 艙內沒有人。crash 以測試票保持 A、B。
+  - 基線 1：`ChunkSaveCheckpoint.save`（A、B 的相關 chunks）加 `saveAllPlayerData`（`baselineSaved`），之後以正式 `startHome` 入場。
+  - 基線 2（第 2～10 列）：SUPERPOSITION 就緒之後，對走廊租約 chunks 與 B 做一次世界 checkpoint（`corridorBaselineSaved`），相當於一次 autosave；不存 playerdata（設計審查複審 N-2）。
+  - 選門列（第 3～10 列）：參與者以原生移動走到 HOME 門前，以正式 `onUse` 點 current 實例的 HOME 門（`selectAccepted`）。
+
+| # | 列 | 人數 | crash 切點 | cut 機制 | reopen 終局 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `corridor-arming` | 1 | ARMING 已 checked、還沒寫幾何，參與者在 B | probe 的 END tick 看到 checked ARMING（current＝flushed、沒有 pending）就 halt | 轉 checked RETURNING（`convertedToReturning`）；參與者在 B 原地 Returned、不移動；清理、列移除、ack、B 來源票釋放、不 busy |
+| 2 | `corridor-superposition` | 1 | SUPERPOSITION 已 checked、mapping 已發布、基線 2 完成，參與者在走廊 | 同一個 END tick 做完基線 2 就 halt | 開服即登入，參與者在走廊被凍結 → RETURNING → 正式 B 來源票載入 B → 原生移回 exact B、Returned → 清理 → 列移除。另見證重建 space 的 HOME 門：清理開始前 `homeDoorAt` 回 present、`current=false`，`onUse` 回 FAIL、門不變（`restoredHomeDoorConsumed`）；入口門格回 empty（`entranceDoorNotHome`） |
+| 3 | `corridor-select-pending` | 1 | 點門已受理（SELECT_CHECK 票），MEASURED 還沒寫 | 同一個 END tick 內點門、核過就 halt | 同第 2 列；全程沒有選定（`noSelectionEver`） |
+| 4 | `corridor-select-unconfirmed` | 1 | 選門的 MEASURED 已原子替換、strict 讀回之前：記憶體的 flushed 仍是 SUPERPOSITION，磁碟上已是 MEASURED | journal 讀回之前的通知；只在已點門、pending 是本 SID 選定的 MEASURED 時 halt | strict load 讀到 MEASURED（`selectionFromDisk`）→ 保留式返還 → DORMANT：選擇保留、租約空、B 來源票釋放、艙 busy |
+| 5 | `corridor-measured` | 1 | MEASURED 已 checked、沒有人 Returned | 看到 checked 選門的第一個 END tick 就 halt | 同第 4 列的 DORMANT（`selectionKept`） |
+| 6 | `corridor-partial-returned` | 2 | MEASURED；甲已 Returned、在 B，乙離線 | 看到 checked 選門的那個 tick 讓乙斷線；甲返還後 halt | 甲在 B 不動；乙登入後回 exact B → DORMANT |
+| 7 | `corridor-cleanup-before` | 1 | 全員 Returned、走廊已在記憶體清空、HOME checkpoint 之前 | HOME checkpoint 的 HEAD（本 SID 的選定列） | 不移動任何人；清理冪等、checkpoint → DORMANT |
+| 8 | `corridor-cleanup-after` | 1 | 同上，HOME checkpoint 已完成、清租約的 roll-forward 之前 | HOME checkpoint 的 RETURN | 同上；reopen 再 checkpoint 一次屬冪等 |
+| 9 | `corridor-collapsing-partial` | 2 | 先到第 6 列的狀態，testmod 再以正式 journal 入口（guard 內的 `commitHomeRestore`）提交 MEASURED→COLLAPSING；甲 Returned、乙離線 | 同一個 END tick 確認 COLLAPSING 已 checked 就 halt | 乙回 exact B → COLLAPSING 已清理：全員 Returned、租約空、B 來源票仍持有、艙 busy |
+| 10 | `corridor-measured-stopped` | 1 | MEASURED、StopReason=ROOT_DISABLED 已 checked、registry 停用已落盤、沒有人 Returned | 看到 checked 選門的那個 tick 以正式 `setEnabled(false)` 停用 A，核 stop latch，再以 `ChunkSaveCheckpoint.save` 讓 registry 落盤後 halt | 返還 → DORMANT → 同一個 tick 先釋放 B 來源票（`sourceTicketReleasedBeforeClose`）→ 回程終局 owner 以 ROOT_DISABLED 收尾（close 的 13 個 cut 事件）、B 門 OPEN、收據、列移除 → 不 busy |
+
+- 第 9 列的 MEASURED→COLLAPSING 是 testmod 造出的；production 的這條邊屬 T6。
+- 事件錄製（設計稿 7.2）：
+  - `journal-readback` 一律不錄，只當第 4 列的 cut。它的觸發次數隨 autosave 與各種 roll-forward 變動，錄了會偶發 FAIL。
+  - `home-checkpoint-head`／`home-checkpoint-return` 只錄本 SID 的通知，選定與未選定都錄。
+  - close／收據事件（`M7HomeCloseWindowMixin`、`M7HomeReceiptWindowMixin`）照名稱錄。
+  - 每筆另記 `serverTick`、`gameTime`、`homeSourceTicket`（本 SID 的 B 來源票）、`entryTicket`（B 收尾票）、`bPlayers`（B 世界的玩家數）。
+  - runner 只比對事件名稱序列。crash：第 7 列 `[head]`、第 8 列 `[head,return]`，其他列沒有事件。reopen：每列 `[head,return]`，第 10 列再接 close 的 13 個 cut（`before-close`…`after-remove`）。基線 1、2 直接呼叫 `ChunkSaveCheckpoint.save`，不經 HOME checkpoint，不產生事件。
+- reopen：
+  - 開服前讀到的 journal 檔 hash 必須等於 crash 當下（`journalBytesFromCrash`）。開服到登入之前，B 只用不建立的查詢，不加測試票。
+  - SERVER_STARTED 時：走廊 space 已重建（`reservationRestoredAtStart`）、租約受保護（`corridorProtectedAtStart`）、還沒有 B 票（`noTicketBeforeLifecycle`）、艙 busy（`busyAtStart`）、A 的 presence 是 BUSY（`aPresenceBusy`）。
+  - 正式 B 來源票取在 B 世界的 Controller chunk、晚於開服（`bTicketFormal`）；B 全部載入時 B 沒有玩家（`bLoadedByFormalTicket`）。
+  - 登入時機：第 2、3 列在 SERVER_STARTED 立即登入（參與者在走廊，見證 B 票取到之前就登入，結果仍只回 B）。其他列等到本 SID 的 B 來源票在、B 的 home chunks 全部載入、B 沒有玩家才登入。第 6、9 列的乙在甲登入 40 tick 之後才登入。
+  - 登入位置（`participantLoginPose`）是 crash 前最後一次存下的 playerdata（設計審查複審 N-1、N-2）：
+    - 第 1 列：基線 1，在 B；
+    - 第 6、9 列的甲與第 7、8 列：返還時的 checkpoint，在 B；
+    - 第 6、9 列的乙：斷線時的存檔，在走廊；
+    - 其他列：SUPERPOSITION 就緒當下的 pose，也就是 production 入場時存下的 checkpoint，在走廊。基線 2 不存 playerdata，所以入場 checkpoint 退化時這一項會失敗。
+  - 參與者每個 tick 的世界都不是 `minecraft:overworld`（`neverInA`）；第一次返還移動時 `HomeRootFence` 已就緒（`fenceReadyAtFirstMove`）。第 1～9 列全程沒有 B 收尾票、A 票與 close 事件（`noEntryTicket`、`noRootTicket`、`noCloseEvents`）；第 10 列的每個 close 事件當下 B 來源票都已釋放（`sourceTicketReleasedBeforeClose`），也不取 B 收尾票、B 有玩家（`entryTicketNeverTaken`）。
+  - 結束時租約範圍全是 AIR（`corridorClearedAtEnd`），之後靜止 40 tick（`quietKept`），正常停服寫 `final.json`。
+- runner 另核：crash 當下 journal 的記憶體（current、flushed、pending）與磁碟 strict decode 依各列預期（`M7_HOME_CORRIDOR_CRASH`）；reopen 的事件序列、開服前 journal hash、B 來源票（`M7_HOME_CORRIDOR_B_TICKET`）、參與者從未在主世界（`M7_HOME_CORRIDOR_NEVER_A`）、各列終局（列移除、DORMANT 或 COLLAPSING 已清理，`M7_HOME_CORRIDOR_END`）與 Java 斷言名稱清單。`-SelfTest` 的負控見上方「完整性」。
+- 開服接手對每個 HOME 狀態的決策另由 JUnit `M7HomeAttachActionTest`（5 案，`portable.junit`，M7 gate 的 `Main` 段）核對：「把選定的 MEASURED 轉 RETURNING」「沒有返還工作的列也取 B 票」這類變異在整合層有其他防線擋住，原生列可能看不出來，只有這一層能確定殺掉。
+- 覆蓋界線：
+  - corridor 列沒有涵蓋「走廊幾何已寫進世界、從未落盤就 crash」：第 2～10 列都先做基線 2 才 crash，第 1 列在寫幾何之前就 crash。
+  - 磁碟上本來就是 RETURNING 的未選定列（例如取消之後、一人已返還時 crash）沒有原生列，只有 JUnit `M7HomeAttachActionTest.returningTakesTicketAndSpaceWithoutRewrite` 與讀碼支持。
+- 耗時（設計稿 7.6，**預估，待實測**）：本機每列約 50～75 秒、第 10 列約 60～85 秒，`-Family corridor` 約 9～12.5 分鐘，每個 phase 都低於 `-PhaseMinutes 5`。run-all 與 CI 見下方「run-all 與 CI 接線（T4 B2b-3）」。
+- `ci-rule-check.ps1` 的 M7 fixture 不在 run-all 內，由 SDD 驅動另外執行（設計稿第 10 節），見下方「M7 各段的最後重驗與 ci-rule-check fixture」。
 
 ### 管理員說明：回程收據與熱列不符（T4 P1、P2）
 
@@ -856,7 +918,7 @@ manifest 在 close 矩陣 39 列之後再接 8 列（B2a 的 5 列、T4 P1 的 `
 
 ### >4096 趟回程歷史（T4 B2b-2，plan Task 4 :265、V10）
 
-`M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（JUnit，`m7-inventory.json` 的 `scale.portable.junit`，兩平台都跑；T4 B2b-5 起不在 M7 gate 內，改在獨立的規模段執行，見下方「規模測試獨立一段」）：4100 個互異 SID 各自經 admission 的同名檔查詢與同卷探測、CLOSE 列進熱 journal、正式 `publishOrVerify` 發布、正式 checked 移除（`terminateHome`，`finishHomeClose` 核過 proof 後的同一個本體）。之後舊 SID（前、中、4096 邊界前後、最後）以「旅程識別碼已有歷史」拒絕重用、新 SID 仍可 admission；抽樣的舊收據 exact 讀回、位元組自發布後不變。禁止全目錄掃描以 instrumentation 證明：收據 store 建在委派預設檔案系統的 `ListingProbe` 上，記錄目錄列舉與碰到別的 SID 收據檔的每一次存取，整段必須都是 0；把 `read` 改成列舉目錄的 mutation 被 `RECEIPT_DIRECTORY_LISTED` 殺掉。不虛增歷史計數：每趟移除後 journal 位元組都回到同一份空 schema6，`data` 底下只有 journal 與收據目錄，收據目錄恰為 4100 個 `<sid>.dat`（事後從磁碟數出）。Windows 本機原本約 46～54 秒（每趟 11～13 ms）；T4 B2b-4 起 admission 與 CLOSE 列落盤／開服 strict 載入只在 strict 趟做（見下方「strict 趟抽樣」），約 28 秒（每趟約 7 ms）。限制：JUnit 拿不到 owner 的 mint／proof，CLOSE 列以 journal fixture 放入；B 門、原生 checkpoint 與 proof 由 M7 GameTest 與原生列（T4B 起 47 列）負責。
+`M7HomeHistoryScaleTest.moreThan4096DistinctHomeTripsKeepSingleFileHistoryWithoutDirectoryScan`（JUnit，`m7-inventory.json` 的 `scale.portable.junit`，兩平台都跑；T4 B2b-5 起不在 M7 gate 內，改在獨立的規模段執行，見下方「規模測試獨立一段」）：4100 個互異 SID 各自經 admission 的同名檔查詢與同卷探測、CLOSE 列進熱 journal、正式 `publishOrVerify` 發布、正式 checked 移除（`terminateHome`，`finishHomeClose` 核過 proof 後的同一個本體）。之後舊 SID（前、中、4096 邊界前後、最後）以「旅程識別碼已有歷史」拒絕重用、新 SID 仍可 admission；抽樣的舊收據 exact 讀回、位元組自發布後不變。禁止全目錄掃描以 instrumentation 證明：收據 store 建在委派預設檔案系統的 `ListingProbe` 上，記錄目錄列舉與碰到別的 SID 收據檔的每一次存取，整段必須都是 0；把 `read` 改成列舉目錄的 mutation 被 `RECEIPT_DIRECTORY_LISTED` 殺掉。不虛增歷史計數：每趟移除後 journal 位元組都回到同一份空 schema6，`data` 底下只有 journal 與收據目錄，收據目錄恰為 4100 個 `<sid>.dat`（事後從磁碟數出）。Windows 本機原本約 46～54 秒（每趟 11～13 ms）；T4 B2b-4 起 admission 與 CLOSE 列落盤／開服 strict 載入只在 strict 趟做（見下方「strict 趟抽樣」），約 28 秒（每趟約 7 ms）。限制：JUnit 拿不到 owner 的 mint／proof，CLOSE 列以 journal fixture 放入；B 門、原生 checkpoint 與 proof 由 M7 GameTest 與原生列（T4B 起 47 列，T5-5 起 57 列）負責。
 
 分段（T4 B2b-3，I-1）：Gradle 的 `test` task 原本執行期間不輸出任何東西，4100 趟集中在一個方法時，Windows CI 上整段 M7 JUnit 對 `M7Runtime` 的「90 秒無輸出就判卡住」是一段長靜默（CI 44097956125 以 `reason=idle` 失敗，idle 90.03 秒）。現在兩處一起處理，idle 90 秒與總時限 600 秒都不變：
 
@@ -902,16 +964,16 @@ CI 45508192969（`852f27c`）的 Windows「執行 M7 獨立 GameTest」step 耗�
   - `Main`：`M7HomeSpikeGameTests`、`M7HomeClosureGameTests`、`M7HomeEntryTicketGameTests`，另含全部非規模 JUnit（`portable.junit`＋`<平台>.junit`）與兩個 JAR。
   - `Corridor`：`M7HomeCorridorGameTests`、`M7HomeAuthorityGameTests`、`M7RearmGameTests`、`M7SealReleaseGameTests`，只跑 GameTest（不跑 JUnit、不封裝）。（兩段時期；T5-4 加第三段之後 `M7HomeAuthorityGameTests` 移到 `Select`，見下一節。）
   - 理由：會繼續長大的是走廊類別，所以它那一段只配較輕的類別，留最多餘量；`Main` 留收尾類（Closure、B 收尾票）與 Spike（平台／scope 基線，也是 `ci-rule-check.ps1` M7 fixture 的 source mutation 對象）。兩段在 Ubuntu 也都有案例（走廊類別全是 `_windows`）。以 CI 45508192969 的各案 time、每 batch 約 0.73 秒、固定開銷（編譯、開服、停服；Main 另加 JUnit 與封裝）估 Windows CI：`Main` 約 367 秒、`Corridor` 約 328 秒；派工建議的「走廊＋B 收尾票一段」約 378／317 秒，走廊那段的餘量較少。
-- 預期數字（T5-4 fix1 之後；`Select` 段與三段的分配見下一節）：
+- 預期數字（T5-5 之後；`Select` 段與三段的分配見下一節）：
 
   | 段 | Windows JUnit | Windows GameTest | Ubuntu JUnit | Ubuntu GameTest |
   |---|---|---|---|---|
-  | `Main` | 59 | 36 | 59 | 35 |
+  | `Main` | 64 | 36 | 64 | 35 |
   | `Corridor` | 0 | 37 | 0 | 13 |
-  | `Select` | 0 | 25 | 0 | 6 |
+  | `Select` | 0 | 28 | 0 | 6 |
   | `Scale`（不變） | 11 | 0 | 11 | 0 |
 
-  三個 GameTest 段合計 Windows 98、Ubuntu 54。拆成兩段時（`62dacdd` 之後）是 `Corridor` 41／18、合計 Windows 77、Ubuntu 53（與拆段前相同）；T5-4 Step 0 之後 `Corridor` 43／19、合計 79／54。
+  三個 GameTest 段合計 Windows 101、Ubuntu 54。T5-4 fix1 之後是 `Main` JUnit 59、`Select` 25、合計 Windows 98；T5-5 在 `portable.junit` 加 `M7HomeAttachActionTest` 5 案（兩平台），在 `M7HomeSelectGameTests` 加 3 案（全是 `_windows`）。拆成兩段時（`62dacdd` 之後）是 `Corridor` 41／18、合計 Windows 77、Ubuntu 53（與拆段前相同）；T5-4 Step 0 之後 `Corridor` 43／19、合計 79／54。
 - 段名與清單的核對（啟動前與 `-VerifyOnly` 都做）：
   - `m7-ci-gametest.ps1 -Segment` 必須明確指定（`Scale` 或 `gametestSegments` 的段名，目前是 `Main`、`Corridor`、`Select`），不再有預設值；不給是 `M7_SEGMENT_REQUIRED`，不在清單（含大小寫不同）是 `M7_SEGMENT_UNKNOWN`。`inventory` 不是 schema 5 是 `M7_INVENTORY_SCHEMA`。
   - 每段至少一個 `M7*GameTests` 類別（`M7_GAME_SEGMENT_FORM`）；同一類別不得出現兩次（`M7_GAME_SEGMENT_OVERLAP`）；原始碼宣告 `m7_home` GameTest 的類別都要列入某一段（遺漏是 `M7_GAME_SEGMENT_CLASS_UNLISTED`），列入的類別都要有宣告（`M7_GAME_SEGMENT_CLASS_UNDECLARED`），不分平台；本段在本平台至少一案（`M7_GAME_SEGMENT_EMPTY`）。
@@ -938,36 +1000,37 @@ CI 45508192969（`852f27c`）的 Windows「執行 M7 獨立 GameTest」step 耗�
 
 - CI（`m7-validation`）：「執行 M7 獨立 GameTest」與「確認 M7 精確集合與隔離」改帶 `-Segment Main`（step 名稱、root `.superpowers/m7-own` 與 artifact `m7-validation-<平台>` 不變）。之後新增「執行 M7 走廊段 GameTest」（`-Segment Corridor -OutputRoot .superpowers/m7-corridor`，`if: ${{ !cancelled() }}`、20 分）與「確認 M7 走廊段精確集合與隔離」（`-VerifyOnly -SelfTest`，`!cancelled()`、10 分），證據另存 artifact `m7-corridor-<平台>`。前一段失敗時其他段照跑、互不連坐（job 仍是失敗）。規模段的 step 不變。
   - 拆段 fix1（審查 I1、M1）：「確認 M7 精確集合與隔離」開頭先核清單的段：`gametestSegments` 的段名依清單順序（不排序）以逗號串接，必須 `-ceq 'Main,Corridor'`（兩段時期；三段之後是 `Main,Corridor,Select`，見下一節）；多一段、少一段、改名或改順序都以 `M7_CI_SEGMENT_SET` 失敗（訊息附實際的段名）。`ci-rule-check.ps1` 的 M7 fixture 逐字執行這個 step，所以也會執行到這道守門。Main 的執行 step 另加 `timeout-minutes: 20`、驗證 step 加 `timeout-minutes: 10`，與走廊段、規模段相同（job 的 90 分仍是最後上限）。
-- run-all：`m7-home`（`Main`）之後依清單接 `m7-corridor` step（執行，再 `-VerifyOnly -SelfTest`；root `<run root>/m7-corridor`），再接原本的 `m7-scale`。`summary` step 的 `M7_FINAL_PROOF` 改帶 `-Segment Main` 並核 `segment=Main`；之後唯讀重驗其他段（`M7_SEGMENT_FINAL_PROOF`），各段的 `gameCases` 互斥、聯集恰為 `m7-inventory.json` 的全部 Windows M7 GameTest（`M7_SEGMENT_COVERAGE`，漏跑任何一段都不會通過）。結果寫進 `summary.json` 新增的 `m7HomeSegments`（`m7Home` 仍是 `Main`，所以它的 `gameCases` 從 77 變成 36），`SUMMARY` 行尾加 `m7game=Main:36,Corridor:37,Select:25`（T5-4 fix1 之後；兩段時期是 `m7game=Main:36,Corridor:41`）。其他段的 root 缺席時以 `M7_SEGMENT_FINAL_PROOF：<段> root 缺席（<路徑>）` 失敗（T5-5 Step 0，拆段審查 M4；原本是讀不到 `summary.json` 的本地化 IO 訊息）。
+- run-all：`m7-home`（`Main`）之後依清單接 `m7-corridor` step（執行，再 `-VerifyOnly -SelfTest`；root `<run root>/m7-corridor`），再接原本的 `m7-scale`。`summary` step 的 `M7_FINAL_PROOF` 改帶 `-Segment Main` 並核 `segment=Main`；之後唯讀重驗其他段（`M7_SEGMENT_FINAL_PROOF`），各段的 `gameCases` 互斥、聯集恰為 `m7-inventory.json` 的全部 Windows M7 GameTest（`M7_SEGMENT_COVERAGE`，漏跑任何一段都不會通過）。結果寫進 `summary.json` 新增的 `m7HomeSegments`（`m7Home` 仍是 `Main`，所以它的 `gameCases` 從 77 變成 36），`SUMMARY` 行尾加 `m7game=Main:36,Corridor:37,Select:28`（T5-5 之後；T5-4 fix1 之後是 `Select:25`；兩段時期是 `m7game=Main:36,Corridor:41`）。其他段的 root 缺席時以 `M7_SEGMENT_FINAL_PROOF：<段> root 缺席（<路徑>）` 失敗（T5-5 Step 0，拆段審查 M4；原本是讀不到 `summary.json` 的本地化 IO 訊息）。
 - 約 450 秒的回報線逐段計算：Windows CI 的「執行 M7 獨立 GameTest」（`Main`）與「執行 M7 走廊段 GameTest」（`Corridor`）任一個 step 超過約 450 秒就先回報；本機也是逐段計算。（兩段時期；三段之後見下一節最後一點。）
 
 ### M7 GameTest 第三段（T5-4，使用者 2026-11-25「加第三段（建議）」）
 
-T5-4 新增 `M7HomeSelectGameTests`（13 案，全是 `_windows`；T5-4 fix1 補 6 案成為 19 案）。照較高的 CI 基準（`971bbb8`：Main 337 秒、Corridor 351 秒）估，放進任一個既有段都會超過約 400 秒，使用者選加第三段。本節取代上一節的分配與預期數字；上一節其餘規則（段名核對、同 JVM 選取、證據、SelfTest、執行方式）對三段都照舊適用，只有段名序列與 CI step 改變。
+T5-4 新增 `M7HomeSelectGameTests`（13 案，全是 `_windows`；T5-4 fix1 補 6 案成為 19 案，T5-5 再加 3 案成為 22 案）。照較高的 CI 基準（`971bbb8`：Main 337 秒、Corridor 351 秒）估，放進任一個既有段都會超過約 400 秒，使用者選加第三段。本節取代上一節的分配與預期數字；上一節其餘規則（段名核對、同 JVM 選取、證據、SelfTest、執行方式）對三段都照舊適用，只有段名序列與 CI step 改變。
 
 - 分配：
   - `Main`：`M7HomeSpikeGameTests`、`M7HomeClosureGameTests`、`M7HomeEntryTicketGameTests`（不變），另含全部非規模 JUnit 與兩個 JAR。
   - `Corridor`：`M7HomeCorridorGameTests`、`M7RearmGameTests`、`M7SealReleaseGameTests`。
   - `Select`：`M7HomeSelectGameTests`、`M7HomeAuthorityGameTests`，只跑 GameTest。
   - `M7HomeAuthorityGameTests` 由 `Corridor` 移到 `Select` 的理由：`M7HomeSelectGameTests` 全是 `_windows`，單獨成段在 Ubuntu 會選到 0 案（`M7_GAME_SEGMENT_EMPTY`）；Authority 是兩平台都跑的類別，讓三段在兩平台都有案例，同時把 Corridor 的時間移一些到新段。
-- 預期數字（T5-4 之後）：
+- 預期數字（T5-5 之後）：
 
   | 段 | Windows JUnit | Windows GameTest | Ubuntu JUnit | Ubuntu GameTest |
   |---|---|---|---|---|
-  | `Main` | 59 | 36 | 59 | 35 |
+  | `Main` | 64 | 36 | 64 | 35 |
   | `Corridor` | 0 | 37 | 0 | 13 |
-  | `Select` | 0 | 25 | 0 | 6 |
+  | `Select` | 0 | 28 | 0 | 6 |
   | `Scale`（不變） | 11 | 0 | 11 | 0 |
 
-  三個 GameTest 段合計 Windows 98、Ubuntu 54（T5-4 fix1 之後；本體時是 Select 19、合計 92）。
+  三個 GameTest 段合計 Windows 101、Ubuntu 54（T5-5 之後；T5-4 fix1 之後是 `Main` JUnit 59、`Select` 25、合計 98；T5-4 本體時是 `Select` 19、合計 92）。T5-5 新增的 3 個 `Select` 案（`home_arming_quarantined_keeps_lock_until_converged`、`home_arming_rejected_before_write_releases_at_once`、`selected_corridor_death_returns_to_exact_b`）的 batch 都是 `_windows`，列在 `windows.gametest`，Ubuntu 不變。
 - CI（`m7-validation`）：在走廊段的兩個 step 之後新增「執行 M7 選門段 GameTest」（`-Segment Select -OutputRoot .superpowers/m7-select`，`if: ${{ !cancelled() }}`、20 分）與「確認 M7 選門段精確集合與隔離」（`-VerifyOnly -SelfTest`，`!cancelled()`、10 分），證據另存 artifact `m7-select-<平台>`（`if: always()`）。「確認 M7 精確集合與隔離」開頭的段名守門改為：段名依清單順序串接，`-cne 'Main,Corridor,Select'` 就丟出 `M7_CI_SEGMENT_SET`（也就是必須區分大小寫地恰等於這個字串）。前一段失敗時其他段照跑、互不連坐（job 仍是失敗）。
-- SelfTest：`Select` 段與 `Corridor` 段同一套 28 例（T5-5 Step 0 起加 `stale-gametest`，29 例；GameTest 段的反例 `wrong-game-segment`、`foreign-class`、`class-missing`、`class-extra`、`summary-segment` 與清單負控都依清單自動套用；沒有 JUnit／JAR 的段另核 `junit-present`、`summary-extra-field`）。腳本沒有改。
-- 本機：`gates.ps1 -Mode M7GameTest` 依清單逐段執行，root 底下是 `m7`、`m7-corridor`、`m7-select`；run-all 依清單接各段，`SUMMARY` 行尾是 `m7game=Main:36,Corridor:37,Select:25`（T5-4 fix1 之後）。
+- SelfTest：`Select` 段與 `Corridor` 段同一套 28 例（T5-5 Step 0 起加 `stale-gametest`，29 例；GameTest 段的反例 `wrong-game-segment`、`foreign-class`、`class-missing`、`class-extra`、`summary-segment` 與清單負控都依清單自動套用；沒有 JUnit／JAR 的段另核 `junit-present`、`summary-extra-field`）。T5-4 加段時腳本沒有改；`stale-gametest` 是 T5-5 Step 0 改 `m7-ci-gametest.ps1` 加的（見上一節的 SelfTest）。
+- 本機：`gates.ps1 -Mode M7GameTest` 依清單逐段執行，root 底下是 `m7`、`m7-corridor`、`m7-select`；run-all 依清單接各段，`SUMMARY` 行尾是 `m7game=Main:36,Corridor:37,Select:28`（T5-5 之後；T5-4 fix1 之後是 `Select:25`）。
 - 約 450 秒的回報線逐段計算，三段（`Main`、`Corridor`、`Select`）任一個 Windows CI step 超過約 450 秒就先回報。
 
 ### M7 各段的最後重驗與 ci-rule-check fixture（T5-5 Step 0）
 
-T5-4 品質審查 M-12、拆段 fix1 複審新 M1、拆段審查 M2／M5 的整理。測試內容、時限與遊戲程式都沒有改。
+T5-4 品質審查 M-12、拆段 fix1 複審新 M1、拆段審查 M2／M5 的整理（`053a1a1` 驗證腳本、CI 與 README；`9e421c8` testmod）。遊戲程式沒有改；testmod 只做整理（proof 案的具名 finding、觀察者的結束條件、刪除不會觸發的 `M7_SEGMENT_CLASS_MISMATCH`），不加案、不移案。既有的時限都沒有改；新增的上限是最後一個 step 的 10 分與 fixture 子程序的 900 秒（見下）。`053a1a1` 的 commit 訊息寫「時限都沒有改」，指的是既有時限。
+- 同屬 T5-5 Step 0 的 `42877e8`：依使用者 2026-11-26 裁示「記錄，上限調到 45 分鐘（建議）」，把 `windows-native` 的「Windows 原生建置與 GameTest」（default GameTest）step 上限由 30 分調到 45 分。起因是 CI 45776041411（head `05e6b1c`）這一步因 runner 變慢跑滿 30 分鐘被逾時結束，原判 FAIL 保留。job 的 90 分、其他 step，以及 M7 `Invoke-Gradle` 的 600 秒／idle 90 秒都不變。
 
 - CI（`m7-validation`）：在「確認 M7 規模測試精確集合」之後、上傳 step 之前，新增最後一個 `if: ${{ !cancelled() }}` step「確認 M7 各 GameTest 段都已執行」（10 分）。
   - 理由：「確認 M7 精確集合與隔離」沒有 `if:`，Main 的執行 step 失敗時它依預設不執行，開頭的段名守門也跟著略過（job 仍是失敗）；而段名守門只比清單與固定字串，刪掉某段的 step、或加段時連守門字串一起改卻忘了加 step，CI 仍會是綠的。
@@ -977,7 +1040,8 @@ T5-4 品質審查 M-12、拆段 fix1 複審新 M1、拆段審查 M2／M5 的整�
   - `-M7Segment Main|Corridor|Select`（預設 `Main`）各自只接受該段的驗證 step（「確認 M7 精確集合與隔離」「確認 M7 走廊段精確集合與隔離」「確認 M7 選門段精確集合與隔離」），不符是 `M7_FIXTURE_STEP`。`-M7GameTestXml` 給該段 root 的 `raw/gametest.xml`，fixture 把整個 root（`raw/`、`inputs.json`、`summary.json`）放到該 step 的 OutputRoot，再逐字執行 step 原文；給了別段的 root，step 原文以 `M7_INPUT_IDENTITY` 拒絕。`-Mutation drop|skip|fail|wrong-scope` 照舊只改 fixture 內的副本。
   - `-M7Segment Final` 對應「確認 M7 各 GameTest 段都已執行」，改以 `-M7SegmentRoots <root>,<root>,…` 給各段的 root（段名取自各 root 的 `inputs.json`，同一段給兩個是 `M7_FIXTURE_ROOTS`）；故意少給一段，step 原文以 `M7_CI_SEGMENT_FINAL_PROOF：<段> root 缺席` 拒絕。`Final` 不接受 `-M7GameTestXml` 與 `-Mutation`。
   - 執行 step 的子 pwsh 加 `-NonInteractive`，stdin 立即關閉（不繼承呼叫端的 stdin），等待上限 900 秒；逾時只結束這個子程序並記 FAIL（`M7_FIXTURE_TIMEOUT`）。`M7_PLATFORM`／`GITHUB_SHA` 只設在子程序的環境。`result.json` 新增 `m7Segment` 與 `m7Sources`（各段 root 與 `inputs.json`／`summary.json`／XML 的 SHA-256）。
-  - run-all 的 `$ciCases` 沒有 M7 fixture 案；M7 fixture 由 SDD 驅動另外執行，不在完整回歸內。
+  - run-all 的 `$ciCases` 沒有 M7 fixture 案；M7 fixture 由 SDD 驅動另外執行，不在完整回歸內。T5-5 起（設計稿第 10 節）在最終 code pin 上以 SDD 驅動，對最終完整 run-all 的三段 root 依序跑三段驗證 step 的正例、`Final` 正例與缺 `Corridor` 段的負例（預期 `M7_CI_SEGMENT_FINAL_PROOF`），結果另行採計；之後再改 workflow、`gates.ps1` 或 `m7-ci-gametest.ps1` 就要重跑。
+  - 非 M7 路徑（T5-5）：執行 step 的子 pwsh 改由 `Invoke-CiRuleStep` 啟動與等待，比照上面的 M7 路徑。stdin 立即關閉（原本繼承呼叫端的 stdin）；stdout 與 stderr 都非同步讀取；等待上限 900 秒（原本 stderr 同步讀取、`WaitForExit()` 沒有上限，子程序卡住時 ci-rule-check 跟著卡住）；逾時只結束這個子程序（含它的子程序樹），exit code 記 -1、輸出開頭是 `CI_RULE_TIMEOUT`，verdict 是 FAIL。判定仍只看 exit code，沒有改；M7 路徑沒有改。
 - gate 的 `result-build/` 是 build 目錄的快照（拆段審查 M5，T5-5 Step 0 選擇只註明、不改程式）：`gates.ps1` 在 gate 結束時把當時 `build/` 下的 `test-results`、`reports`、各 GameTest XML 與 `libs` 整份複製進去，不只是該次 gate 的產出。所以 `Corridor`、`Select` 段的 `gate-m7-runtime-*/result-build/` 會帶著前一段 `Main` 留下的 M7 JUnit XML 與兩個 JAR，JUnit gate（`M6JUnit`、`M7ScaleRuntime`、`Windows`）的 `result-build/` 也會帶著更早的 GameTest XML。M7 段的判定只讀該段 OutputRoot 的 `raw/` 與 `inputs.json`；判讀 CI artifact 或寫驅動時，要讀該段 OutputRoot 或 gate `scope.json` 指定的 XML，不要遞迴撿 `result-build/`、`prior-build/` 裡的檔案。不改程式的理由：目前的判定都不讀這些夾帶的檔案（M7 段讀自己的 `raw/`，`Fresh-Game` 先核 XML 是本次寫出，`M6JUnit` 讀的是本次 `test` 的 `test-results`），排除它們要動 `Copy-Build` 的共用呼叫點，風險比註明大。
 
 ### M7 idle 卡住時的執行緒快照（使用者 2026-11-25「讓 CI 卡住時自動留快照（建議）」）
@@ -994,15 +1058,15 @@ CI 45569149943（`238ade6`）的 Windows 走廊段卡住超過 90 秒、被 idle
 
 run-all 新 step `m7-home-native`（在 `m6-native` 之後）：
 
-- 以 `-EvidenceRoot <run root>` 一次跑完整 47 列（T4B 起；本機約 30 分鐘：47 列×約 38 秒）。run root 內必須恰好一份 `m7-home-run-<12 hex>.json`（`M7_HOME_RUNALL_SUMMARY`）。
-- 再以 `-VerifySummary <那一份> -ExpectedHead <run-all 開始時的 HEAD> -RequireComplete -SelfTest` 驗證，輸出必須恰好一行 `M7_HOME_VERIFIED_COMPLETE PASS rows=47 phases=94 … selection=all HEAD=<同一個 HEAD>`（`M7_HOME_RUNALL_NOT_COMPLETE`；T4B 之前是 46／92）。分片 summary 會被 `-RequireComplete` 以 `M7_HOME_NOT_COMPLETE` 拒絕，不能冒充完整。
-- `summary` step 另外唯讀重驗同一份 summary（T4 B2b-4，B2b3-M2，`Get-M7HomeNativeProof`）：run root 內恰一份、`-VerifySummary … -ExpectedHead <HEAD> -RequireComplete`（不再跑負控）、輸出恰一行 47 列的 `M7_HOME_VERIFIED_COMPLETE PASS`，重驗前後 SHA-256 相同、head／47 列／94 phase 相符；結果寫進 `summary.json` 的 `m7HomeNative`（`summary`、`sha256`、`rows`、`phases`、`status=COMPLETE`、`verify`），`SUMMARY` 行最後加 `m7native=COMPLETE:47`（T4B 之前是 46／92、`COMPLETE:46`）。跳過或刪掉 `m7-home-native` step 時，summary step 以 `M7_HOME_RUNALL_SUMMARY` 失敗。其他 step 與 `summary.json` 既有欄位沒有改。
+- 以 `-EvidenceRoot <run root>` 一次跑完整 57 列（T5-5 起；T4B 起到 T5-5 之前是 47 列，本機約 27～30 分鐘：47 列×約 38 秒）。corridor 10 列本機每列約 50～75 秒、第 10 列約 60～85 秒，合計約 9～12.5 分鐘，整步約 36～42 分鐘（都是設計稿 7.6 的預估，待實測）。run root 內必須恰好一份 `m7-home-run-<12 hex>.json`（`M7_HOME_RUNALL_SUMMARY`）。
+- 再以 `-VerifySummary <那一份> -ExpectedHead <run-all 開始時的 HEAD> -RequireComplete -SelfTest` 驗證，輸出必須恰好一行 `M7_HOME_VERIFIED_COMPLETE PASS rows=57 phases=114 … selection=all HEAD=<同一個 HEAD>`（`M7_HOME_RUNALL_NOT_COMPLETE`；T4B 之前是 46／92，T4B 起到 T5-5 之前是 47／94）。分片 summary 會被 `-RequireComplete` 以 `M7_HOME_NOT_COMPLETE` 拒絕，不能冒充完整。
+- `summary` step 另外唯讀重驗同一份 summary（T4 B2b-4，B2b3-M2，`Get-M7HomeNativeProof`）：run root 內恰一份、`-VerifySummary … -ExpectedHead <HEAD> -RequireComplete`（不再跑負控）、輸出恰一行 57 列的 `M7_HOME_VERIFIED_COMPLETE PASS`，重驗前後 SHA-256 相同、head／57 列／114 phase 相符；結果寫進 `summary.json` 的 `m7HomeNative`（`summary`、`sha256`、`rows`、`phases`、`status=COMPLETE`、`verify`），`SUMMARY` 行最後加 `m7native=COMPLETE:57`（T4B 之前是 46／92、`COMPLETE:46`；T4B 起到 T5-5 之前是 47／94、`COMPLETE:47`）。跳過或刪掉 `m7-home-native` step 時，summary step 以 `M7_HOME_RUNALL_SUMMARY` 失敗。其他 step 與 `summary.json` 既有欄位沒有改。
 - `summary` step 的 M4 recovery `readback-fault` 分支另外直接核 `pending-stopped.json` 的 `stopSaveCalls≥1` 與 `universeUnchanged=true`（B2b1-M4，與 `m4-recovery-probe.ps1` 對齊）。
 
 CI（`.github/workflows/build.yml`）新增兩個 job，其他 job 不變：
 
-- `m7-home-native`（windows-latest，matrix 四片，`fail-fast: false`）：`ordinary`、`sealed`、`passable` 各以 `-DoorState` 跑 13 列；`restart-receipt` 依序以 `-Family restart`、`-Family receipt` 跑 4＋4 列（T4B 之前是 3＋4）。每次 runner 輸出的 `M7_HOME_SUMMARY=` 恰一行，路徑依序寫進 `build/m7-home-native/<shard>.txt`。驗證 step 對每一份跑 `-VerifySummary -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為該選擇的 `M7_HOME_VERIFIED_SHARD PASS … selection=doorState:<門態>|family:<族> HEAD=$GITHUB_SHA`（單份驗證對分片也是 exit 0，所以不只看 exit code）。artifact `m7-home-native-<shard>`：清單、summary、phase 證據（`.superpowers/verification/m7-home-*/**`）、各 root 的 `preservation.json`、`server.properties`、`world/data/**`。
-- `m7-home-native-aggregate`（`needs: m7-home-native`，windows-latest）：以 `merge-multiple` 把四片 artifact 下載回 workspace 根目錄。summary 內記的是絕對路徑，所以彙總也必須在 windows-latest（workspace 路徑與分片 job 相同）；先核四個清單恰為 `ordinary,passable,restart-receipt,sealed`、合計 5 份 summary、每份 summary 引用的 `preservation.json` 與 phase receipt 都已下載（`M7_HOME_CI_AGGREGATE_*`），再跑 `-VerifyAggregate … -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=5 rows=47 phases=94 … HEAD=$GITHUB_SHA`（T4B 之前是 46／92）。結果另存 artifact `m7-home-aggregate`。
+- `m7-home-native`（windows-latest，matrix 五片，`fail-fast: false`；T5-5 之前是四片）：`ordinary`、`sealed`、`passable` 各以 `-DoorState` 跑 13 列；`restart-receipt` 依序以 `-Family restart`、`-Family receipt` 跑 4＋4 列（T4B 之前是 3＋4）；`corridor`（T5-5）以 `-Family corridor` 跑 10 列。每次 runner 輸出的 `M7_HOME_SUMMARY=` 恰一行，路徑依序寫進 `build/m7-home-native/<shard>.txt`。驗證 step 對每一份跑 `-VerifySummary -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為該選擇的 `M7_HOME_VERIFIED_SHARD PASS … selection=doorState:<門態>|family:<族> HEAD=$GITHUB_SHA`（單份驗證對分片也是 exit 0，所以不只看 exit code）。artifact `m7-home-native-<shard>`：清單、summary、phase 證據（`.superpowers/verification/m7-home-*/**`）、各 root 的 `preservation.json`、`server.properties`、`world/data/**`。
+- `m7-home-native-aggregate`（`needs: m7-home-native`，windows-latest）：以 `merge-multiple` 把五片 artifact 下載回 workspace 根目錄。summary 內記的是絕對路徑，所以彙總也必須在 windows-latest（workspace 路徑與分片 job 相同）；先核五個清單恰為 `corridor,ordinary,passable,restart-receipt,sealed`、合計 6 份 summary、每份 summary 引用的 `preservation.json` 與 phase receipt 都已下載（`M7_HOME_CI_AGGREGATE_*`），再跑 `-VerifyAggregate … -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=6 rows=57 phases=114 … HEAD=$GITHUB_SHA`（T4B 之前是 46／92；T4B 起到 T5-5 之前是四片、`summaries=5 rows=47 phases=94`）。結果另存 artifact `m7-home-aggregate`。
 - runner 環境比對（T4 B2b-4，B2b3-M3）：每片在執行 step 之前，以「記錄 Windows M7 原生分片 runner 環境」step 寫 `build/m7-home-native/<shard>.runner.json`（`shard`、`workspace`＝`GITHUB_WORKSPACE` 的絕對路徑、`imageOS`、`imageVersion`），隨分片 artifact 上傳。彙總 step 先記下自己的值，逐片比對：缺記錄或 shard 不符 `M7_HOME_CI_AGGREGATE_RUNNER`、workspace 不同 `M7_HOME_CI_AGGREGATE_WORKSPACE`、`ImageOS` 不同 `M7_HOME_CI_AGGREGATE_IMAGE`，訊息附兩邊的 workspace 與 image；同一個 image 只有 `ImageVersion` 不同時只記一行 `M7_HOME_CI_AGGREGATE_IMAGE_VERSION_DIFFERS`、不失敗（不影響路徑）。這些比對排在清單檔名檢查之後（runner 記錄要靠清單的檔名才找得到）、summary 數與原件存在檢查之前（`.github/workflows/build.yml` 彙總 step），所以路徑不同時以具名錯因失敗，不會看起來像原件沒上傳。彙總 step 的主體包在 `try/catch` 裡：任何錯誤都先把訊息、error record、例外與 script stack 附加到上傳的 `build/m7-home-native-aggregate.log`（`M7_HOME_CI_AGGREGATE_FAIL …`），再原樣丟出；原本的判定沒有改。
-- timeout：分片 job 90 分鐘、執行 step 60 分鐘、驗證 10 分鐘；彙總 job 30 分鐘。依據：本機門態分片 450～572 秒、restart 約 103 秒、receipt 約 130 秒；同 runner 上 M6 原生鏈本機約 8 分鐘、CI job 24～31 分鐘（約 3～3.9 倍），M7 JUnit 約 3～3.5 倍，估門態分片在 CI 約 30～40 分鐘（含第一個 phase 的冷編譯）。
+- timeout：分片 job 90 分鐘、執行 step 60 分鐘、驗證 10 分鐘；彙總 job 30 分鐘。依據：本機門態分片 450～572 秒、restart 約 103 秒、receipt 約 130 秒；同 runner 上 M6 原生鏈本機約 8 分鐘、CI job 24～31 分鐘（約 3～3.9 倍），M7 JUnit 約 3～3.5 倍，估門態分片在 CI 約 30～40 分鐘（含第一個 phase 的冷編譯）。T5-5 的 `corridor` 片沿用同一組上限（job 90 分、執行 step 60 分、驗證 10 分），沒有另設；依 CI 45767504067 既有分片約 57～98 秒／列，估 corridor 片在 CI 約 100～180 秒／列、合計約 17～30 分鐘（設計稿 7.6 的預估，待實測）。
 - 這些 step 目前沒有 `ci-rule-check.ps1` 的 fixture；T4 B2b-3 以 SDD 內一次性的 harness 逐字抽出 step 原文實跑驗證（見 SDD `t4b2b3-report.md`）。
