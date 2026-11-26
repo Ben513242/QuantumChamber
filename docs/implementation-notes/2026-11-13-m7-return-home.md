@@ -1,6 +1,53 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）；T5 分 5 段，T5-1、T5-2 已依段落結案，T5 整體未完成（見「最新：T5-1、T5-2 結案（2026-11-24）」節）；T5-3 於 2026-11-25 依段落結案，同日依使用者裁示把 M7 Main 的 GameTest 拆成兩段（見「最新：T5-3 結案（2026-11-25）」節）；T5-4 的 Step 0 已完成，本體進行中、暫停等使用者裁示（見「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）；T5 分 5 段，T5-1、T5-2 已依段落結案，T5 整體未完成（見「最新：T5-1、T5-2 結案（2026-11-24）」節）；T5-3 於 2026-11-25 依段落結案，同日依使用者裁示把 M7 Main 的 GameTest 拆成兩段（見「最新：T5-3 結案（2026-11-25）」節）；T5-4 的 Step 0 已完成，本體曾暫停等使用者裁示（見「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節），2026-11-26 恢復後本體已實作、本機驗證通過，但兩席審查未過，交給新對話做 fix round（見「最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+
+## 最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）
+
+狀態：T5-4 本體的 GREEN 與 CI 第三段已在本機 commit，本機驗證通過；兩席審查都沒過，依使用者原話「好，審查回來沒問題就繼續另外等兩個子代理完成就收尾交接給新對話完整提示詞」，本對話不派 fix round，交給新對話。接手入口 `docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md`。T5-4 未結案。
+
+下文 S 指 `.superpowers/sdd/2026-11-13-m7-return-home/`（gitignored）。本節的事實讀自 S 的 `STATUS.md`（2026-11-25 18:4x 起各段）、`t5-4-report.md`（SHA-256 `75A8ACDC1A2756B18E010B9DD1430A60C011AC57570D4206E447B3ED1E3389DF`）、兩份審查檔與各使用者裁示原文檔。
+
+### 使用者裁示（2026-11-25 18:3x 之後；第 1、2 點是 AskUserQuestion，題目與選項由 controller 撰寫，原文檔 S `user-t5-4-resume-ruling-20261125.md`；第 3、4 點是主 chat 原話）
+
+1. 恢復 T5-4：選「恢復，死亡案改用真重生（建議）」。選項說明原文：「只改測試：死亡案改用真客戶端的重生封包（onClientStatus PERFORM_RESPAWN）觸發重生，再照真客戶端回覆傳送確認，跑一次。過了就寫成正式步驟、拿掉診斷程式，繼續 GREEN、第三段、mutation、focused 與審查；死亡案計數從這次修法起重算，同一案第 3 次再停。沒過就停下問你。」
+2. Step 0 CI 卡住：選「讓 CI 卡住時自動留快照（建議）」。選項說明原文：「只改驗證腳本：逾時守門判定卡住、結束之前，對測試 server 取兩次執行緒快照並隨 artifact 上傳；時限不改，走一席審查。這次失敗原判保留、不重跑。對應的 commit 要排在 GREEN 之後一起 push（推 RED 會讓 CI 變紅）。之後若再卡住就有快照可以查根因。」
+3. 卡住的 fixture 程序（2026-11-26 08:52，原文檔 S `user-t5-4-fixture-hang-kill-ruling-20261126.md`）：「可以，你結束那兩個程序，繼續下一步」。
+4. 收尾交接（2026-11-26 09:29）：「好，審查回來沒問題就繼續另外等兩個子代理完成就收尾交接給新對話完整提示詞」。controller 的讀法（不是使用者逐字裁示）：「兩個子代理」是兩席審查；審查沒過，所以不派 fix round，直接交接。
+
+### commit（都只在本機）
+
+- `46a4683` RED（7 檔）、`7182641` 暫停紀錄 docs、`5be0a35` GREEN（6 檔，+449／−26）、`25e5038` CI 第三段 Select（`build.yml`、`scripts/verification/README.md`、`scripts/verification/m7-inventory.json`）。origin feature 仍是 `238ade6`。
+- 沒有 push 的理由（controller 決定）：第 2 點選項說明要求快照腳本 commit 排在 GREEN 之後一起 push；GREEN 又有審查 Important 待修。fix round 與快照腳本 commit 完成後一起正常 push。
+
+### 本機驗證（Windows；implementer 自報，controller 抽核相符）
+
+- RED：`t5-4-red-pin-303080cd` 三案具名失敗。
+- 走廊死亡案改用原生 `onClientStatus(PERFORM_RESPAWN)`＋`confirmTeleport()`，targeted 一次 PASS（`t5-4-death-real-respawn-ca0a1669`）；診斷程式已移除。
+- 第三段：Windows Main 36／Corridor 37／Select 19，Ubuntu 35／13／6；`M7_CI_SEGMENT_SET` 守門負控 `t5-4-segset-guard-6fa4c05a` 四例都被擋。Authority 類別從 Corridor 移到 Select（implementer 決定，理由是只放 Select 類別時 Ubuntu 該段是 0 案；規格審查判定理由成立）。
+- mutation 11 項全部 KILLED（拋棄式 clone、逐位元還原）。第一輪 11 項都因驅動 `-Segment` 缺 Select 在參數綁定被拒（工具錯誤，沒有套用變異），controller 先前向使用者說「b-dead-skip 第一輪存活、第二輪才殺」是誤述，已更正。
+- focused 兩輪（`t5-4-focus-1-c9a32609`、`t5-4-focus-2-1ad4d955`）：JUnit 五類（12／52／1／7／2 案）PASS；三段 `M7_VERIFIED PASS`、各段 SelfTest 28 例符合預期。本機秒數 Main 155／149、Corridor 114／101、Select 79／76。
+- default 子集：default 23/23、normal 3/3（`t5-4-default-subset-9edef930`）。同 root 的 m5「FAIL cases=60 seconds=23」是驅動錯誤：batch `m5_collapse_source_live` 屬 default run，被排進 M5 run（`gates.ps1:325` 的 `$M5RunClasses`），伺服器啟動即以「指定 batch 子集不符」失敗、0 案執行，60 是 11-24 的舊 XML。SOURCE fast path 在正確的 default run 補跑 1/1 PASS（`t5-4-default-subset-9a0464c0`）。
+- M6GameTest 35/35（`t5-4-m6gametest-b66d1fa1`）。
+- ci-rule-check M7 fixture 正例：第一次 `t5-4-ci-fixture-2aeb830f` 卡住約 12.8 小時（CPU 約 1.5 秒、無子程序、沒有輸出），依第 3 點由 controller 結束，原判「未完成」。controller 決定（不是使用者裁示）不改 SDD 腳本，以 `t5-4-ci-fixture-rerun.ps1` 直接呼叫 `ci-rule-check.ps1`（`-NonInteractive`、stdin 導向空檔、900 秒上限）重跑一次：`t5-4-ci-fixture-rerun-b5e9ca82`，exit 0、PASS、49 秒、`M7_VERIFIED PASS platform=Windows segment=Main junit=59 gametest=36 HEAD=25e5038…`，輸入 hash 不變。卡住原因「子 pwsh 等繼承的 stdin」仍是推論。
+
+### 兩席審查（都沒過）
+
+- 規格：❌ C0／I3／M9（S `t5-4-review-spec.md`，SHA-256 `9E5C9425BA6F24B383F0DDBF2019B59146C169340ED021D83315BC7960BE8B0E`）。production 與 spec、設計稿一致，三項使用者裁示有落實，第三段逐段正確；不過的原因是驗收覆蓋：I-1「原玩家實體被替換」沒有測試（若判定不可達，等於縮小 V05 驗收，要交使用者裁示）；I-2 延遲期間的多項變更（離線、離開 bbox、取消或 B 斷電／開門、SELECT_CHECK 逾時、A 停用後點門）與設計稿第 12 案沒有測試；I-3 選定列清 lease 前的 checkpoint 沒有會失敗的測試。
+- 品質：Changes requested C0／I2／M12（S `t5-4-review-quality.md`，SHA-256 `E2832897506B3AC26241660EE1D9FD1AA43453EDECA5080A6610BC79D7F6C0FA`）：I-1 離線情境沒有測試（與規格 I-2 重疊）；I-2 production 活性 bug：選定列的清租約寫出未確認，且同一 tick 確認後被 HomeClosure 移除時，走廊 space 與 HOME runtime 永久殘留、每 tick 記 ERROR、艙一直 BUSY 到重啟（讀碼已驗證，序列未實跑）。
+- 要讓使用者知道的（規格 M-3）：返還引擎「跳過死亡中玩家」是 production 改動，而第 1 點與走廊死亡選項寫的是「只補測試」；審查判定在裁示意圖內、不需新裁示。controller 已在交接回覆中告知使用者。
+- 會影響 T8 發行說明的更正：品質 M-8，走廊掉落物其實會被返還引擎送回 B，與 plan、報告與死亡案 Javadoc 寫的「留在走廊或清理時消失」相反；規格 M-7，實際重生在 `minecraft:overworld`，停在死亡畫面不重生時艙會一直被占用。
+
+### 止損計數（只計 Windows）
+
+- 既有冷 B 案、門故障案、無關的既有 fixture：0。
+- 走廊死亡案：從真重生修法起重算，0。`collapsing_row_uses_the_same_return_engine`：1（dev1，已修）。其餘新案 0。
+- 本體工具錯誤 3 次，各是不同問題（守門負控腳本解碼、mutation 驅動缺 Select、default 子集 batch 排錯）；另有 fixture 正例卡住一次（未完成）。
+- 真實 AccessDenied：0；`46a4683`、`5be0a35`、`25e5038` 額度都未用。
+
+### 下一步
+
+見交接檔第 4、5 節：T5-4 fix round（production 門檻）→ 新兩席複審 → CI 卡住自動快照（簡報 S `task-ci-idle-jstack-brief.md`）→ 一起 push 與 CI（U1 逐段）→ T5-4 結案 docs → T5-5。
 
 ## 最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）
 

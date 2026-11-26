@@ -793,3 +793,4 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
   - 只改 SDD：mutation 彙總的 root 欄位被路徑空白截斷、報告的 JUnit 範圍與驅動敘述（M-1、M-7），implementer 已更正。
 - T5-3 規格 M-1 的窗口（退休寫出確認之後、下一個 CPM tick 的 settle 之前 `homeDurable` 暫時不符）：選門重驗會讀 `homeDurable`，窗口內丟例外即釋票、拒絕（fail-closed），玩家重點一次即可；列為已知（implementer 設計稿 §2.3，controller 採用）。
 - M-8 的 CLOSE 列殺手（controller 決定）：若能用既有 `M7HomeReceiptWindowMixin` 停在「收據已發布、熱列還在」的窗口就做；不能就以讀碼論證記為已知缺口，不新增 mixin。「選定列拿有效 proof 也被拒」與拿掉 Unselected 守門等價（合法的選定列不會是 RETURNING），記錄即可。
+- 2026-11-26 狀態（controller）：本體 GREEN `5be0a35` 與第三段 `25e5038` 已在本機 commit，本機驗證通過；兩席審查未過（規格 C0／I3／M9、品質 C0／I2／M12），下一步是 fix round，接手入口 `docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md`。以下 implementer 決定待 fix round 後由 controller 在結案 docs 正式記為採用或修正：Authority 類別移到 Select 段（規格審查判定理由成立）；`settleOnFailure` 預設為真；選定列結案移除後釋放 runtime（品質 I-2 指出缺口）；返還引擎跳過死亡中玩家（production 改動，規格 M-3）；`HomeDoorInteraction` 例外一律回 FAIL。

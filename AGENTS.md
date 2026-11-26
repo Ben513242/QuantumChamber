@@ -121,7 +121,13 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-25 最新：T5-4 進行中，暫停等使用者裁示。** 使用者原話「好，CI 綠了就提交並收尾，等我裁示繼續做 T5-4」。先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節，以及 plan 檔尾「T5-4 的追加（進行中，2026-11-25）」小節。
+**2026-11-26 最新：T5-4 本體已實作、兩席審查未過，交給新對話；第一件工作是 T5-4 fix round。** 使用者原話「好，審查回來沒問題就繼續另外等兩個子代理完成就收尾交接給新對話完整提示詞」。接手入口是 [`docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md`](docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md)，先讀它，再讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）」節。
+- 狀態：本機 `46a4683`（RED）、`7182641`（暫停 docs）、`5be0a35`（GREEN）、`25e5038`（CI 第三段 Select）與本筆交接 docs 都沒有 push；origin feature 仍 `238ade6`。fix round 與 CI 卡住自動快照的腳本 commit 完成後再一起 push（理由見交接檔第 2 節）。
+- 本機驗證：mutation 11 項 KILLED、focused 兩輪三段 PASS（本機最慢 Main 155、Corridor 114、Select 79 秒）、default 子集與 M6GameTest PASS、ci-rule-check M7 fixture 正例重跑 PASS。
+- 審查：規格 ❌ C0／I3／M9、品質 Changes requested C0／I2／M12（S 的 `t5-4-review-spec.md`、`t5-4-review-quality.md`）。品質 I-2 是 production 活性 bug（選定列清租約寫出未確認時艙可能永久 BUSY）；其餘 Important 是驗收覆蓋缺口（離線、延遲期間變更、實體替換、checkpoint）。
+- 止損、計數、U1 與待問使用者的事項見交接檔第 4、8 節。main 合併、tag、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-25：T5-4 進行中，暫停等使用者裁示。** 使用者原話「好，CI 綠了就提交並收尾，等我裁示繼續做 T5-4」。先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節，以及 plan 檔尾「T5-4 的追加（進行中，2026-11-25）」小節。
 - 狀態：Step 0 `238ade6` 已 push（一席審查 C0／I0／M8）；本體 RED `46a4683` 與本筆收尾 docs 只在本機 commit、沒有 push（RED 的測試刻意失敗，push 會讓 CI 變紅）。恢復 T5-4、GREEN commit 之前，不要 push 這些本機 commit；持續 push 授權不適用於刻意失敗的 RED（controller 的決定）。GREEN 候選 6 檔留在工作樹、沒有 commit，不要丟棄或覆寫，整份 diff 另存 M7 SDD `t5-4-body-wip-46a4683-after-diag.diff`；其中含死亡案的診斷程式（marker `M7_T54_DEATH_DIAG`）。
 - 卡點：走廊死亡案 `corridor_death_returns_to_exact_b_with_returned` 第 3 次非預期失敗；使用者授權的一次受限診斷 FAIL。implementer 讀原版 bytecode 推論是測試直接呼叫 `respawnPlayer`、沒有走原生 `onClientStatus(PERFORM_RESPAWN)`，但未以修正後重跑證實。依使用者所選選項的說明，FAIL 預設視為遊戲程式問題，停下，修法另問使用者。
 - 恢復前不要繼續 T5-4 的 GREEN、第三段、mutation 或 focused。使用者 2026-11-25 已裁示的設計三題（點門時機、第三段、走廊死亡照原版）見 note 該節；止損計數現況見同節「止損計數」。
