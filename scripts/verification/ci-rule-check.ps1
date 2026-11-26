@@ -388,14 +388,24 @@ if($normalXml){$normalXml.Save((Join-Path $fixture 'build/gametest-m4-normal-res
 if($m6Xml){$m6Xml.Save((Join-Path $fixture 'build/gametest-m6-results.xml'))}
 $stepFile=Join-Path $root 'step.ps1'
 Set-Content -LiteralPath $stepFile -Value ("`$ErrorActionPreference = 'stop'`n"+$script) -Encoding utf8
+# T5-5：step 子程序的啟動與等待（比照上方 M7 fixture 路徑）。stdin 立即關閉（不繼承呼叫端的 stdin）；stdout 與 stderr 都非同步讀
+# （同步 ReadToEnd 會在子程序卡住時先卡住，讓逾時成為死碼）；等待上限 $TimeoutMs，逾時只結束這個子程序（含它的子程序）並以 CI_RULE_TIMEOUT 記 FAIL。
+function Invoke-CiRuleStep([Diagnostics.ProcessStartInfo]$Info,[int]$TimeoutMs){
+    $Info.UseShellExecute=$false;$Info.RedirectStandardInput=$true;$Info.RedirectStandardOutput=$true;$Info.RedirectStandardError=$true
+    $process=[Diagnostics.Process]::Start($Info);$process.StandardInput.Close()
+    $stdoutTask=$process.StandardOutput.ReadToEndAsync();$stderrTask=$process.StandardError.ReadToEndAsync()
+    if($process.WaitForExit($TimeoutMs)){$process.WaitForExit();$code=$process.ExitCode;$output=$stdoutTask.Result+$stderrTask.Result}
+    else{try{$process.Kill($true)}catch{};[void]$process.WaitForExit(30000);$code=-1;$output="CI_RULE_TIMEOUT：step 子程序超過 $($TimeoutMs/1000) 秒，已結束`n"+$(if($stdoutTask.Wait(5000)){$stdoutTask.Result})+$(if($stderrTask.Wait(5000)){$stderrTask.Result})}
+    $process.Dispose()
+    [pscustomobject]@{exitCode=$code;output=$output}
+}
 $info=[Diagnostics.ProcessStartInfo]::new('pwsh')
 foreach($argument in @('-NoProfile','-NonInteractive','-Command',". '$($stepFile.Replace("'","''"))'")){$info.ArgumentList.Add($argument)}
 $info.Environment['GITHUB_SHA']=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
-$info.WorkingDirectory=$fixture;$info.UseShellExecute=$false;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
-$process=[Diagnostics.Process]::Start($info)
-$stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEnd();$process.WaitForExit()
+$info.WorkingDirectory=$fixture
+$stepRun=Invoke-CiRuleStep $info 900000
 foreach($source in $presetSources){if((Get-FileHash -LiteralPath $source.source).Hash -cne $source.sha256){throw 'M4_PRESET_INPUT：執行後原件被變更'}}
-$output=$stdout.Result+$stderr
+$output=$stepRun.output
 Set-Content -LiteralPath (Join-Path $root 'output.log') -Value $output -Encoding utf8
 $windowsCases=@($xml.SelectNodes('//testcase') | Where-Object {$_.name -like '*_windows'}).Count
 $m5WindowsCases=@($m5Xml.SelectNodes('//testcase') | Where-Object {$_.name -like '*_windows'}).Count
@@ -408,6 +418,6 @@ $result=[ordered]@{label=$Label;workflow=(Resolve-Path -LiteralPath $Workflow).P
     nativeSummary=$M6NativeSummary;nativeSummarySha256=$(if($M6NativeSummary){(Get-FileHash -LiteralPath $M6NativeSummary).Hash}else{''});nativeMutation=$NativeMutation;nativeFixtureRuntimeLaunched=$false
     presetFixture=[bool]$PresetFixture;presetMutation=$PresetMutation;presetMutationScope=$PresetMutationScope;presetSources=$presetSources
     junitDir=$JUnitDir;sourceRoot=$SourceRoot;mutation=$Mutation;mutationTarget=$MutationTarget;mutationXml=$MutationXml;sourceMutation=$SourceMutation;sourceTarget=$SourceTarget;sourceMutatedFile=$sourceMutated
-    fixtureWindowsCases=$windowsCases;fixtureM5WindowsCases=$m5WindowsCases;exitCode=$process.ExitCode;verdict=$(if($process.ExitCode -eq 0){'PASS'}else{'FAIL'});output=$output.Trim();time=[DateTimeOffset]::Now.ToString('o')}
+    fixtureWindowsCases=$windowsCases;fixtureM5WindowsCases=$m5WindowsCases;exitCode=$stepRun.exitCode;verdict=$(if($stepRun.exitCode -eq 0){'PASS'}else{'FAIL'});output=$output.Trim();time=[DateTimeOffset]::Now.ToString('o')}
 $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
-Write-Output "CI_RULE label=$Label step=$Step mutation=$Mutation target=$MutationTarget mutationXml=$MutationXml sourceMutation=$SourceMutation sourceTarget=$SourceTarget exit=$($process.ExitCode) root=$root"
+Write-Output "CI_RULE label=$Label step=$Step mutation=$Mutation target=$MutationTarget mutationXml=$MutationXml sourceMutation=$SourceMutation sourceTarget=$SourceTarget exit=$($stepRun.exitCode) root=$root"
