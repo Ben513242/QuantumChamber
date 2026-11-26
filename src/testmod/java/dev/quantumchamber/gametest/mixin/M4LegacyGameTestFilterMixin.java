@@ -62,8 +62,8 @@ abstract class M4LegacyGameTestFilterMixin {
 
     /**
      * M7 段的選取（同一個 JVM、平台篩選之後）：段名與各段類別讀自 {@code quantumchamber.m7game.inventory}（m7-inventory.json）的
-     * {@code gametestSegments}。段名不在清單、清單格式不符、類別在兩段重複、JVM 內 m7_home 的類別集合與各段聯集不符、本段選到的類別
-     * 集合與清單不符，或本段在本平台選到 0 案，都 fail closed。類別以 {@link TestFunction#templatePath()} 的前綴辨識（原版
+     * {@code gametestSegments}。段名不在清單、清單格式不符、類別在兩段重複、JVM 內 m7_home 的類別集合與各段聯集不符，
+     * 或本段在本平台選到 0 案，都 fail closed。類別以 {@link TestFunction#templatePath()} 的前綴辨識（原版
      * TestFunctions：類別 simple name 小寫＋「.」＋方法名稱小寫），不由 batch 名稱推斷。
      */
     @Unique
@@ -91,10 +91,8 @@ abstract class M4LegacyGameTestFilterMixin {
         Set<String> m7Classes=all.stream().filter(test -> test.batchId().startsWith("m7_home")).map(test -> quantumchamberTest$testClass(test))
                 .collect(Collectors.toCollection(TreeSet::new));
         if(!m7Classes.equals(new TreeSet<>(owner.keySet()))) throw new IllegalStateException("M7_SEGMENT_CLASS_SET：JVM="+m7Classes+" 清單="+new TreeSet<>(owner.keySet()));
-        Set<String> listed=owner.entrySet().stream().filter(entry -> entry.getValue().equals(segment)).map(Map.Entry::getKey).collect(Collectors.toCollection(TreeSet::new));
-        Set<String> chosen=all.stream().filter(test -> test.batchId().startsWith("m7_home") && segment.equals(owner.get(quantumchamberTest$testClass(test))))
-                .map(test -> quantumchamberTest$testClass(test)).collect(Collectors.toCollection(TreeSet::new));
-        if(!chosen.equals(listed)) throw new IllegalStateException("M7_SEGMENT_CLASS_MISMATCH：段="+segment+" 選到="+chosen+" 清單="+listed);
+        // T5-5 Step 0（拆段審查 M3）：原本這裡另核「本段選到的類別等於清單」（M7_SEGMENT_CLASS_MISMATCH），但選到的類別由同一份 owner 篩出、必然相等，已刪除；
+        // 單段的實際防線是上面的 M7_SEGMENT_CLASS_SET 與下面的 M7_SEGMENT_EMPTY，XML 的類別另由 m7-ci-gametest.ps1 核對。
         List<TestFunction> result=platformSelected.stream().filter(test -> segment.equals(owner.get(quantumchamberTest$testClass(test)))).toList();
         if(result.isEmpty()) throw new IllegalStateException("M7_SEGMENT_EMPTY："+segment);
         return result;

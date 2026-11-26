@@ -20,6 +20,8 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
      * T5-4 Step 0（T5-2 規格 M-3、品質 M-6）：未選定返還的移除只接受走廊 owner 在同一個 tick 建立、未用過、屬於這一列的 proof。以正式 journal 寫入一列
      * checked RETURNING、全員已返還（{@code finishHomeReturn} 本體會接受）的列，逐項核對：沒有 proof、別列的 proof、已用過的 proof、前一個 tick 的 proof 都拒絕且列不變；
      * 同一個 tick 的新 proof 才移除（也是本案的收尾）。proof 以 testmod 反射建立（C6）。RED：proof 沒有綁定建立的 tick（{@code PROOF_STALE_TICK_ACCEPTED}）。
+     * T5-5 Step 0（T5-4 Step 0 審查 M-8 後半、T5-4 規格審查 M-9）：每次 {@code finishHomeReturn} 各自包成具名 finding，丟出例外記 {@code <名稱>_THREW}，
+     * 所以拿掉 production 的 {@code proof==null} 守門時，本案以具名 marker 失敗，不是 NPE。
      */
     @GameTest(templateName="quantumchamber:m1_empty",batchId="m7_home_proof_guard",tickLimit=200)
     public void home_return_proof_rejects_missing_forged_reused_or_stale(TestContext c) {
@@ -30,20 +32,25 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
         try {
             var findings=new java.util.ArrayList<String>();
             java.util.function.BooleanSupplier untouched=() -> done.equals(journal.allSessions().get(sid)) && done.equals(journal.allFlushedSessions().get(sid));
-            if(journal.finishHomeReturn(server,done,null).removed() || !untouched.getAsBoolean()) findings.add("PROOF_NULL_ACCEPTED");
+            expectRejected(findings,"PROOF_NULL",untouched,() -> journal.finishHomeReturn(server,done,null));
             var person=done.participants().getFirst();
             var other=new HomeSessionRecord(sid,done.chamberUuid(),done.rootAnchor(),done.entryEndpoint(),List.of(new SessionRecoveryRecord.Participant(person.playerUuid(),
                     person.sourcePosition().add(1,0,0),person.sourceVelocity(),person.yaw(),person.pitch(),person.quantumStateSnapshot(),true)),done.spaceLeases(),done.state(),done.home());
-            if(journal.finishHomeReturn(server,done,M7CapacityFixture.forgeReturnProof(server,other)).removed() || !untouched.getAsBoolean()) findings.add("PROOF_FOR_OTHER_ROW_ACCEPTED");
+            var forged=M7CapacityFixture.forgeReturnProof(server,other);
+            expectRejected(findings,"PROOF_FOR_OTHER_ROW",untouched,() -> journal.finishHomeReturn(server,done,forged));
             var used=M7CapacityFixture.forgeReturnProof(server,done);
             if(!used.consume(server,done)) findings.add("前提：同一個 tick、同一列的新 proof 可以消費一次");
-            if(journal.finishHomeReturn(server,done,used).removed() || !untouched.getAsBoolean()) findings.add("PROOF_REUSED_ACCEPTED");
+            expectRejected(findings,"PROOF_REUSED",untouched,() -> journal.finishHomeReturn(server,done,used));
             var stale=M7CapacityFixture.forgeReturnProof(server,done);
             c.waitAndRun(1,() -> {
                 try {
-                    if(journal.finishHomeReturn(server,done,stale).removed() || !untouched.getAsBoolean()) findings.add("PROOF_STALE_TICK_ACCEPTED");
-                    if(untouched.getAsBoolean() && !journal.finishHomeReturn(server,done,M7CapacityFixture.forgeReturnProof(server,done)).removed())
-                        findings.add("VALID_PROOF_REJECTED：同一個 tick、未用過、屬於這一列的 proof 必須移除");
+                    expectRejected(findings,"PROOF_STALE_TICK",untouched,() -> journal.finishHomeReturn(server,done,stale));
+                    if(untouched.getAsBoolean()) {
+                        var valid=M7CapacityFixture.forgeReturnProof(server,done);
+                        try {
+                            if(!journal.finishHomeReturn(server,done,valid).removed()) findings.add("VALID_PROOF_REJECTED：同一個 tick、未用過、屬於這一列的 proof 必須移除");
+                        } catch(RuntimeException failure) { findings.add("VALID_PROOF_THREW："+failure); }
+                    }
                     c.assertTrue(findings.isEmpty() && !journal.allSessions().containsKey(sid) && !journal.allFlushedSessions().containsKey(sid),
                             "HOME_RETURN_PROOF_GUARD："+findings+" row="+journal.allSessions().get(sid));
                     c.complete();
@@ -58,6 +65,16 @@ public final class M7HomeAuthorityGameTests implements FabricGameTest {
         } catch(RuntimeException | Error failure) {
             try { M7CapacityFixture.removeIfPresent(server,done); } catch(RuntimeException cleanup) { failure.addSuppressed(cleanup); }
             throw failure;
+        }
+    }
+
+    /** 一次必須被拒絕的 {@code finishHomeReturn}：移除或列被改動記 {@code <名稱>_ACCEPTED}，丟出例外記 {@code <名稱>_THREW}（不讓例外直接結束本案）。 */
+    private static void expectRejected(List<String> findings,String name,java.util.function.BooleanSupplier untouched,
+            java.util.function.Supplier<SessionRecoveryState.TerminalResult> call) {
+        try {
+            if(call.get().removed() || !untouched.getAsBoolean()) findings.add(name+"_ACCEPTED");
+        } catch(RuntimeException failure) {
+            findings.add(name+"_THREW："+failure);
         }
     }
 

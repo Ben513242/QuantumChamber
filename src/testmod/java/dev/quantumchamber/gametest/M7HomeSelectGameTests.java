@@ -1164,16 +1164,23 @@ public final class M7HomeSelectGameTests implements FabricGameTest {
         return watch;
     }
 
-    /** 品質 I-2 的窗口：全員返還、原艙停止已 latch 的 END tick 武裝 journal 寫出故障；之後記下列被 checked 移除的 END tick，以及那一刻走廊 space 是否還在。 */
+    /**
+     * 品質 I-2 的窗口：全員返還、原艙停止已 latch 的 END tick 武裝 journal 寫出故障；之後記下列被 checked 移除的 END tick，以及那一刻走廊 space 是否還在。
+     * T5-5 Step 0（T5-4 品質 fix1 F-1）：比照 {@code offline_selected_participant_returns_after_join}，hooks 釋放時 {@code closed} 設為真，觀察者先核它就結束；
+     * 案例在失敗路徑釋放 hooks 之後，觀察者不會再武裝全域的 journal 寫出故障（那時已沒有 hook 可以關掉它）。
+     */
     private static final class ReleaseWindow {
         M7NativeSaveFault.Handle fault;
         int removedTick = -1;
         boolean spaceAtRemoval;
+        boolean closed;
     }
 
     private static ReleaseWindow watchReleaseWindow(M7HomeCorridorGameTests.HomeEntry e, UUID sid) {
         var window = new ReleaseWindow();
+        e.hooks.add(() -> window.closed = true);
         EndTick.watch(e.server, () -> {
+            if (window.closed) return true;
             if (window.fault == null) {
                 var row = e.homeRow();
                 if (row != null && row.home().stopReason().isPresent() && !row.spaceLeases().isEmpty() && row.equals(e.journal.allSessions().get(sid))
