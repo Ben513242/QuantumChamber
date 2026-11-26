@@ -121,7 +121,15 @@ M4 範圍內不開門、不 collapse、不配置／materialize Universe、不 te
 
 ## 目前接手入口
 
-**2026-11-26 最新：T5-4 本體已實作、兩席審查未過，交給新對話；第一件工作是 T5-4 fix round。** 使用者原話「好，審查回來沒問題就繼續另外等兩個子代理完成就收尾交接給新對話完整提示詞」。接手入口是 [`docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md`](docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md)，先讀它，再讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）」節。
+**2026-11-26 最新：T5-4 已以 `f8ee0bf` 的 CI 45767504067（Windows 各 job 全 success）依段落結案；下一步 T5-5。T5 整體未完成，核取框到 T5-5 結案才勾。** 先讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-4 結案（2026-11-26）」節，以及 plan 檔尾「T5-4 的追加」小節的「2026-11-26：T5-4 結案（controller）」段。交接檔 [`docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md`](docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md) 第 6～10 節的裁示、門檻、止損規則、工具陷阱與授權仍適用；第 5 節的順序已走到「T5-4 結案 docs」，第 8 節的計數是交接時的快照，現況見 note 該節。
+- 狀態：已正常 push `22471c9..f8ee0bf`（`0243fc0` fix1 RED、`2ef2df8` fix1 GREEN、`f8ee0bf` CI 卡住自動快照），`ls-remote` 讀回 feature `f8ee0bffbcb885d2e0c619d13d0906dae2381d6b`、main `2255027`。較早的 `238ade6..22471c9` 已依使用者原話「push 上去吧」push。M7 沒有合併 main、沒有 tag。
+- fix1：規格 I-1～I-3、品質 I-1、I-2 與 CI 45749878698 的 log marker 都已處理（品質 I-2 只用 CPM 側修法 (a)，T4 檔未改）；規格 I-1 以原生替換驗證，規格複審判定不涉及縮小 V05 驗收。複審：規格 ✅ C0／I0／M1、品質 Approved C0／I0／M3；快照一席 Approved C0／I0／M3。
+- CI run `45767504067`（head `f8ee0bf`，push，attempt 1）：completed／success（updated 06:52:35Z）。Windows `windows-native`、`m7-validation`、`m7-home-native` 四列與 aggregate、`m6-native` 全 success；U1 逐段 Main 372、Corridor 355、Select 283、規模 153 秒，都低於約 450 秒回報線。Ubuntu 只照錄：`build`、`m7-validation` Ubuntu success（Ubuntu 未採計，暫停雙平台驗證）。原件 S `ci-45767504067-f8ee0bf/terminal-run.json` SHA-256 `09fbddd3a17fc92785cda6e38de7646a7ca209fda061bfb6c90dadeb2a16545b`。`22471c9` 的 CI 45749878698 是 failure（`CollapseLogMarkerGuardTest`，已在 fix1 修正），U1 逐段 Main 430（約 450 秒回報線的 96%）、Corridor 313、Select 263 秒。
+- 止損計數：既有冷 B 案、門故障案、無關既有 fixture 0；T5 新案本輪 6 案各 0、死亡案 0、COLLAPSING 案維持 1；真實 AccessDenied 0（`0243fc0`、`2ef2df8`、`f8ee0bf` 額度都未用）。只計 Windows。
+- 走廊死亡的前提更正：使用者選「維持現行行為（建議）」（2026-11-26 AskUserQuestion，題目與選項說明原文 S `user-t5-4-death-premise-ruling-20261126.md`）。11-25 第 3 題寫的「他在走廊掉的物品會在走廊清理時消失」是 controller 撰題時的錯誤前提；實際上掉落物隨返還送回 B 艙內，重生先到 canonical 主世界 spawn 再送回 B（實測三次都沒有設床，設床時未驗），停在死亡畫面時艙被占用。不改程式，T8 發行說明照實際情形寫。
+- 下一步：T5-5（開服接手／attach、corridor-recovery 原生鏈、完整 run-all；Step 0 處理 plan 檔尾分給 T5-5 Step 0 的 Minor；簡報逐檔授權 plan 檔尾列的腳本與 mixin）→ T6 → T7 → T8。main 合併、tag `m7`、人工代操作、worktree 退役仍各自另問。
+
+**（歷史）2026-11-26：T5-4 本體已實作、兩席審查未過，交給新對話；第一件工作是 T5-4 fix round。** 使用者原話「好，審查回來沒問題就繼續另外等兩個子代理完成就收尾交接給新對話完整提示詞」。接手入口是 [`docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md`](docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md)，先讀它，再讀 [M7 note](docs/implementation-notes/2026-11-13-m7-return-home.md)「最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）」節。
 - 狀態：本機 `46a4683`（RED）、`7182641`（暫停 docs）、`5be0a35`（GREEN）、`25e5038`（CI 第三段 Select）與本筆交接 docs 都沒有 push；origin feature 仍 `238ade6`。fix round 與 CI 卡住自動快照的腳本 commit 完成後再一起 push（理由見交接檔第 2 節）。
 - 本機驗證：mutation 11 項 KILLED、focused 兩輪三段 PASS（本機最慢 Main 155、Corridor 114、Select 79 秒）、default 子集與 M6GameTest PASS、ci-rule-check M7 fixture 正例重跑 PASS。
 - 審查：規格 ❌ C0／I3／M9、品質 Changes requested C0／I2／M12（S 的 `t5-4-review-spec.md`、`t5-4-review-quality.md`）。品質 I-2 是 production 活性 bug（選定列清租約寫出未確認時艙可能永久 BUSY）；其餘 Important 是驗收覆蓋缺口（離線、延遲期間變更、實體替換、checkpoint）。

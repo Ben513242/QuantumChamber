@@ -673,7 +673,7 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
 本小節是 controller 的決定，或 controller 採用的 implementer 設計與審查判定，都不是使用者裁示。兩段的結案紀錄見 M7 note「最新：T5-1、T5-2 結案（2026-11-24）」節。
 
 - 核取框：T5 各段共用上方 Task 5 的核取行。T5-5 的完整回歸與同 SHA CI 完成之前，不勾任何一行，連完全屬於 T5-2 的 :315 也不勾。
-- :308 產出的實際簽章是 `SessionRecoveryState.finishHomeReturn(MinecraftServer,HomeSessionRecord,CorridorPageManager.HomeReturnProof)`（C3）。proof 只能由 `CorridorPageManager` 在同一個 tick 內「全員已返還、走廊清空、HOME checkpoint 成功」之後建立，用一次即失效。public `terminateHome(MinecraftServer,HomeSessionRecord)` 收窄為一律拒絕，否則外部可以跳過 HOME checkpoint 移除列。
+- :308 產出的實際簽章是 `SessionRecoveryState.finishHomeReturn(MinecraftServer,HomeSessionRecord,CorridorPageManager.HomeReturnProof)`（C3）。proof 只能由 `CorridorPageManager` 在同一個 tick 內「全員已返還、走廊清空、HOME checkpoint 成功」之後建立，用一次即失效。public `terminateHome(MinecraftServer,HomeSessionRecord)` 收窄為一律拒絕，否則外部可以跳過 HOME checkpoint 移除列。（已過時：T5-4 Step 0 `238ade6` 已移除這個 public overload，package-private 本體保留給 `SessionRecoveryState` 內部、JUnit 與 `M7CapacityFixture`；T5-4 Step 0 審查 M-6。）
 - C2 的落點：`ChamberActivationService` 以加法新增 `evaluateEntryReadiness`、`entryPowered`；既有 `evaluateReadiness` 不變，仍拒絕 PROJECTION。
 - C6 的實際做法：T5-2 沒有新增 testmod mixin（`quantumchamber-test.mixins.json` 不在授權清單），改用既有注入點加 testmod 反射。宇宙 lifecycle 的 `ready` 與 gateway 的 `checkpointWarning` 由 hooks 還原；玩家恢復 marker 由 fix1 補上冪等的還原 hook；原艙票的 `backend` 隨 lease 關閉失效，不另還原。
 - 未確認 ARMING 的第一次核對排在 200 tick 退避之後，不在失敗的同一個 tick 補寫。照現狀採用，代價是 B 多佔約 10 秒，屬 fail-closed。延後的理由只是讓測試觀察得到持鎖，沒有安全上的好處（規格審查 M-1）。已知偶發窗口：`unchecked_home_arming_keeps_chamber_busy_until_converged` 的 40 tick hold 期間，若有其他 journal 寫出（例如 autosave，或其他 owner 的 checked flush），殘留會被合法地提前收斂，該案可能以 `UNCHECKED_ARMING_RELEASED` 偶發失敗。
@@ -762,7 +762,7 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
     - 開服接手時 HOME space 的 `retiring` 與未確認的退休，要由 settle 的邏輯對齊，或在 attach 時以 checked 列重建（T5-3 報告）。
     - 「checked ARMING 但沒有 runtime」的保守退路歸入 `homeAbandons`，但 `finishHomeAbandoned` 在 `homeResidue` 為真時一律略過，對 checked 列永遠不收斂，艙會 BUSY 到重啟；收斂交 attach 一併處理（品質 M-6 的 attach 收斂部分）。
     - 退休寫出確認之後、下一個 CPM tick 的 settle 之前，`homeDurable` 暫時不符；甲之下這段時間沒有讀者，T5-4 選門或 T5-5 開服接手若新增讀者要一併考慮（規格 M-1）。
-    - 完整回歸的採計改為 Main＋Corridor 兩段加總，並核對聯集（Windows 77、Ubuntu 53）。
+    - 完整回歸的採計改為 Main＋Corridor 兩段加總，並核對聯集（Windows 77、Ubuntu 53）。（已過時：T5-4 加第三段 Select 之後是三段加總；T5-4 fix1 之後 Windows 98（Main 36、Corridor 37、Select 25）、Ubuntu 54（35、13、6），以 `m7-inventory.json` 的 `gametestSegments` 為準；T5-4 Step 0 審查 M-6。）
   - T8（發行說明的已知限制，或文件整理）：
     - journal 有其他 SID 的未確認寫入時，HOME 換頁與退休會整組回 B，與 legacy 一致（品質 M-3）。
     - M-7 只約束 `retryHomeRollForward`；同一個 tick 較早執行的 legacy RETRY_FLUSH，或另一個 SID 的 `retryHomeReturning`，仍可能多寫一次（品質 fix2 複審 N-1）。
@@ -770,7 +770,7 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
     - 其他 owner（例如 `HomeRootFence`）在未選定的 SUPERPOSITION 列寫出未確認時，gateway 仍以 Buff 失效的字串回 B；與 T5-2 品質 M-11 的訊息整理一起處理（T5-3 fix2 報告）。
   - 流程：會暫改 tracked 檔的負向控制，改在 gitignored 目錄下的拋棄式 clone 或 worktree 執行（拆段審查 M8）。
 
-### T5-4 的追加（進行中，2026-11-25）
+### T5-4 的追加（2026-11-25～26，T5-4 已依段落結案）
 
 本小節只有「使用者選」之後加引號的選項標籤是使用者裁示（選項說明原文見 M7 note「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節，題目原文見該節所列的 SDD 原文檔）；其餘是 controller 的決定，或 controller 採用的 implementer 設計與審查判定，各項標明出處。T5-4 尚未完成，本小節之後會再補。
 
@@ -779,7 +779,7 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
 - 點門時機：使用者選「新走廊建造中不受理（建議）」，即設計稿的方案 A'。落實（implementer 設計）：選門前置要求該 space 沒有 pending 建造與 batch；退休中照常可選，但只認 current mapping 與 epoch 的門；選定之後不再建造、不再退休，由選定後的清理一次清掉含退休中舊實例在內的全部 lease。
 - 退休中的舊門（T5-3 規格 M-5）：只認 current；點舊門會消耗互動，但不取票、不選定（implementer 設計）。
 - 第三段：使用者選「加第三段（建議）」。落實（controller 的執行說明）：T5-4 的新 class `M7HomeSelectGameTests` 將成為第三段；清單、CI 三個 step、`M7_CI_SEGMENT_SET` 守門與 SelfTest 反例比照拆兩段的標準，獨立一筆 commit（B+C）；這筆 commit 的審查要逐段核對 CI 的執行、驗證、上傳 step 都存在。目前 RED 暫列 Main 段，尚未加段。
-- 走廊死亡：使用者選「照原版，記為已知行為（建議）」。落實（controller 的執行說明）：T5-4 補一案，驗證走廊內死亡後最終回到 exact B、Returned 正確；重生點（先到主世界 spawn 或床，再被送回 B）與走廊掉落物在清理時消失，列入 T8 發行說明的已知行為。
+- 走廊死亡：使用者選「照原版，記為已知行為（建議）」。落實（controller 的執行說明）：T5-4 補一案，驗證走廊內死亡後最終回到 exact B、Returned 正確；重生點（先到主世界 spawn 或床，再被送回 B）與走廊掉落物在清理時消失，列入 T8 發行說明的已知行為。（已更正：掉落物實際會被返還引擎送回 B 艙內，重生落點與占用的實際行為見下方「2026-11-26：T5-4 結案（controller）」段的 T8 項；使用者 2026-11-26 已在更正後的前提下選「維持現行行為（建議）」。）
 - 設計稿第 8 節第 4～8 項由 controller 採用：選門請求放在 SSM 的 `HomeRuntime`；B 封艙用 `ChamberDetector.validate` 的 valid＋sealed；互動距離用原版 `canInteractWithBlockAt(pos,1.0)`；選定後 B 的 `returnToEntry` 維持不動（選定後的 B 端操作屬 T6）；DORMANT 時釋放 HOME runtime 與 B 來源票（比照 legacy，T6 準備時重新取得）。
 - Step 0 的替代做法（implementer 設計，經 Step 0 審查接受）：容量退避用 20→1200 tick，不沿用 journal 的 200→12000（玩家停在頁邊界等，照 journal 上限，容量恢復後最多還要再等約 10 分鐘）；T5-3 品質 M-5 的隔離粒度維持整段（production 建得出的 runtime 每次狀態轉換最多丟一次例外）。
 - 改派（controller 決定；Step 0 審查 M-5 指出這些項目在 Step 0 簡報沒有人負責）：拆段一席審查的 M2～M7、M9、拆段 fix1 複審新 Minor，以及 T5-3 規格 M-6（驅動與證據整理），原寫在 T5-3 小節的 T5-4 Step 0，全部改交 T5-5。
@@ -794,3 +794,54 @@ B 門攔截屬 T6；T5 期間 B 門照一般門，T5 的 GameTest 不斷言攔�
 - T5-3 規格 M-1 的窗口（退休寫出確認之後、下一個 CPM tick 的 settle 之前 `homeDurable` 暫時不符）：選門重驗會讀 `homeDurable`，窗口內丟例外即釋票、拒絕（fail-closed），玩家重點一次即可；列為已知（implementer 設計稿 §2.3，controller 採用）。
 - M-8 的 CLOSE 列殺手（controller 決定）：若能用既有 `M7HomeReceiptWindowMixin` 停在「收據已發布、熱列還在」的窗口就做；不能就以讀碼論證記為已知缺口，不新增 mixin。「選定列拿有效 proof 也被拒」與拿掉 Unselected 守門等價（合法的選定列不會是 RETURNING），記錄即可。
 - 2026-11-26 狀態（controller）：本體 GREEN `5be0a35` 與第三段 `25e5038` 已在本機 commit，本機驗證通過；兩席審查未過（規格 C0／I3／M9、品質 C0／I2／M12），下一步是 fix round，接手入口 `docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md`。以下 implementer 決定待 fix round 後由 controller 在結案 docs 正式記為採用或修正：Authority 類別移到 Select 段（規格審查判定理由成立）；`settleOnFailure` 預設為真；選定列結案移除後釋放 runtime（品質 I-2 指出缺口）；返還引擎跳過死亡中玩家（production 改動，規格 M-3）；`HomeDoorInteraction` 例外一律回 FAIL。
+
+#### 2026-11-26：T5-4 結案（controller）
+
+本段只有加引號的使用者選項標籤與使用者原話是使用者裁示；其餘都是 controller 的決定，或 controller 採用的 implementer 設計與審查判定，各項標明出處。事實紀錄見 M7 note「最新：T5-4 結案（2026-11-26）」節。T5-4 以同 SHA CI run `45767504067`（head `f8ee0bf`）completed／success、Windows 各 job 全 success 依段落結案；Task 5 的核取框仍等 T5-5 結案才勾。
+
+- 核取框：照舊，T5-5 之前不勾。
+- fix1 的範圍（controller 在 fix1 簡報 S `task-5-4-fix1-brief.md` 限定）：兩席原審查的全部 Important（規格 I-1～I-3、品質 I-1、I-2）。CI 45749878698 的 log marker 不在簡報原文，是 controller 之後以訊息追加給同一位 implementer（S `STATUS.md` 2026-11-26 12:0x 條目）。品質 I-2 只准 CPM 側修法 (a)；修法 (b)（HomeClosure 結案要求走廊已原生釋放）會改 T4 的檔，沒有授權、沒有使用，T4 的檔沒有改。
+- 規格 I-1 的判定（規格複審 B.1，controller 採用）：以原生 `respawnPlayer(old,true,CHANGED_DIMENSION)`、`networkHandler.player`＝新實體、原生移動回原位做的替換，忠實代表 V05「玩家換 instance」。不涉及縮小 V05 驗收，不需使用者裁示。
+- 規格複審新 M-1 要記入的判定與偏離（implementer 設計或判定，controller 採用；規格複審判定都不違反 spec）：
+  - (a) :329「忽略原 entity」的具名殺手是 uuid-resolve：FULL 時以 UUID 重新取得線上實體來重驗，由 `REPLACED_PLAYER_SELECTED` 殺。兩個等價存活的變異：
+    - uuid-only（fix1 簡報字面的變異：兩處 `==player` 改成只核非 null）：同一行仍對原 instance 核 `isAlive()` 與 `!isRemoved()`，原生替換一定先把舊實體標成 removed，所以沒有測試殺得掉它。
+    - alive（FULL 時不核 `isAlive`）：同一個重驗裡，`homeCohortHasBuff` 對每位凍結 cohort 成員核 `isAlive`，選門者一定在 cohort 內；死亡後、重生前，`getPlayer(uuid)` 仍是那個死亡實體，所以 cohort 檢查一定失敗。
+  - (b) 點門受理回 `CONSUME`（設計稿 §1.1 第 5 步寫 FAIL）。spec §4.2 沒有規定互動的回傳值；CONSUME 讓原版不再接著使用手上的物品，也沒有新增玩家可見文字（X2）。
+  - (c) FULL 時的互動距離核 25 格中任一格（設計稿 §8 第 6 項寫 `pos`）。spec :101 的字面是「仍可互動原門」，門就是 25 格；比設計稿寬，但仍在同一扇門旁。
+  - (d) 設計 #9 後半「A 停用前（stop 已 latch）點門」對未選定列不成立：spec §9.1 :238 規定 ARMING／SUPERPOSITION／RETURNING 的 StopReason 必須是空的，:243 只有 selected 狀態允許寫 StopReason，程式 `HomeRootFence.latchable` 也要求已選定。改驗 registry 停用：FULL 時 `checkRoot`＝DISABLED、零 selection、只釋票（`root_low_after_full_never_selects` 後段，`ROOT_DISABLED_SELECTED`）。
+  - (e) 選定列的 checkpoint 範圍分兩案驗：B 艙體範圍與失敗退避在新案 `selected_checkpoint_failure_keeps_selection_and_lock`；走廊兩筆 lease（含退休中的舊實例）在 `retiring_old_home_door_never_selects_and_selection_cleans_all_leases`；A 不入列沿用 commit 與 COLLAPSING 案。原因：原生 checkpoint 探針一次只能裝一個世界，而 `M5TestHooks.java` 不在授權清單。
+  - (f) `proof==null` 的具名化（Step 0 審查 M-8 後半、原規格審查 M-9）交 T5-5。proof 案在 `M7HomeAuthorityGameTests:33`；fix1 簡報表的原文是「只改 `M7HomeCorridorGameTests` 就做得到就做，否則交 T5-5 並記錄」。Authority 檔其實在 fix1 的授權內，交後續是表格的條件造成的；T5-5 簡報要逐檔授權它。
+- :796 所列，以及原規格審查 M-9 所列、待結案 docs 記錄的 implementer 決定（implementer 設計，controller 採用）：
+  - `M7HomeAuthorityGameTests` 由 Corridor 移到 Select 段（規格審查判定理由成立：只放 Select 類別時，Ubuntu 該段是 0 案）。
+  - `HomeEntry` 失敗路徑的延後斷開是全部案的預設；fix1 移除已無作用的 opt-in setter `settleOnFailure()` 與 8 處呼叫（品質 M-9）。
+  - 選定列被結案移除後，由 `releaseDormantHomeRuntimes` 釋放 runtime（本體）；fix1 再補 CPM 側：列被回程終局 owner 移除時釋放走廊 space（品質 I-2 修法 (a)）。
+  - 返還引擎跳過死亡中玩家：production 改動，位置與理由寫在 M7 note 同節「規格 M-3」。
+  - `HomeDoorInteraction` 的例外一律回 FAIL（fail closed）。規格 M-5 不修（controller 決定，fix1 簡報表）：例外改回 empty 會落到一般艙門邏輯（`QuantumBulkheadBlock.onUse` 在 hook 回 empty 時先交候選門、再落到一般艙門）；fix1 只補 log marker。
+  - 受理回 CONSUME、互動距離核 25 格：見上方 (b)、(c)。
+  - `continueHomeSelects` 排在 `tickHomeRuntimes` 之前；品質複審指出，這個順序是 FULL 見證的結構保證。
+- fix1 報告「偏離」節的其他決定（implementer 設計，controller 採用）：
+  - 品質 M-5 的注入：沒有用清單外的 `HomeTicketFaultFixture`，在 `M7HomeSelectGameTests` 的 `Gate` 代理加「第一次原生移除丟出」（C6）。INFO 改成帶「已釋放／釋放失敗、由原艙票 owner 續清」。
+  - 品質 M-6 的條件放在 200 tick 逾時之後、guard 檢查之前，只讀 flushed 列、不寫；讀 journal 丟出時當作失效、釋票（fail-closed）。
+  - 品質 I-2 修法 (a) 的判定條件：清 lease 已送出（`homeMeasuredClearSent`），而且 current、flushed、pending 都沒有這個 SID、也不在隔離。規格複審讀碼確認「列從三份都消失」代表清 lease 已確認。
+  - 規格 M-8 的 M4 candidate ledger 以 legacy 列（`journal.records()`）比對；M4 ledger 不是獨立檔，是 legacy 列的 `candidateLedger` 欄位。
+  - 完整 JUnit 不經 `gates.ps1`（它的 M6JUnit 總時限是 180 秒），以同一個 Gradle 直接呼叫 `test --rerun-tasks`。
+- Minor 的處置與後續分派（controller 決定，不是使用者裁示；不為 Minor 另開 fix round）：
+  - T5-5 Step 0（T5-5 本來就要改驗證腳本）：
+    - 品質 fix1 F-1：`M7HomeSelectGameTests` 的 `watchReleaseWindow` 沒有 hooks 結束條件。失敗路徑可能留下全域武裝的 journal 寫出故障，連坐同一個 server 之後的案；只會放大失敗，不造成假通過。
+    - 品質 fix1 F-3：CPM :1507–1509 的 Javadoc「HOME 列只經 `terminateHome` 的 checked 移除才會從三份都消失」說得太寬，改成「已選定的列只經…」，並補一句「T6 新增選定列的移除路徑時須重驗此前提」。
+    - 快照審查 M-1：`gates.ps1:318–324` 在快照之後沿用快照前的 `HasExited`。Gradle 若在快照期間自行退出，`stop` 會寫進已關閉的 pipe，`stdinStop=true` 不實；判定仍是 FAIL／idle（.NET 忽略這個寫入錯誤是推論，未驗）。建議快照之後再判一次。
+    - 快照審查 M-2：README（`f8ee0bf` 的 :969）寫「送 stop 後的 60 秒 grace」，與程式（從 `observedAt` 起算）和同節 :975 矛盾；改成「判定成立後的 60 秒 grace」。
+    - 快照審查 M-3：`gates.ps1:143`、README（`f8ee0bf` 的 :973）與 commit message 寫的「最壞約 33 秒」偏低，應約 37 秒，另加 CIM 查詢時間。
+    - `proof==null` 的具名化（上方 (f)）。
+    - 規格 M-6 剩下的 `m7-ci-gametest.ps1:4` 過時字面「目前 Main、Corridor」。
+    - 品質 M-12 剩下的「段名守門只在 Main 驗證 step」。
+    - `S/README.md` 其他過時字面（結案 docs 起草者發現，不在本次 docs 範圍；行號是 `f8ee0bf` 的）：:940 `m7game=Main:36,Corridor:41`、:903 Corridor 類別仍含 Authority、:915 `-Segment` 的段名列沒有 Select。
+  - T5-5：品質 fix1 F-2，原品質 M-7 第 3 點「選定之後死亡」沒有案例。品質複審推論風險低（選定與未選定的返還走同一條引擎，dead-skip 是同一段程式）；T5-5 補案，或明列不做與理由。
+  - T6：
+    - 品質 M-4：選門票以 SID 釋放（`HomeRootTickets.release(owner,sid)`）。加 PREPARE 票之後改用 lease 身分釋放，一併涵蓋 `releaseHomeSelect` 與 `continueHomeSelects` 的 finally（品質複審）。
+    - COLLAPSING 列在 PREPARE／SEALED 的 runtime 生命週期，要和 gateway 的 `removed` 分支、fix1 的 settle 新分支對齊（fix1 報告交後續）。
+  - T8 的已知行為更正（規格 M-7、品質 M-8）；取代 :782 的「走廊掉落物在清理時消失」，:782 原文保留、標已更正。fix1 之前的本體報告（S `t5-4-report.md`）「交給後續」寫的「掉落物留在死亡處」「重生在 B 所在世界」也都不正確，不要沿用：
+    - 走廊內死亡實際重生在 canonical `minecraft:overworld` 的 world spawn 附近，不是 B 所在的 U；之後被返還引擎送回 exact B。實測三次（`M7_T54_RESPAWN_LANDING`）：GREEN 開發輪 (3.5, 66, -4.5)、focused 第 1 輪 (6.5, 77, -5.5)、第 2 輪 (-4.5, 67, 3.5)。三次都沒有設床；設了床時的落點沒有驗過。
+    - 走廊掉落物會被返還引擎隨返還送回 B 艙內，不是消失：`ItemEntity`、`ExperienceOrbEntity` 是受管 pin，`recoverHome` 把非玩家 pin 移到 B 艙內（品質審查讀碼驗證）。
+    - 玩家停在死亡畫面不按重生時，列與艙會一直被占用，和離線相同（規格 M-7，讀碼 `SRM:518`，未實跑）。
+    - 前提更正：使用者選「維持現行行為（建議）」（2026-11-26 AskUserQuestion，題目與選項說明原文 S `user-t5-4-death-premise-ruling-20261126.md`）。11-25 第 3 題的「他在走廊掉的物品會在走廊清理時消失」是 controller 撰題時的錯誤前提（結案 docs 起草者發現）；controller 向使用者說明上面三點實際行為後重新確認。落實（controller 的執行說明）：不改程式，T8 發行說明照上面三點寫。

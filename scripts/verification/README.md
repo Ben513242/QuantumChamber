@@ -902,15 +902,16 @@ CI 45508192969（`852f27c`）的 Windows「執行 M7 獨立 GameTest」step 耗�
   - `Main`：`M7HomeSpikeGameTests`、`M7HomeClosureGameTests`、`M7HomeEntryTicketGameTests`，另含全部非規模 JUnit（`portable.junit`＋`<平台>.junit`）與兩個 JAR。
   - `Corridor`：`M7HomeCorridorGameTests`、`M7HomeAuthorityGameTests`、`M7RearmGameTests`、`M7SealReleaseGameTests`，只跑 GameTest（不跑 JUnit、不封裝）。
   - 理由：會繼續長大的是走廊類別，所以它那一段只配較輕的類別，留最多餘量；`Main` 留收尾類（Closure、B 收尾票）與 Spike（平台／scope 基線，也是 `ci-rule-check.ps1` M7 fixture 的 source mutation 對象）。兩段在 Ubuntu 也都有案例（走廊類別全是 `_windows`）。以 CI 45508192969 的各案 time、每 batch 約 0.73 秒、固定開銷（編譯、開服、停服；Main 另加 JUnit 與封裝）估 Windows CI：`Main` 約 367 秒、`Corridor` 約 328 秒；派工建議的「走廊＋B 收尾票一段」約 378／317 秒，走廊那段的餘量較少。
-- 預期數字（`62dacdd` 之後）：
+- 預期數字（T5-4 fix1 之後；`Select` 段與三段的分配見下一節）：
 
   | 段 | Windows JUnit | Windows GameTest | Ubuntu JUnit | Ubuntu GameTest |
   |---|---|---|---|---|
   | `Main` | 59 | 36 | 59 | 35 |
-  | `Corridor` | 0 | 41 | 0 | 18 |
+  | `Corridor` | 0 | 37 | 0 | 13 |
+  | `Select` | 0 | 25 | 0 | 6 |
   | `Scale`（不變） | 11 | 0 | 11 | 0 |
 
-  兩個 GameTest 段合計 Windows 77、Ubuntu 53，與拆段前相同。
+  三個 GameTest 段合計 Windows 98、Ubuntu 54。拆成兩段時（`62dacdd` 之後）是 `Corridor` 41／18、合計 Windows 77、Ubuntu 53（與拆段前相同）；T5-4 Step 0 之後 `Corridor` 43／19、合計 79／54。
 - 段名與清單的核對（啟動前與 `-VerifyOnly` 都做）：
   - `m7-ci-gametest.ps1 -Segment` 必須明確指定（`Main`、`Corridor` 或 `Scale`），不再有預設值；不給是 `M7_SEGMENT_REQUIRED`，不在清單（含大小寫不同）是 `M7_SEGMENT_UNKNOWN`。`inventory` 不是 schema 5 是 `M7_INVENTORY_SCHEMA`。
   - 每段至少一個 `M7*GameTests` 類別（`M7_GAME_SEGMENT_FORM`）；同一類別不得出現兩次（`M7_GAME_SEGMENT_OVERLAP`）；原始碼宣告 `m7_home` GameTest 的類別都要列入某一段（遺漏是 `M7_GAME_SEGMENT_CLASS_UNLISTED`），列入的類別都要有宣告（`M7_GAME_SEGMENT_CLASS_UNDECLARED`），不分平台；本段在本平台至少一案（`M7_GAME_SEGMENT_EMPTY`）。

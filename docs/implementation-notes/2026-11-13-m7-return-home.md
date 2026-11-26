@@ -1,8 +1,165 @@
 # M7 正規回程：實作紀錄
 
-本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）；T5 分 5 段，T5-1、T5-2 已依段落結案，T5 整體未完成（見「最新：T5-1、T5-2 結案（2026-11-24）」節）；T5-3 於 2026-11-25 依段落結案，同日依使用者裁示把 M7 Main 的 GameTest 拆成兩段（見「最新：T5-3 結案（2026-11-25）」節）；T5-4 的 Step 0 已完成，本體曾暫停等使用者裁示（見「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節），2026-11-26 恢復後本體已實作、本機驗證通過，但兩席審查未過，交給新對話做 fix round（見「最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
+本檔記錄 M7（正規回程）的範圍裁示、Step0 與之後各 task 的實際狀態。binding spec 與 plan 已經獨立審查清零採用，T1 已以同 SHA 五 job CI 全綠結案；使用者已授權 T2 起依審查清零連續推進，T2 已以同 SHA 五 required CI 全綠結案，T3曾獲明確授權恢復並通過N1，但完整回歸兩JUnit失敗；2026-11-16 起由 Claude 接手續作 fix2，T3 已於 2026-11-17 以同 SHA 五 required CI 全綠結案，T4 已於 2026-11-18 以同 SHA 十個 required CI 全綠結案（見「最新：T4 CLOSED（2026-11-18）」節）；依 2026-11-18 遊玩條件組合裁示的 spec v1.6 與 plan 修訂已採用（見「最新：spec v1.6 修訂（2026-11-18）」節），T4A 已於 2026-11-18 結案（見「最新：T4A CLOSED（2026-11-18）」節），T4B 已於 2026-11-19 結案（見「最新：T4B CLOSED（2026-11-19）」節）；同日依使用者指示交給 Codex 接手，T5-0 未結案（見「最新：交給 Codex 接手（2026-11-19）」節）；2026-11-24 由 Claude 接回，T5-0 已以 `98036e8` 的 CI 45342810380（Windows 各 job 全 success）結案（見「最新：T5-0 結案（2026-11-24）」節）；T5 分 5 段，T5-1、T5-2 已依段落結案，T5 整體未完成（見「最新：T5-1、T5-2 結案（2026-11-24）」節）；T5-3 於 2026-11-25 依段落結案，同日依使用者裁示把 M7 Main 的 GameTest 拆成兩段（見「最新：T5-3 結案（2026-11-25）」節）；T5-4 的 Step 0 已完成，本體曾暫停等使用者裁示（見「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節），2026-11-26 恢復後本體已實作、本機驗證通過，但兩席審查未過，交給新對話做 fix round（見「最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）」節）；同日新對話完成 fix1 與 CI 卡住自動快照並已 push，兩席複審 C／I 清零，T5-4 已以 `f8ee0bf` 的 CI 45767504067（Windows 各 job 全 success）依段落結案，T5 整體未完成（見「最新：T5-4 結案（2026-11-26）」節）。本檔的範圍裁示（含本輪追加與釐清）是 M7 範圍唯一的使用者決策來源，規格據此定義技術契約；流程與授權另見「流程指示」節與 AGENTS。
 
-## 最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）
+## 最新：T5-4 結案（2026-11-26）
+
+狀態：T5-4 fix1 與 CI 卡住自動快照已 commit 並正常 push；fix1 的兩席複審 C／I 清零，快照的一席審查 Approved。同 SHA CI run `45767504067`（head `f8ee0bf`，push，attempt 1，created 06:20:24Z）**completed／success**（updated 06:52:35Z），Windows 各 job 全 success，T5-4 依段落結案。T5 整體未完成：T5-5（完整 run-all 與同 SHA CI）結案前不勾 Task 5 的核取框。
+
+下文 S 指 `.superpowers/sdd/2026-11-13-m7-return-home/`（gitignored）。本節的事實讀自 S 的 `STATUS.md`（2026-11-26 11:3x～15:2x 各段）與下表各檔。設計判定、Minor 處置與後續分派寫在 plan 檔尾「T5-4 的追加」小節的「2026-11-26：T5-4 結案（controller）」段。
+
+| 檔（S） | 內容 | SHA-256 |
+|---|---|---|
+| `t5-4-fix1-report.md` | fix1 implementer 報告 | `2FC017C7D9FA1A16BEAD06627AC7AFC21345DA1A8FC437E3ECB45FDA794926F7` |
+| `t5-4-review-spec-fix1.md` | fix1 規格複審 | `56FA552E1EB4A1B1F87C902AA366855D81A12B892B266242E26BE2754DF2BF00` |
+| `t5-4-review-quality-fix1.md` | fix1 品質複審 | `DB2261AD11C7DFAA137ABB626FD6C40312CB893919FC5DA4746CE07A4EAD4FE1` |
+| `t5-4-review-spec.md` | 本體規格審查（原審查） | `9E5C9425BA6F24B383F0DDBF2019B59146C169340ED021D83315BC7960BE8B0E` |
+| `t5-4-review-quality.md` | 本體品質審查（原審查） | `E2832897506B3AC26241660EE1D9FD1AA43453EDECA5080A6610BC79D7F6C0FA` |
+| `t5-4-report.md` | 本體 implementer 報告（三次交回） | `75A8ACDC1A2756B18E010B9DD1430A60C011AC57570D4206E447B3ED1E3389DF` |
+| `ci-idle-jstack-report.md` | CI 卡住自動快照 implementer 報告 | `A41CBC0A565DA0BD9B339C365C7D48F8A9E5EB996EB5AD317E0B4C47AFB30425` |
+| `ci-idle-jstack-review.md` | CI 卡住自動快照一席審查 | `FF9F124E80D91D5A4366338048D2EF1D1123D36D036E4E9F5F9CF63F6C351D3E` |
+| `t5-4-hang-repro-report.md` | CI 45569149943 本機重現調查 | `7C67574E68358184904BBBF6D1ABA678E5386237E09564B8E9F45230CF64DD85` |
+| `t5-4-ci-fixture-rerun.log` | ci-rule-check M7 fixture 正例重跑 | `4F804B65172B46525D6CEBAF623A152EAFA3A1CC0F429C67A01A289835DF00C9` |
+| `ci-45749878698-22471c9/terminal-run.json` | CI 45749878698 終局 | `53FA5376E1672F31596F65E18AB9D529EFD8D2C7C577275F634DCA49D96E67AC` |
+| `ci-45749878698-22471c9/windows-native-failed.log` | CI 45749878698 失敗 job 的 log | `9A17ACC5A768B3017AA882C83B8C1C8813BC05714EBC81131CA93BA2FE492845` |
+| `task-5-4-fix1-brief.md` | fix1 派工簡報 | `37703AFE4A27BF99F44298771F61FB3CF7F28E48CBD9FBA6E9428EACE069B56C` |
+| `task-ci-idle-jstack-brief.md` | 快照派工簡報 | `39454EB842B2AD9F43B343E3B33696D985C1CA0197BF9BBC39D5303F59B3FEE4` |
+| `ci-45767504067-f8ee0bf/terminal-run.json` | CI 45767504067 終局 | `09FBDDD3A17FC92785CDA6E38DE7646A7CA209FDA061BFB6C90DADEB2A16545B` |
+| `user-t5-4-death-premise-ruling-20261126.md` | 走廊死亡前提更正的裁示原文 | `EEEAA6353C1DF3046DE5384DCC10C53676FF6CD7081D8B9CFF51CA20057D1DAD` |
+| `t5-4-closeout-docs-review.md` | 本筆結案 docs 一席審查 | `13009514116A9E3F02D6ECB046A98D4C8949300221B6E8D74643CD3CD818680C` |
+
+### commit 與 push
+
+- 本輪三筆 commit：
+  - `0243fc01e34062fee6276d271ba2690c777ccf96` fix1 RED：只改 `M7HomeSelectGameTests.java` 與 `m7-inventory.json`。新增 6 案，既有 7 案補段與見證；production 與 `25e5038` 相同（C1）。
+  - `2ef2df841ea24bfc602ac61bc8ef1ca3eb45ba1f` fix1 GREEN：8 檔（`CorridorPageManager`、`SuperpositionSessionManager`、`SessionRecoveryManager`、`HomeDoorInteraction`、`ChamberCollapsePort`、`M7HomeCorridorGameTests`、`M7HomeSelectGameTests`、`scripts/verification/README.md`），+81／−40。全在 fix1 簡報的允許清單內。
+  - `f8ee0bffbcb885d2e0c619d13d0906dae2381d6b` CI 卡住自動快照：只改 `scripts/verification/gates.ps1`（+100／−1）與 README（+10）。
+- push：
+  - 依使用者原話「push 上去吧」，`238ade6..22471c9`（`46a4683`、`7182641`、`5be0a35`、`25e5038`、`22471c9`）已正常 push，`ls-remote` 讀回 feature `22471c9506ffee9f41a8671b20a08292ed5d2713`。這取代交接檔原本「fix round 結束後再一起 push」的安排（轉述，不是交接檔原文）。使用者之後的原話（11:37）：「已推上去了，但 T5-4 還沒結案：兩份審查的 Important 問題都還沒修。46a4683..22471c9 已 push，fix round 的 commit 正常 push」。
+  - 14:2x controller 依持續 push 授權正常 push `22471c9..f8ee0bf`（上列三筆），`ls-remote` 讀回 feature `f8ee0bffbcb885d2e0c619d13d0906dae2381d6b`、main `2255027`；push 前 porcelain 0、無 live Java。沒有 force push。
+- M7 沒有合併 main，也沒有 tag。
+
+### fix1（`22471c9..2ef2df8`）
+
+- 範圍：兩席原審查的全部 Important，加上 CI 45749878698 的 log marker（controller 併入 fix1）。
+  - 規格 I-1（原玩家實體被替換）：`same_key_new_generation_or_player_never_selects` 後半，以原生 `respawnPlayer(player,true,CHANGED_DIMENSION)`、`networkHandler.player`＝新實體、原生移動回原位替換實體。FULL 後零 selection、只釋自己的票（`REPLACED_PLAYER_SELECTED`）。
+  - 規格 I-2／品質 I-1（延後期間的變更、選定後離線）：
+    - 新案 `offline_selector_during_select_check_never_selects`、`selector_outside_instance_bbox_never_selects`、`cancelled_select_request_is_dropped_promptly`、`offline_selected_participant_returns_after_join`（設計稿第 12 案）。
+    - stale 案補 B 斷電、B 開門、SELECT_CHECK 200 tick 逾時三段；`root_low_after_full_never_selects` 補 A 停用段。
+    - 死亡案改成死亡同 tick 開閘，`DEAD_SELECTOR_SELECTED` 有 FULL 見證。
+  - 規格 I-3（選定列 checkpoint）：新案 `selected_checkpoint_failure_keeps_selection_and_lock`（B 艙體範圍、`before-clear`；前兩次失敗時保留列、租約、space 與 busy，之後成功才 DORMANT）。走廊範圍在 `retiring_old_home_door…` 案。
+  - 品質 I-2（production 活性 bug）：只用 CPM 側修法 (a)。
+    - 清 lease 寫出未確認時，記下送出的列（`homeMeasuredClearSent`）。之後 current、flushed、pending 都沒有這個 SID、也不在隔離時，`settleConfirmedHomeMeasuredRelease` 的新分支補做走廊原生釋放；gateway 的 `removed` 分支再釋放 runtime 與 B 來源票。
+    - `failHome(Space)` 的 ERROR，對同一 space、同一原因只記一次。
+    - 新案 `measured_release_confirmed_and_closed_same_tick_releases_space`。
+    - T4 的 `HomeClosure`、`HomeRootFence`、`HomeRootTickets` 沒有改。
+  - CI 45749878698：`5be0a35` 的 `HomeDoorInteraction.java:34` debug log 補 `CollapseService.LOG_MARKER`。
+  - 另修兩項 production Minor：品質 M-5（選門 checked 之後釋票失敗只記 WARN，仍完成 MEASURED 與 INFO）、M-6（runtime 或 checked 列已不是 SUPERPOSITION／未選定時，`continueHomeSelects` 立即釋票、丟請求）。其餘 Minor 的處置見 plan 檔尾。
+- 門檻（Windows；implementer 自報，兩席複審重算 XML、diff 與還原的 SHA 都相符）：
+  - RED（乾淨 `0243fc0`）：Select 段 root `t5-4-fix1-red-select-11f225b0`（XML SHA-256 `CAB650F63F64267E704FA0102A7DA6C1D2ECB6B28F7B82403D5D686A006E42C1`），19 案中恰 3 案具名失敗：`MEASURED_RELEASE_STUCK_AFTER_CLOSE`（errors=19）、`SELECT_RELEASE_FAILURE_ABORTED_COMMIT`、`CANCELLED_SELECT_REQUEST_KEPT`。其餘 16 案 PASS，符合「覆蓋缺口不是 bug」的預期。
+  - log marker 的 JUnit：RED `t5-4-fix1-red-logmarker-7cf11ea0`（tests=2、failures=1，訊息指 `HomeDoorInteraction.java:34`）→ GREEN `t5-4-fix1-green-logmarker-5535a7c9`（failures=0）。
+  - mutation 14 項（拋棄式 clone `.superpowers/t54x`、pin `2ef2df8`，每項逐位元還原 exact）：
+    - 12 項 KILLED，各由具名 marker 殺：i2-revert、uuid-resolve、bbox、b-power、b-seal、timeout、root-disabled、offline-join、checkpoint-skip、m5-revert、m6-revert、no-release。i2-revert 的殺手訊息是 `errors=1`（RED 是 19），證實 ERROR 去重。
+    - 2 項等價存活：uuid-only、alive（理由見 plan 檔尾 M-1(a)）。
+    - 本體既有 11 項中，只有 no-release 的目標程式碼被改到，已重跑；其餘 10 項沿用 `25e5038` 的結果。
+  - focused 兩輪（乾淨 `2ef2df8`；`t5-4-fix1-focus-1-71f7647f`、`t5-4-fix1-focus-2-34161943`）：JUnit 五類（12／52／1／7／2 案）PASS；Main（JUnit 59＋GameTest 36）、Corridor（37）、Select（25）三段都 `M7_VERIFIED PASS`，三段 SelfTest 都 PASS。
+  - 完整 JUnit（controller 追加；`t5-4-fix1-junit-all-77d91d75`）：1208／0／0，skip 2，85 秒。
+  - default 子集（`t5-4-fix1-default-subset-eef713aa`）：27 案（default 23、normal 3、SOURCE fast path 1），都讀本次寫出的 XML。
+  - M6GameTest（`t5-4-fix1-m6gametest-b4142cf2`）：35/35。
+  - 本機秒數見下方 U1。
+- 兩席複審（新的兩席，唯讀、並行）：
+  - 規格 ✅ C0／I0／M1：原 I-1～I-3 都 ADDRESSED。B.1 判定：原生替換忠實代表 V05「玩家換 instance」，**不涉及縮小 V05 驗收**，不需問使用者。新 M-1 要求在結案 docs 記六項判定與偏離，已記入 plan 檔尾：(a) :329 的殺手是 uuid-resolve，uuid-only 與 alive 等價存活；(b) 點門受理回 `CONSUME`；(c) 互動距離核 25 格中任一格；(d) 設計 #9「停用前 stop 已 latch」對未選定列不成立，改驗 registry 停用；(e) checkpoint 範圍分兩案驗；(f) `proof==null` 具名化交 T5-5。
+  - 品質 Approved C0／I0／M3：原 I-1、I-2 都 ADDRESSED；M-4 交 T6；M-7 PARTIALLY（第 3 點「選定之後死亡」沒有案例）。新 Minor F-1～F-3 的分派見 plan 檔尾。
+
+### CI 45749878698（head `22471c9`）
+
+- attempt 1，push，completed／failure（updated 03:58:23Z）。原判保留、不 rerun。這個 run 的 production 是審查未過的 GREEN `5be0a35`，只作 U1 與回歸資料，不作 T5-4 結案依據。
+- Windows：
+  - `m7-validation` success。逐段：Main 430 秒（03:37:53→03:45:03，約 450 秒回報線的 96%）、Corridor 313 秒、Select 263 秒（Select 段第一次上 CI）、規模段 166 秒。
+  - `windows-native` failure：「Windows 原生建置與 GameTest」與「Windows M6 JUnit 與獨立 GameTest」兩步都是 JUnit `CollapseLogMarkerGuardTest.everyCollapseLogCallCarriesTheCollapseMarker()` FAILED（`1208 tests completed, 1 failed, 2 skipped`）。`:test` 失敗，所以這兩步的 default 與 M6 GameTest 沒有執行；「確認 Windows M6 精確集合與隔離」因 `build/gametest-m6-results.xml` 不存在而連帶失敗。
+  - 原因（controller 讀碼）：`5be0a35` 新增的 `HomeDoorInteraction.java:34` `LOGGER.debug(...)` 沒帶 `LOG_MARKER`。
+  - 判定（controller，不是使用者裁示）：這是 T5-4 自身的缺陷，由既有守門 JUnit 抓到，不屬「與本段無關的既有 fixture 非預期失敗」，不停下問使用者。本機 focused 只跑 JUnit 五類，所以漏掉。已併入 fix1：補 marker、具名 RED→GREEN、GREEN pin 加跑一次完整 JUnit。
+  - `m7-home-native` 四片、aggregate、`m6-native` 都 success。
+- Ubuntu（只照錄一行）：`build` failure（Build 與 Ubuntu M6 步驟），`m7-validation (ubuntu-latest, Ubuntu)` success。Ubuntu 未採計（暫停雙平台驗證）。
+
+### CI 45569149943（head `238ade6`，Step 0）的後續
+
+- 原判 FAIL 保留，沒有 rerun。現象（逐筆見「最新：T5-4 進行中，暫停等使用者裁示（2026-11-25）」節「CI」）：Windows 走廊段的既有 T5-2 案 `home_entry_commits_superposition_with_entry_b` 進入走廊（SUPERPOSITION）之後，全伺服器存檔卡住超過 90 秒，被 idle 守門結束（`M6_PHASE_DEADLINE_EXCEEDED reason=idle`）。沒有執行緒快照，原因不明。
+- 使用者選「本機重現調查（建議）」（原文檔 S `user-step0-ci-hang-ruling-20261125.md`）：拋棄式 clone 以 `238ade6` 跑走廊段 3 次，都 PASS（43 案、0 失敗，116～124 秒）；看門程式沒有觸發，沒有取得快照（S `t5-4-hang-repro-report.md`）。
+- 之後使用者選「讓 CI 卡住時自動留快照（建議）」；依該選項的說明（原文見 S `user-t5-4-resume-ruling-20261125.md` 第 2 題），這次失敗原判保留、不重跑。快照見下一節。
+
+### CI 卡住自動快照（`2ef2df8..f8ee0bf`）
+
+- 依據：使用者選「讓 CI 卡住時自動留快照（建議）」（S `user-t5-4-resume-ruling-20261125.md` 第 2 題；選項說明原文見該檔，以及本檔「最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）（歷史）」節的使用者裁示第 2 點）。依 B+C：只改驗證腳本與 README，一席審查。
+- 內容：`gates.ps1 -Mode M7Runtime` 的 `Invoke-Gradle` 在 idle 判定成立、送 `stop` 之前，對已核身分的 owned JVM 取兩次執行緒快照（相隔約 10 秒；`jstack -l`，其次 `jcmd Thread.print -l`）。快照寫進該次 gate 的 `execution/`，隨既有 artifact 上傳；失敗只記錄，不改判。
+- 時限不變：總時限 600 秒、idle 90 秒、grace 60 秒都沒有改。`build.yml`、production、testmod 沒有改。
+- 驗證（拋棄式 clone `.superpowers/t54j`，用完已刪除；另在工作樹乾淨 pin 跑一次 targeted）：
+  - RED（原腳本＋暫時的卡住案）`ci-idle-jstack-red-7170b8ee05b94570be8633af49dc3e2a`：exit 1、`reason=idle`、0 個快照。
+  - GREEN `ci-idle-jstack-green-a3d4f6d5c6bd4132a39a014a2cb9f76b`：exit 1，判定與訊息同 RED；兩份快照與 `m7-jstack.json` COMPLETE，快照裡的 `"Server thread"` 停在卡住案。
+  - 工具失敗負控 `ci-idle-jstack-toolfail-f23d8f8738854bb08ad2b5f481bae42b`：判定不變，兩次都記 `START_FAILED`。
+  - 正常負控 `ci-idle-jstack-normal-b957bbc823c14d98812562c70537ccbf`、工作樹乾淨 pin `f8ee0bf` 的 targeted `ci-idle-jstack-targeted-148864f8310644ffb8f6c0b3a62e3852`：都是 `M7_VERIFIED PASS segment=Select junit=0 gametest=25`，0 個快照。
+  - 回歸：`m6-deadline-check.ps1` PASS（cases=7）、`gradle-task-guard-check.ps1` PASS；函式 harness 6/6；`gates.ps1` 語法解析 0 錯誤。真實 AccessDenied 0。
+- 審查：一席 Approved C0／I0／M3。Minor 分派見 plan 檔尾。
+- controller 決定（不是使用者裁示）：接受快照裡是 `"Server thread"`＋`"DestroyJavaVM"`，沒有名為 `"main"` 的執行緒（派工簡報寫「含 main thread」）。Fabric 的 main 啟動 server 後即返回，主執行緒在快照裡顯示為 `DestroyJavaVM`；快照要抓的是卡住的 Server thread，已抓到。
+
+### 規格 M-3：返還引擎跳過死亡中玩家是 production 改動
+
+- 位置：`SessionRecoveryManager.recoverHome`（`SRM:518` 的 `|| !player.isAlive()`），由 GREEN `5be0a35` 加入（commit 訊息「死亡中的玩家等重生後再返還」）。死亡中的玩家不移動、不記 Returned，等重生後才返還。這一行也作用於 T5-2 未選定 RETURNING 的共用路徑。
+- 理由：這是走廊內死亡的玩家最終回到 exact B 的必要條件。不跳過時，死亡者會在重生前被送到 B 並記 Returned，之後原版把他重生在 spawn，列被移除、人不在 B。原規格審查把這點標為讀碼推論；本體的 b-dead-skip 變異（拿掉這個跳過）被 `DEATH_NOT_RETURNED_TO_B` 具名殺掉，fix1 規格複審讀碼確認殺手路徑仍在。
+- 使用者走廊死亡選「照原版，記為已知行為（建議）」，其選項說明寫的是 T5-4 只補測試（原文見 S `user-t5-4-design-ruling-20261125.md` 第 3 題）。原規格審查判定這項 production 改動在裁示意圖內、不需新裁示；controller 已在 11-26 交接回覆中告知使用者（見下方歷史節）。
+
+### 本體期間與本輪的工具、fixture 事件
+
+- ci-rule-check M7 fixture 正例（本體期間）：
+  - 第一次 `t5-4-ci-fixture-2aeb830f` 自 2026-11-25 20:01 起卡住約 12.8 小時（CPU 約 1.5 秒、無子程序、沒有輸出）。
+  - 使用者原話（2026-11-26 08:52，主 chat，不是選項題；原文檔 S `user-t5-4-fixture-hang-kill-ruling-20261126.md`）：「可以，你結束那兩個程序，繼續下一步」。controller 只結束 PID 30904 與 27632；這次原判「未完成」，不算 PASS 也不算 FAIL，root 保留。
+  - controller 決定（不是使用者裁示）不改 SDD 腳本，以 `t5-4-ci-fixture-rerun.ps1`（`-NonInteractive`、stdin 導向空檔、900 秒上限）重跑一次：`t5-4-ci-fixture-rerun-b5e9ca82`，exit 0、PASS、49 秒、輸入不變。卡住原因「子 pwsh 等繼承的 stdin」仍是推論。fix1 沒有改 `build.yml` 與腳本，所以這個結果仍適用（規格複審 M-9 列）。
+- b-dead-skip 的更正：controller 先前向使用者說「b-dead-skip 第一輪存活、第二輪才殺」，是誤述。
+  - 第一輪 11 項，都因驅動 `t5-4-targeted.ps1` 的 `-Segment` 是 `ValidateSet('Main','Corridor')`，傳 `Select` 在參數綁定就被拒（工具錯誤；沒有建立 root、沒有套用變異、沒有啟動 Java）。
+  - 第二輪 11 項第一次真正執行，全部 KILLED。b-dead-skip 只執行過這一次，就被 `DEATH_NOT_RETURNED_TO_B` 殺掉。
+- 本體的工具錯誤 3 次，各是不同問題，原 root 與原檔保留：
+  1. 段名守門負控腳本的解碼（`t5-4-segset-guard-4e750769`，空 root）。
+  2. mutation 驅動的 `-Segment` 缺 Select（`t5-4-body-mutations-toolerror1.*`，即上一點）。
+  3. default 子集把屬 default run 的 SOURCE batch `m5_collapse_source_live` 排進 M5 run：伺服器啟動即以「指定 batch 子集不符」失敗、0 案執行，驅動誤報的 `FAIL cases=60` 是 11-24 的舊 XML（`t5-4-default-subset-9edef930/m5`）。SOURCE 之後在正確的 default run 補跑 1/1 PASS（`t5-4-default-subset-9a0464c0`）。
+- fix1 的工具錯誤 1 次：mutation 批次驅動的 `-Only` 經 `pwsh -File` 傳成一個逗號字串，13 項全被略過、0 項執行、沒有啟動 Java（原 log 改名保留為 `t5-4-fix1-mutations-run2-toolerror1.log`）。驅動改成逐一拆逗號後重跑（`t5-4-fix1-mutations-run3.log`）。
+- CI 快照工作的 runner 收尾崩潰 1 次：GREEN 第一次 `ci-idle-jstack-green-5a73e26cd4b64542946dbb8e8a9a8e76` 的 gate 已結束（判定與快照內容和採計的那次一致），但 SDD runner 收尾的 `Get-LiveJava` 遇到命令列為 null 的 `java.exe`，在 StrictMode 下崩潰，子程序 exit code 沒有保存。root 保留、不採計；修 runner 後以新 nonce 重跑（`ci-idle-jstack-green-a3d4f6d5c6bd4132a39a014a2cb9f76b`）。
+- 走廊死亡案的診斷程式（marker `M7_T54_DEATH_DIAG`）已在 GREEN `5be0a35` 移除（原規格審查以 `git grep` 核對）。AGENTS 與本檔舊節提到它的段落是當時的進度。
+
+### 止損計數（只計 Windows）
+
+- 既有冷 B 案、門故障案、與本段無關的既有 fixture：非預期失敗 0（fix1 的 Main／Corridor 兩輪、default 子集 27 案、M6 35 案、完整 JUnit 1208 案）。
+- T5 新案：fix1 新增的 6 案各 0；`corridor_death_returns_to_exact_b_with_returned`（從真重生修法起重算）0；`collapsing_row_uses_the_same_return_engine` 維持 1；其餘 0。RED 與 mutation 的失敗是預期的，不計。
+- 工具：上一節各次都是不同問題，沒有同一工具問題連續第 3 次。
+- 真實 AccessDenied：0。`0243fc0`、`2ef2df8` 兩個 pin 的額度都未用。`f8ee0bf` 只改腳本，依 AGENTS 既有讀法（任何含非 docs 變更的 commit）也算 code pin，額度也未用。
+- CI 45767504067：Windows 各 job 全 success，非預期失敗 0，上列計數不變；真實 AccessDenied 0。
+
+### CI 45767504067（head `f8ee0bf`）
+
+- completed／success，push，attempt 1，created 06:20:24Z、updated 06:52:35Z。原件 S `ci-45767504067-f8ee0bf/terminal-run.json` SHA-256 `09fbddd3a17fc92785cda6e38de7646a7ca209fda061bfb6c90dadeb2a16545b`。
+- Windows：`windows-native`、`m7-validation`、`m7-home-native` 四列（ordinary、passable、sealed、restart-receipt）與 aggregate、`m6-native` 全 success。這是 fix1 production（`2ef2df8`）與第三段 Select 第一次一起在 CI 全綠。
+- Ubuntu（只照錄，Ubuntu 未採計，暫停雙平台驗證）：`build`、`m7-validation` Ubuntu success。
+
+### 走廊死亡的前提更正（使用者裁示）
+
+- 使用者選「維持現行行為（建議）」（2026-11-26 AskUserQuestion；題目、選項說明與其他選項原文見 S `user-t5-4-death-premise-ruling-20261126.md`）。
+- 背景（controller，不是使用者裁示）：11-25 第 3 題寫「他在走廊掉的物品會在走廊清理時消失」，是 controller 撰題時的錯誤前提，使用者當時在這個前提下選了「照原版，記為已知行為（建議）」。結案 docs 起草時發現，controller 決定向使用者說明並重新確認。
+- 實際行為（不改程式，T8 發行說明照此寫）：走廊掉落物隨返還送回 B 艙內；重生先到 canonical `minecraft:overworld` 的 spawn 附近，再被送回出發的宇宙 B（實測三次都沒有設床，設了床時的落點沒有驗過）；玩家停在死亡畫面不按重生時，艙一直被占用，和離線相同，按重生後才送回 B 並釋放。
+
+### U1
+
+- 本機 fix1 focused 兩輪：Main 211／157 秒、Corridor 117／121 秒、Select 104／99 秒。Select 由本體的 79／76 秒（19 案）增為 25 案的 104／99 秒。
+- 品質複審觀察：fix1 的 6 個新案都在 Select 段，Main、Corridor 沒有新增或移動案例。Main 第 1 輪 211 秒找不到 fix1 的成因，fix1 報告推論是本機負載波動（未查證）。
+- CI：`22471c9`（CI 45749878698）Main 430、Corridor 313、Select 263、規模 166 秒。
+- CI 45767504067（Windows `m7-validation` 的 M7 GameTest 執行 step）：Main 372、Corridor 355、Select 283、規模 153 秒（controller 以 `python -I` 從 terminal-run.json 的 step 起訖時間計算）。都低於約 450 秒回報線；Corridor 355 秒約是回報線的 79%。
+- 任一段 Windows CI 步驟超過約 450 秒，先報使用者，不自行放寬。
+
+### 下一步
+
+1. T5-4 已依段落結案（CI 45767504067 Windows 全綠）。本筆結案 docs 自己的 CI 另外讀回，不影響 T5-4 判定。
+2. T5-5：開服接手／attach、corridor-recovery 原生鏈、完整 run-all、T5 結案。開頭的 Step 0 處理 plan 檔尾分給 T5-5 Step 0 的項目；T5-5 簡報要逐檔授權 plan 檔尾列的腳本與 mixin。
+3. 之後 T6 → T7 → T8。main 合併、tag `m7`、人工代操作、worktree 退役，各自另問使用者。
+
+## 最新：T5-4 本體實作完成、兩席審查未過（2026-11-26）（歷史）
 
 狀態：T5-4 本體的 GREEN 與 CI 第三段已在本機 commit，本機驗證通過；兩席審查都沒過，依使用者原話「好，審查回來沒問題就繼續另外等兩個子代理完成就收尾交接給新對話完整提示詞」，本對話不派 fix round，交給新對話。接手入口 `docs/handoffs/2026-11-26-m7-t5-4-fix-handoff.md`。T5-4 未結案。
 
