@@ -186,7 +186,7 @@ final class M7HomeCorridorPhases {
         private ChamberControllerBlockEntity bController;
         private List<String> homeChunks;
         private Step step = Step.SETUP;
-        private int stepTicks, cutHits, startedTick = -1, ticketTick = -1, loginTick = -1;
+        private int stepTicks, cutHits, startedTick = -1, ticketTick = -1, loginTick = -1, prevBPlayers;
         private boolean readbackArmed, finished, passed, bFullSeen, moved, fenceAtFirstTick, converted, selectedSeen, rootTicketSeen, entryTicketSeen,
                 doorWitnessed, firstTick = true;
         private volatile boolean stoppingSeen;
@@ -782,9 +782,11 @@ final class M7HomeCorridorPhases {
                 expect("bTicketFormal", world == b && chunk.equals(new ChunkPos(FRAME.controllerPos())) && ticketTick > startedTick,
                         () -> "ticket world=" + world.getRegistryKey().getValue() + " chunk=" + chunk + " tick=" + ticketTick + " started=" + startedTick);
             }
+            // B 的 home chunks 第一次全部 FULL 時正式 B 來源票已在，而且上一個 tick 結束時 B 沒有玩家（B 不是由玩家票載入；第 2、3 列的返還移動可能就在同一個 tick）。
             if (!bFullSeen && bAllLoaded()) {
                 bFullSeen = true;
-                expect("bLoadedByFormalTicket", ticket != null && b.getPlayers().isEmpty(), () -> "B 載入時 ticket=" + ticket + " players=" + b.getPlayers().size());
+                int before = prevBPlayers;
+                expect("bLoadedByFormalTicket", ticket != null && before == 0, () -> "B 載入時 ticket=" + ticket + " 上一個 tick 的 B 玩家數=" + before);
             }
             if (!row.earlyLogin()) {
                 if (participants.isEmpty() && ticket != null && bAllLoaded() && b.getPlayers().isEmpty()) login(0);
@@ -805,6 +807,7 @@ final class M7HomeCorridorPhases {
             if (flushed != null && flushed.state() == SessionState.RETURNING) converted = true;
             if (flushed != null && flushed.home().selection() instanceof Selected || current != null && current.home().selection() instanceof Selected) selectedSeen = true;
             if (row == Row.SUPERPOSITION && !doorWitnessed) doorWitness(pages, flushed);
+            prevBPlayers = b.getPlayers().size();
             if (endMissing(journal, pages).isEmpty()) {
                 verifyEnd(journal, pages);
                 return;
