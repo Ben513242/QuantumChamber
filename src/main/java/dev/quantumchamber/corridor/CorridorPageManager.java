@@ -124,6 +124,9 @@ public final class CorridorPageManager {
         org.slf4j.LoggerFactory.getLogger("quantumchamber").info("走廊 bootstrap：storage={}，durable sessions={}",
                 server.getSavePath(net.minecraft.util.WorldSavePath.ROOT),journal.flushedRecords().size());
         for (var record : journal.flushedRecords().values()) restoreSpace(record);
+        // M7 T5-5：需要走廊的 checked HOME 列重建 space（C13 加法分派，legacy 本體不動）；走廊票由下面的同一個迴圈取得。
+        for (var row : journal.allFlushedSessions().values())
+            if (row instanceof HomeSessionRecord home && homeAttachAction(home).space()) restoreHomeSpace(home);
         try {
             for (var space : spaces.values()) acquireTickets(space);
             active=this;
@@ -848,9 +851,42 @@ public final class CorridorPageManager {
         public boolean convert() { return this == RETURN_TICKET_AND_SPACE; }
     }
 
-    /** T5-5 RED：尚未實作，一律不接手。 */
+    /**
+     * 開服時一筆 checked HOME 列的接手動作（設計稿第 2 節的動作表；純函式，SSM 與 CPM 的 attach 共用）：
+     * <ul>
+     * <li>CloseIntent 不是 NONE、PASSAGE_READY、SEALED：NONE（由 T4 的回程終局 owner 處理，或永久持鎖）；</li>
+     * <li>未選定的 ARMING／SUPERPOSITION：取 B 票、重建 space、轉 RETURNING；未選定的 RETURNING：取 B 票、重建 space（不再寫）；</li>
+     * <li>選定的 MEASURED／COLLAPSING：租約非空時取 B 票、重建 space（保留選擇，絕不轉 RETURNING）；租約空時 MEASURED 是 DORMANT（NONE），COLLAPSING 已清理
+     *     （只取 B 票，交 T6 的 PREPARE 原地接手）。</li>
+     * </ul>
+     */
     public static HomeAttach homeAttachAction(HomeSessionRecord row) {
-        return HomeAttach.NONE;
+        var home=row.home();
+        if (!(home.closeIntent() instanceof HomeSessionRecord.None) || row.state()==SessionState.PASSAGE_READY || row.state()==SessionState.SEALED) return HomeAttach.NONE;
+        if (home.selection() instanceof HomeSessionRecord.Unselected) return switch (row.state()) {
+            case ARMING, SUPERPOSITION -> HomeAttach.RETURN_TICKET_AND_SPACE;
+            case RETURNING -> HomeAttach.TICKET_AND_SPACE;
+            default -> HomeAttach.NONE;
+        };
+        if (row.state()!=SessionState.MEASURED && row.state()!=SessionState.COLLAPSING) return HomeAttach.NONE;
+        if (!row.spaceLeases().isEmpty()) return HomeAttach.TICKET_AND_SPACE;
+        return row.state()==SessionState.COLLAPSING ? HomeAttach.TICKET_ONLY : HomeAttach.NONE;
+    }
+
+    /**
+     * attach 時依一筆 checked HOME 列重建走廊 space（比照 {@link #restoreSpace}；設計稿第 4 節）：租約回填 allocator、保護範圍與 space，之後由 attach 的
+     * {@link #acquireTickets} 取走廊票。current／pending／retiring 都是空的（重建的列不再換頁，checked 列的全部租約在收尾時一次清掉）。驗證失敗時與 legacy 相同，attach 丟出。
+     */
+    private void restoreHomeSpace(HomeSessionRecord row) {
+        var space=new Space(row.sessionUuid(),row.rootAnchor(),row.entryEndpoint(),row.participants(),SessionSemantics.LATERAL_BUFF_MAINTAINED);
+        for (var lease : row.spaceLeases()) {
+            validateFacingBounds(lease.bounds(),space.semantics.corridorFacing(space.origin.facing()));
+            validateWorldBounds(lease.bounds());
+            allocator.restore(lease.slotId(),lease.bounds());
+            space.leases.put(lease.slotId(),lease);
+            protectedLeases.put(lease.slotId(),lease.bounds());
+        }
+        spaces.put(space.id,space);
     }
 
     // ---- M7 HOME（T5-2）：從 B 入走廊與未選定的整組返回 B。legacy 方法本體不動，HOME Space 只經下列方法與 tick／fail 的 HOME 分派。 ----
@@ -1392,6 +1428,17 @@ public final class CorridorPageManager {
                 return Optional.of(new HomeDoorHit(space.id,key,mapping.ref(),space.current.epoch(),current));
             }
         }
+        // M7 T5-5（設計稿 4.1，M-4）：開服重建的 space 沒有 MappingView，算不出 homeDoorCells；租約內帶 home_marker 的 bulkhead 就是同一組 HOME 門格，
+        // 回 current=false 的定位，由選門受理立即 FAIL 並消耗互動，不落到候選門或一般艙門。走廊入口的門格沒有 marker，維持原本的流程。
+        for (var space : spaces.values()) {
+            if (!space.home || space.pending!=null || !space.current.instances().isEmpty()) continue;
+            for (var lease : space.leases.values()) {
+                if (!lease.bounds().contains(pos)) continue;
+                var state=world.getBlockState(pos);
+                if (!state.isOf(dev.quantumchamber.registry.ModBlocks.QUANTUM_BULKHEAD) || !state.get(QuantumBulkheadBlock.HOME_MARKER)) continue;
+                return Optional.of(new HomeDoorHit(space.id,HomeDoorLayout.key(space.id),new MappingRef(space.id,0,lease.slotId()),space.current.epoch(),false));
+            }
+        }
         return Optional.empty();
     }
 
@@ -1519,8 +1566,9 @@ public final class CorridorPageManager {
     /**
      * 選定 HOME 的清 lease 寫出未確認、之後被其他寫出確認：checked 列已沒有租約，補做原生釋放。回傳是否已釋放（space 已移除）。
      * <p>T5-4 fix1（品質 I-2）：確認寫出的重試（SSM 的 recovery）與回程終局 owner（{@code HomeRootFence}／{@code HomeClosure}）都排在走廊之後；cleaned＋stop 時同一個
-     * tick 內就能結案並 checked 移除列。這時清 lease 已送出（{@code homeMeasuredClearSent}），而 current、flushed、pending 都已沒有這個 SID、也不在隔離：HOME 列只經
-     * {@code terminateHome} 的 checked 移除才會從三份都消失，而它要求 current＝flushed、沒有未確認的 roll-forward，所以清 lease 一定已確認、走廊幾何已清空並 checkpoint；
+     * tick 內就能結案並 checked 移除列。這時清 lease 已送出（{@code homeMeasuredClearSent}），而 current、flushed、pending 都已沒有這個 SID、也不在隔離：<b>已選定的</b> HOME 列只經
+     * {@code terminateHome} 的 checked 移除才會從三份都消失，而它要求 current＝flushed、沒有未確認的 roll-forward，所以清 lease 一定已確認、走廊幾何已清空並 checkpoint
+     * （T5-5 S0-2：T6 新增選定列的移除路徑時，須重驗此前提）；
      * 沒有任何 durable 列再引用這些租約，補做原生釋放（票、slot、保護範圍）。之後 gateway 的 {@code removed} 分支釋放 HOME runtime 與 B 來源票。
      */
     private boolean settleConfirmedHomeMeasuredRelease(Space space) {
