@@ -1,7 +1,8 @@
 # M7薄接線：只跑JUnit/GT，沿用M6純oracle與既有Windows gates owner。
 # -Segment（T4 B2b-5，使用者 2026-11-18 裁示「規模測試獨立一段」）：Main＝M7 JUnit（不含規模測試）＋GameTest＋兩 JAR；
 # Scale＝只跑 m7-inventory.json scale 集合的 JUnit（M7HomeHistoryScaleTest），自己的 Gradle 呼叫、自己的 OutputRoot。兩段的 JUnit class 互斥，聯集等於原始碼宣告的全部 M7 JUnit。
-# GameTest 拆段（使用者 2026-11-25 裁示「拆成兩段」）：GameTest 依 m7-inventory.json gametestSegments 的類別分段（目前 Main、Corridor；日後加段只改清單）。
+# GameTest 拆段（使用者 2026-11-25 裁示「拆成兩段」）：GameTest 依 m7-inventory.json gametestSegments 的類別分段（段名與各段類別以清單為準，目前是 Main、Corridor、Select；
+# 本腳本只讀清單，CI 的 step 依段名寫死，加段時見 README「M7 GameTest 拆段」）。
 # Main 保留分到的 GameTest、全部非規模 JUnit 與兩 JAR；其他段只跑自己的 GameTest（JVM 內由 M4LegacyGameTestFilterMixin 依同一份清單選類別）。
 # 各段一次 Gradle 呼叫、自己的 OutputRoot、exact 集合與隔離、SelfTest；各段類別互斥、聯集等於原始碼宣告的全部 M7 GameTest 類別。
 # -Segment 必須明確指定（Scale 或 gametestSegments 的段名，區分大小寫）；不給或不在清單都 fail closed，不會靜默只跑其中一段。
@@ -220,7 +221,8 @@ function SelfTest-M7([string]$Root){
     # Scale 段沒有 GameTest／pacing／JAR，反例改在 JUnit XML 與 summary 欄位集合上。
     # GameTest 段（使用者 2026-11-25「拆成兩段」）另有：錯段（換成另一個 GameTest 段）、混入另一段的類別、少一個本段類別、多一個不屬於任何段的 M7 類別、
     # summary 的段名；Main 以外的段另核不得有 JUnit 輸入與 summary 不得夾帶 JUnit 欄位。
-    $segmentCases=@('wrong-game-segment','foreign-class','class-missing','class-extra','summary-segment')
+    # stale-gametest（T5-5 Step 0，拆段審查 M7）：manifest 的 gametest 輸入標成不是本次寫出（fresh=false），必須 M7_NOT_CURRENT；各段共用 build/gametest-m7-results.xml。
+    $segmentCases=@('wrong-game-segment','foreign-class','class-missing','class-extra','summary-segment','stale-gametest')
     $caseList=if($Segment -ceq 'Scale'){@('positive','junit-drop','junit-skip','wrong-segment','wrong-head','hash','summary-junit-cases','summary-scope','summary-extra-field')}
     elseif($Segment -ceq 'Main'){@('positive','drop','skip','wrong-scope','wrong-segment','wrong-head','hash','summary-game-cases','summary-junit-cases','summary-pacing','summary-artifact')+$segmentCases}
     else{@('positive','drop','skip','wrong-scope','wrong-segment','wrong-head','hash','summary-game-cases','summary-pacing')+$segmentCases+@('junit-present','summary-extra-field')}
@@ -250,6 +252,7 @@ function SelfTest-M7([string]$Root){
             Set-Content -LiteralPath $fake -Value '<testsuite name="dev.quantumchamber.selftest.M7SelfTestTest"><testcase classname="dev.quantumchamber.selftest.M7SelfTestTest" name="proof()"/></testsuite>' -Encoding utf8
             $manifest.inputs=@($manifest.inputs)+@([pscustomobject]@{kind='junit';relative='raw/junit/TEST-dev.quantumchamber.selftest.M7SelfTestTest.xml';sha256=(Get-FileHash $fake).Hash;original='selftest';originalWriteUtc=[DateTime]::UtcNow.ToString('o');fresh=$true})
         }
+        if($case -ceq 'stale-gametest'){$staleInput=@($manifest.inputs|Where-Object {$_.kind -ceq 'gametest'})[0];$staleInput.fresh=$false}
         if($case -ceq 'wrong-segment'){$manifest.segment=$(if($Segment -ceq 'Scale'){'Main'}else{'Scale'})}
         if($case -ceq 'wrong-game-segment'){$manifest.segment=$otherSegment}
         if($case -ceq 'wrong-head'){$manifest.head='0'*40};if($case -ceq 'hash'){$manifest.inputs[0].sha256='0'*64}
@@ -259,8 +262,8 @@ function SelfTest-M7([string]$Root){
             Save-Json (Join-Path $copy 'summary.json') $changed
         }
         # 正例維持原始inputs/XML bytes；只有負例重寫自己的metadata副本。
-        if($case -cin @('drop','skip','wrong-scope','junit-drop','junit-skip','foreign-class','class-missing','class-extra','junit-present','wrong-segment','wrong-game-segment','wrong-head','hash')){Save-Json (Join-Path $copy 'inputs.json') $manifest}
-        $expected=@{positive='';drop='M7_GAME_SET';skip='M7_GAME_NOT_PASS';'wrong-scope'='M7_GAME_SET';'junit-drop'='M7_JUNIT_SET';'junit-skip'='M7_JUNIT_NOT_PASS';'wrong-segment'='M7_INPUT_IDENTITY';'wrong-game-segment'='M7_INPUT_IDENTITY';'wrong-head'='M7_INPUT_IDENTITY';hash='M7_INPUT_HASH';'foreign-class'="M7_GAME_SEGMENT_FOREIGN：$foreign";'class-missing'="M7_GAME_SEGMENT_CLASS_MISSING：$missingClass";'class-extra'="M7_GAME_SEGMENT_CLASS_EXTRA：$extraCase";'junit-present'='M7_NOT_CURRENT';'summary-game-cases'='M7_SAVED_GAME_CASES';'summary-junit-cases'='M7_SAVED_JUNIT_CASES';'summary-pacing'='M7_SAVED_PACING';'summary-artifact'='M7_SAVED_ARTIFACT';'summary-scope'='M7_SAVED_SUMMARY';'summary-segment'='M7_SAVED_SUMMARY';'summary-extra-field'='M7_SAVED_SUMMARY'}[$case];$reason='';try{$recomputed=Verify-M7 $copy;$candidate=Get-Content -LiteralPath (Join-Path $copy 'summary.json') -Raw|ConvertFrom-Json;Assert-M7SavedSummary $candidate $recomputed}catch{$reason=$_.Exception.Message}
+        if($case -cin @('drop','skip','wrong-scope','junit-drop','junit-skip','foreign-class','class-missing','class-extra','junit-present','stale-gametest','wrong-segment','wrong-game-segment','wrong-head','hash')){Save-Json (Join-Path $copy 'inputs.json') $manifest}
+        $expected=@{positive='';drop='M7_GAME_SET';skip='M7_GAME_NOT_PASS';'wrong-scope'='M7_GAME_SET';'junit-drop'='M7_JUNIT_SET';'junit-skip'='M7_JUNIT_NOT_PASS';'wrong-segment'='M7_INPUT_IDENTITY';'wrong-game-segment'='M7_INPUT_IDENTITY';'wrong-head'='M7_INPUT_IDENTITY';hash='M7_INPUT_HASH';'foreign-class'="M7_GAME_SEGMENT_FOREIGN：$foreign";'class-missing'="M7_GAME_SEGMENT_CLASS_MISSING：$missingClass";'class-extra'="M7_GAME_SEGMENT_CLASS_EXTRA：$extraCase";'junit-present'='M7_NOT_CURRENT';'stale-gametest'='M7_NOT_CURRENT';'summary-game-cases'='M7_SAVED_GAME_CASES';'summary-junit-cases'='M7_SAVED_JUNIT_CASES';'summary-pacing'='M7_SAVED_PACING';'summary-artifact'='M7_SAVED_ARTIFACT';'summary-scope'='M7_SAVED_SUMMARY';'summary-segment'='M7_SAVED_SUMMARY';'summary-extra-field'='M7_SAVED_SUMMARY'}[$case];$reason='';try{$recomputed=Verify-M7 $copy;$candidate=Get-Content -LiteralPath (Join-Path $copy 'summary.json') -Raw|ConvertFrom-Json;Assert-M7SavedSummary $candidate $recomputed}catch{$reason=$_.Exception.Message}
         if($reason -cne $expected){throw "M7_SELFTEST $case expected=$expected got=$reason"};$results+=@{case=$case;expected=$expected;status=$(if($expected){'KILLED'}else{'PASS'})}
     }
     $reason='';try{Assert-M7LiveHead ('0'*40)}catch{$reason=$_.Exception.Message};if($reason -cne 'M7_HEAD_CHANGED'){throw 'M7_SELFTEST live-head-mismatch'};$results+=@{case='live-head-mismatch';expected='M7_HEAD_CHANGED';status='KILLED'}

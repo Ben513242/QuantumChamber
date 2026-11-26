@@ -12,6 +12,7 @@
 #   -Mutation drop｜skip｜fail＋-MutationTarget（XML testcase name）＋-MutationXml default｜m5（預設 default）
 #   -SourceMutation interpose-annotation｜rename-windows＋-SourceTarget（方法名稱）；rename-windows 之後，-MutationTarget 用改名後的名稱
 #   -EvidenceRoot  root 的上層；必須在 repo 內且被 gitignore，預設 <repo>/.superpowers/verification
+#   -M7GameTestXml＋-M7Segment Main|Corridor|Select（預設 Main）：M7 單段驗證 step 的 fixture；-M7Segment Final＋-M7SegmentRoots：最後重驗 step 的 fixture（T5-5 Step 0）
 param(
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9-]*$')][string]$Label,
     [Parameter(Mandatory)][string]$Workflow,
@@ -29,6 +30,10 @@ param(
     [string]$M7GameTestXml='',
     [string]$M7RuntimeLog='',
     [ValidateSet('Windows','Ubuntu')][string]$M7Platform='Windows',
+    # M7 fixture 的段（T5-5 Step 0，拆段審查 M2）：Main／Corridor／Select 各對應自己的驗證 step 與 OutputRoot，-M7GameTestXml 是該段 root 的 raw/gametest.xml；
+    # Final 對應「確認 M7 各 GameTest 段都已執行」，改以 -M7SegmentRoots 逐段給 root（段名取自各 root 的 inputs.json，可以故意少給一段做負控）。
+    [ValidateSet('Main','Corridor','Select','Final')][string]$M7Segment='Main',
+    [string[]]$M7SegmentRoots=@(),
     [string]$M6GameTestXml='',
     [string]$M6RuntimeLog='',
     [string]$M6RuntimeRoot='',
@@ -82,11 +87,22 @@ for($i=$runIndex+1;$i -lt $lines.Count;$i++){
 }
 $common=($body | Where-Object {$_.Length -gt 0} | ForEach-Object {($_ -replace '^(\s*).*$','$1').Length} | Measure-Object -Minimum).Minimum
 $script=($body | ForEach-Object { if($_.Length -ge $common){$_.Substring($common)}else{$_} }) -join "`n"
-if($M7GameTestXml){
-    if($Step -cne '確認 M7 精確集合與隔離'){throw 'M7_FIXTURE_STEP'}
-    $original=Split-Path (Split-Path ([IO.Path]::GetFullPath($M7GameTestXml)))
-    $fixture=Join-Path $root 'fixture';$m7Output=Join-Path $fixture '.superpowers/m7-own'
-    New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts/verification'),(Join-Path $fixture 'src/testmod'),(Join-Path $fixture 'src/test/java/dev/quantumchamber/persistence'),$m7Output -Force|Out-Null
+if($M7GameTestXml -or $M7SegmentRoots.Count){
+    # 各段的驗證 step 與 OutputRoot 比照 workflow（Main 是 .superpowers/m7-own，其他段是 .superpowers/m7-<段名小寫>）；step 與 -M7Segment 不符是 M7_FIXTURE_STEP。
+    $m7Steps=[ordered]@{Main='確認 M7 精確集合與隔離';Corridor='確認 M7 走廊段精確集合與隔離';Select='確認 M7 選門段精確集合與隔離';Final='確認 M7 各 GameTest 段都已執行'}
+    if($Step -cne $m7Steps[$M7Segment]){throw "M7_FIXTURE_STEP：-M7Segment $M7Segment 只接受 step「$($m7Steps[$M7Segment])」"}
+    function M7-FixtureOutput([string]$Segment){if($Segment -ceq 'Main'){return '.superpowers/m7-own'};return '.superpowers/m7-'+$Segment.ToLowerInvariant()}
+    if($M7Segment -ceq 'Final'){
+        if($M7GameTestXml -or -not $M7SegmentRoots.Count -or $Mutation -cne 'none'){throw 'M7_FIXTURE_ROOTS：Final 只接受 -M7SegmentRoots，不接受 -M7GameTestXml 與 -Mutation'}
+        $m7Sources=@(foreach($given in $M7SegmentRoots){$full=[IO.Path]::GetFullPath($given);[pscustomobject]@{root=$full;segment=[string](Get-Content -LiteralPath (Join-Path $full 'inputs.json') -Raw|ConvertFrom-Json).segment}})
+        if(@($m7Sources|ForEach-Object segment|Sort-Object -Unique -CaseSensitive).Count -ne $m7Sources.Count){throw 'M7_FIXTURE_ROOTS：同一段給了兩個 root'}
+    }else{
+        if($M7SegmentRoots.Count -or -not $M7GameTestXml){throw 'M7_FIXTURE_ROOTS：單段只接受 -M7GameTestXml'}
+        # 單段：給的 root 一律放到這個 step 的 OutputRoot（root 自己的段不同時由 step 原文以 M7_INPUT_IDENTITY 拒絕，可做負控）。
+        $m7Sources=@([pscustomobject]@{root=(Split-Path (Split-Path ([IO.Path]::GetFullPath($M7GameTestXml))));segment=$M7Segment})
+    }
+    $fixture=Join-Path $root 'fixture';$m7Output=Join-Path $fixture (M7-FixtureOutput $m7Sources[0].segment)
+    New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts/verification'),(Join-Path $fixture 'src/testmod'),(Join-Path $fixture 'src/test/java/dev/quantumchamber/persistence') -Force|Out-Null
     foreach($name in @('m7-ci-gametest.ps1','m7-inventory.json','m6-ci-gametest.ps1','gates.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $fixture 'scripts/verification')}
     Copy-Item -LiteralPath $SourceRoot -Destination (Join-Path $fixture 'src/testmod/java') -Recurse
     $testBase=Join-Path $repo 'src/test/java'
@@ -95,9 +111,12 @@ if($M7GameTestXml){
         New-Item -ItemType Directory -Path (Split-Path $dest) -Force|Out-Null
         Copy-Item -LiteralPath $file.FullName -Destination $dest
     }
-    Copy-Item -LiteralPath (Join-Path $original 'raw') -Destination $m7Output -Recurse
-    foreach($name in @('inputs.json','summary.json')){Copy-Item -LiteralPath (Join-Path $original $name) -Destination $m7Output}
-    # 正例完全不parse/save XML或重序列化inputs，保留其原始hash。
+    foreach($source in $m7Sources){
+        $sourceOutput=Join-Path $fixture (M7-FixtureOutput $source.segment);New-Item -ItemType Directory -Path $sourceOutput -Force|Out-Null
+        Copy-Item -LiteralPath (Join-Path $source.root 'raw') -Destination $sourceOutput -Recurse
+        foreach($name in @('inputs.json','summary.json')){Copy-Item -LiteralPath (Join-Path $source.root $name) -Destination $sourceOutput}
+    }
+    # 正例完全不parse/save XML或重序列化inputs，保留其原始hash（Mutation 只用於單段，改的是該段的 OutputRoot）。
     if($Mutation -cne 'none'){
         $manifest=Get-Content -LiteralPath (Join-Path $m7Output 'inputs.json') -Raw|ConvertFrom-Json -DateKind String
         $input=@($manifest.inputs|Where-Object {$_.kind -ceq 'gametest'})[0];$path=Join-Path $m7Output $input.relative;[xml]$xml=Get-Content -LiteralPath $path -Raw
@@ -110,10 +129,20 @@ if($M7GameTestXml){
         $replacement=if($SourceMutation -ceq 'interpose-annotation'){"@SuppressWarnings(`"unused`")`n    $needle"}else{"public void ${SourceTarget}_windows(TestContext"};$text.Replace($needle,$replacement)|Set-Content -LiteralPath $file -Encoding utf8
     }
     $runner=Join-Path $root 'step.ps1';[IO.File]::WriteAllText($runner,"`$ErrorActionPreference='Stop'`n"+$script+"`nif(`$LASTEXITCODE -and `$LASTEXITCODE -ne 0){exit `$LASTEXITCODE}")
-    $before=$env:M7_PLATFORM;$beforeHead=$env:GITHUB_SHA
-    try{$env:M7_PLATFORM=$M7Platform;$env:GITHUB_SHA=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim();Push-Location $fixture;try{$output=(& pwsh -NoProfile -File $runner 2>&1|Out-String);$code=$LASTEXITCODE}finally{Pop-Location}}
-    finally{$env:M7_PLATFORM=$before;$env:GITHUB_SHA=$beforeHead}
-    [ordered]@{schema=1;fixture=$true;platform=$M7Platform;head=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim();workflowSha256=(Get-FileHash $Workflow).Hash;step=$Step;mutation=$Mutation;sourceMutation=$SourceMutation;verdict=$(if($code -eq 0){'PASS'}else{'FAIL'});exitCode=$code;output=$output;m7GameTestXmlSha256=(Get-FileHash $M7GameTestXml).Hash;originalInputsSha256=(Get-FileHash (Join-Path $original 'inputs.json')).Hash}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $root 'result.json') -Encoding utf8
+    # T5-5 Step 0：子 pwsh 加 -NonInteractive、stdin 立即關閉（不繼承呼叫端的 stdin；T5-4 曾有一次 fixture 正例卡住約 12.8 小時），等待上限 900 秒；
+    # 逾時只結束這個子程序（含它的子程序）並記 FAIL（M7_FIXTURE_TIMEOUT）。M7_PLATFORM／GITHUB_SHA 只設在子程序的環境，不改呼叫端。
+    $fixtureHead=(git -c "safe.directory=$repo" -C $repo rev-parse HEAD).Trim()
+    $info=[Diagnostics.ProcessStartInfo]::new('pwsh')
+    foreach($argument in @('-NoProfile','-NonInteractive','-File',$runner)){$info.ArgumentList.Add($argument)}
+    $info.Environment['M7_PLATFORM']=$M7Platform;$info.Environment['GITHUB_SHA']=$fixtureHead
+    $info.WorkingDirectory=$fixture;$info.UseShellExecute=$false;$info.RedirectStandardInput=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+    $process=[Diagnostics.Process]::Start($info);$process.StandardInput.Close()
+    $stdoutTask=$process.StandardOutput.ReadToEndAsync();$stderrTask=$process.StandardError.ReadToEndAsync()
+    if($process.WaitForExit(900000)){$process.WaitForExit();$code=$process.ExitCode;$output=$stdoutTask.Result+$stderrTask.Result}
+    else{try{$process.Kill($true)}catch{};[void]$process.WaitForExit(30000);$code=-1;$output="M7_FIXTURE_TIMEOUT：step 子程序超過 900 秒，已結束`n"+$(if($stdoutTask.Wait(5000)){$stdoutTask.Result})+$(if($stderrTask.Wait(5000)){$stderrTask.Result})}
+    $process.Dispose()
+    $sourceRecords=@($m7Sources|ForEach-Object {$xmlPath=Join-Path $_.root 'raw/gametest.xml';[ordered]@{segment=$_.segment;root=$_.root;inputsSha256=(Get-FileHash (Join-Path $_.root 'inputs.json')).Hash;summarySha256=(Get-FileHash (Join-Path $_.root 'summary.json')).Hash;gameTestXmlSha256=$(if(Test-Path -LiteralPath $xmlPath){(Get-FileHash $xmlPath).Hash}else{''})}})
+    [ordered]@{schema=1;fixture=$true;platform=$M7Platform;head=$fixtureHead;workflowSha256=(Get-FileHash $Workflow).Hash;step=$Step;m7Segment=$M7Segment;m7Sources=$sourceRecords;mutation=$Mutation;sourceMutation=$SourceMutation;verdict=$(if($code -eq 0){'PASS'}else{'FAIL'});exitCode=$code;output=$output;m7GameTestXmlSha256=$(if($M7GameTestXml){(Get-FileHash $M7GameTestXml).Hash}else{''});originalInputsSha256=$(if($M7GameTestXml){(Get-FileHash (Join-Path $m7Sources[0].root 'inputs.json')).Hash}else{''})}|ConvertTo-Json -Depth 8|Set-Content (Join-Path $root 'result.json') -Encoding utf8
     "M7_CI_FIXTURE verdict=$(if($code -eq 0){'PASS'}else{'FAIL'}) root=$root";return
 }
 

@@ -583,7 +583,10 @@ Step 'summary' {
     # 各段 gameCases 互斥、聯集恰為 m7-inventory.json 的全部 Windows M7 GameTest（M7_SEGMENT_COVERAGE），漏跑任何一段都不會通過。
     $m7Segments=[ordered]@{}
     foreach($m7Segment in @($m7GameSegments|Where-Object {$_ -cne 'Main'})){
-        $m7Proof=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment $m7Segment -VerifyOnly -OutputRoot (Join-Path $runRoot (M7-SegmentRoot $m7Segment)) -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_home' -and $_.segment -ceq $m7Segment})
+        # T5-5 Step 0（拆段審查 M4）：段的 root 缺席時以具名錯因失敗（原本是 m7-ci-gametest.ps1 讀不到 summary.json 的本地化 IO 訊息）。
+        $m7SegmentRoot=Join-Path $runRoot (M7-SegmentRoot $m7Segment)
+        if(-not(Test-Path -LiteralPath $m7SegmentRoot -PathType Container)){throw "M7_SEGMENT_FINAL_PROOF：$m7Segment root 缺席（$m7SegmentRoot）"}
+        $m7Proof=@(& (Join-Path $PSScriptRoot 'm7-ci-gametest.ps1') -Platform Windows -Segment $m7Segment -VerifyOnly -OutputRoot $m7SegmentRoot -ExpectedHead $head -PassThru|Where-Object {$_ -isnot [string] -and $_.scope -ceq 'm7_home' -and $_.segment -ceq $m7Segment})
         if($m7Proof.Count -ne 1 -or $m7Proof[0].head -cne $head -or $m7Proof[0].status -cne 'PASS' -or -not @($m7Proof[0].gameCases).Count){throw "M7_SEGMENT_FINAL_PROOF：$m7Segment"}
         $m7Segments[$m7Segment]=$m7Proof[0]
     }

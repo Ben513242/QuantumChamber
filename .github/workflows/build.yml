@@ -98,6 +98,22 @@ jobs:
         run: |
           # m7_scale：同一份不可覆寫的原 JUnit XML，不借另一 root。
           & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment Scale -VerifyOnly -SelfTest -ExpectedHead $env:GITHUB_SHA -OutputRoot .superpowers/m7-scale
+      - name: 確認 M7 各 GameTest 段都已執行
+        # T5-5 Step 0（T5-4 品質 M-12、拆段 fix1 複審新 M1）：最後一個 !cancelled() step。Main 執行 step 失敗時「確認 M7 精確集合與隔離」依預設不執行，它開頭的段名守門也跟著略過；
+        # 這裡不論前面成敗都再核一次段名，並依 m7-inventory.json gametestSegments 逐段以 -VerifyOnly 重驗該段的 root（Main 是 .superpowers/m7-own，其他段是 .superpowers/m7-<段名小寫>）。
+        # root 缺席或沒有 summary.json 以 M7_CI_SEGMENT_FINAL_PROOF 失敗：刪掉某段的 step，或加段時連段名守門一起改卻忘了加 step，CI 都會失敗。
+        if: ${{ !cancelled() }}
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $m7CiSegments=@((Get-Content -LiteralPath ./scripts/verification/m7-inventory.json -Raw | ConvertFrom-Json).gametestSegments.PSObject.Properties.Name)
+          if (($m7CiSegments -join ',') -cne 'Main,Corridor,Select') { throw "M7_CI_SEGMENT_SET：m7-inventory.json gametestSegments=[$($m7CiSegments -join ',')]，CI 只執行 Main,Corridor,Select" }
+          foreach ($m7CiSegment in $m7CiSegments) {
+            $m7CiRoot = if ($m7CiSegment -ceq 'Main') { '.superpowers/m7-own' } else { '.superpowers/m7-' + $m7CiSegment.ToLowerInvariant() }
+            if (-not (Test-Path -LiteralPath $m7CiRoot -PathType Container)) { throw "M7_CI_SEGMENT_FINAL_PROOF：$m7CiSegment root 缺席（$m7CiRoot）" }
+            if (-not (Test-Path -LiteralPath (Join-Path $m7CiRoot 'summary.json') -PathType Leaf)) { throw "M7_CI_SEGMENT_FINAL_PROOF：$m7CiSegment root 沒有 summary.json（$m7CiRoot；該段的執行 step 沒有通過）" }
+            & ./scripts/verification/m7-ci-gametest.ps1 -Platform $env:M7_PLATFORM -Segment $m7CiSegment -VerifyOnly -ExpectedHead $env:GITHUB_SHA -OutputRoot $m7CiRoot
+          }
       - name: 上傳 M7 定向證據
         if: always()
         uses: actions/upload-artifact@v4

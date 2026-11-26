@@ -140,7 +140,7 @@ function Copy-Build([string]$dest) {
 # 對象只限 Get-OwnedIdentity（java.exe、nonce 命令列、啟動時間）相符且尚未退出的 owned M7 JVM；每個對象兩次，開始時間相隔約 10 秒，寫進 <evidence>：
 # m7-jstack-<pid>-<n>.txt（工具 stdout 原始位元組）與 m7-jstack.json（pid、時間、工具路徑、exit code、位元組數、SHA-256、狀態）。沒有相符的 JVM 時不取快照，
 # 只寫 m7-jstack-skipped.json（含原因）。工具依序是目標 JVM 執行檔同一個 bin 的 jstack.exe -l、jcmd.exe Thread.print -l，都沒有才用 JAVA_HOME/bin 的同兩者。
-# 每次呼叫最多 12 秒（也不超過剩餘預算），逾時只結束自己啟動的工具程序、再等最多 3 秒；預算 30 秒用完就不再啟動新呼叫，最壞約 33 秒，在 60 秒 grace 內。
+# 每次呼叫最多 12 秒（也不超過剩餘預算），逾時只結束自己啟動的工具程序、再等最多 3 秒；預算 30 秒用完就不再啟動新呼叫，最壞約 37 秒（另加 CIM 查詢時間；T5-5 Step 0 依快照審查 M-3 更正，原寫約 33 秒），在 60 秒 grace 內。
 # 任何失敗只記在 json 的 status，不丟出：gate 的判定、reason 與原失敗訊息不變。Get-OwnedIdentity 由呼叫端 Invoke-Gradle 在 M7Runtime 時自 probe-common.ps1 載入。
 function Resolve-M7ThreadDumpTool([string]$JavaExe,[int]$TargetPid) {
     $bins=@()
@@ -319,7 +319,8 @@ function Invoke-Gradle([string[]]$tasks,[string]$evidence,[string]$runtimeRoot,[
                 if(-not $stopSent){
                     # 只在 M7Runtime 的 idle 判定成立、送 stop 之前取執行緒快照（Save-M7IdleThreadDumps）；reason=total 與其他模式不取。失敗不丟出、不改判定。
                     if($Mode -ceq 'M7Runtime' -and $deadlineState.deadline.reason -ceq 'idle'){try{Save-M7IdleThreadDumps $m7Handles.Values "-Dquantumchamber.m7game.nonce=$M7Nonce" $evidence $deadlineState.deadline}catch{Write-Warning "M7 執行緒快照失敗（不影響 gate 判定）：$($_.Exception.Message)"}}
-                    $process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true
+                    # T5-5 Step 0（快照審查 M-1）：快照會擋 10～37 秒，Gradle 可能在這段期間自己退出；再判一次，已退出就不寫 stop（stdinStop 照實記 false），判定仍是 FAIL／原 reason。
+                    if(-not $process.HasExited){$process.StandardInput.WriteLine('stop');$process.StandardInput.Flush();$stopSent=$true}
                 }
                 if($m6Mode -and ([DateTimeOffset]::Now-$deadlineState.observedAt).TotalSeconds -gt 60){throw "M6_PHASE_DEADLINE_EXCEEDED reason=$($deadlineState.deadline.reason)；grace後尚未退出：$evidence"}
                 if(-not $m6Mode -and ([DateTimeOffset]::Now-$start).TotalSeconds -gt ($timeout+60)){throw "逾時且 stdin stop 未完成：$evidence"}
