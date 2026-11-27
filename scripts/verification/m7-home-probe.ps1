@@ -84,7 +84,7 @@ $corridorCrashSetup=@('freshJournal','freshCatalog','freshReceipts','originRegis
 $corridorSelect=@('corridorBaselineSaved','selectAccepted')
 $corridorReopen=@('crashReceiptMatches','journalBytesFromCrash','bMaterializedAtStart','journalRowFromCrash','reservationRestoredAtStart','corridorProtectedAtStart','noTicketBeforeLifecycle',
     'busyAtStart','aPresenceBusy','bTicketFormal','bLoadedByFormalTicket','participantLoginPose','fenceReadyAtFirstMove','neverInA','returnedToB','participantsAvailable','checkpointOnce',
-    'corridorClearedAtEnd','quietKept')
+    'corridorClearedAtEnd','quietKept','bNotLoadedAtStart')
 $corridorNoClose=@('noEntryTicket','noRootTicket','noCloseEvents')
 $corridorRemoved=@('convertedToReturning','releaseAcked','ticketReleased','notBusy')
 $corridorDormant=@('selectionKept','ticketReleased','dormantLockHeld')
@@ -94,10 +94,10 @@ $corridorSpecs=[ordered]@{
     'select-pending'=@(@($corridorSelect+@('selectPendingAtHalt')),@($corridorNoClose+$corridorRemoved+@('noSelectionEver')),@())
     'select-unconfirmed'=@(@($corridorSelect+@('selectUnconfirmedAtHalt')),@($corridorNoClose+$corridorDormant+@('selectionFromDisk')),@())
     'measured'=@(@($corridorSelect+@('selectedNoneReturned')),@($corridorNoClose+$corridorDormant),@())
-    'partial-returned'=@(@($corridorSelect+@('selectedNoneReturned','secondDisconnected','firstReturnedInB')),@($corridorNoClose+$corridorDormant),@())
-    'cleanup-before'=@(@($corridorSelect+@('selectedNoneReturned','cleanupBeforeAtHalt')),@($corridorNoClose+$corridorDormant),@($cpHead))
-    'cleanup-after'=@(@($corridorSelect+@('selectedNoneReturned','cleanupAfterAtHalt')),@($corridorNoClose+$corridorDormant),@($cpHead,$cpReturn))
-    'collapsing-partial'=@(@($corridorSelect+@('selectedNoneReturned','secondDisconnected','firstReturnedInB','checkedCollapsing')),@($corridorNoClose+@('ticketHeld','collapsingLockHeld','noPrepare')),@())
+    'partial-returned'=@(@($corridorSelect+@('selectedNoneReturned','secondDisconnected','firstReturnedInB')),@($corridorNoClose+$corridorDormant+@('firstStayedInB','secondReturnedNextTick')),@())
+    'cleanup-before'=@(@($corridorSelect+@('selectedNoneReturned','cleanupBeforeAtHalt')),@($corridorNoClose+$corridorDormant+@('stayedInB')),@($cpHead))
+    'cleanup-after'=@(@($corridorSelect+@('selectedNoneReturned','cleanupAfterAtHalt')),@($corridorNoClose+$corridorDormant+@('stayedInB')),@($cpHead,$cpReturn))
+    'collapsing-partial'=@(@($corridorSelect+@('selectedNoneReturned','secondDisconnected','firstReturnedInB','checkedCollapsing')),@($corridorNoClose+@('ticketHeld','collapsingLockHeld','noPrepare','firstStayedInB','secondReturnedNextTick')),@())
     'measured-stopped'=@(@($corridorSelect+@('selectedNoneReturned','rootDisabledAcked','stopLatchedDurable','registrySaved')),
         @('sourceTicketReleasedBeforeClose','entryTicketNeverTaken','closedByRootDisabled','registryStillDisabled','aDoorUnchanged','bDoorOpen','notBusy'),@())
 }
