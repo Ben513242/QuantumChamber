@@ -186,7 +186,9 @@ final class M7HomeCorridorPhases {
         private ChamberControllerBlockEntity bController;
         private List<String> homeChunks;
         private Step step = Step.SETUP;
-        private int stepTicks, cutHits, startedTick = -1, ticketTick = -1, loginTick = -1, prevBPlayers;
+        private int stepTicks, cutHits, startedTick = -1, ticketTick = -1, loginTick = -1, prevBPlayers, secondLoginTick = -1, secondReturnedTick = -1;
+        /** reopen：每位參與者登入之後是否曾離開登入位置（第 7、8 列與第 6、9 列的甲不得移動）。 */
+        private final List<Boolean> movedEach = new ArrayList<>();
         private boolean readbackArmed, finished, passed, bFullSeen, moved, fenceAtFirstTick, converted, selectedSeen, rootTicketSeen, entryTicketSeen,
                 doorWitnessed, firstTick = true;
         private volatile boolean stoppingSeen;
@@ -749,6 +751,8 @@ final class M7HomeCorridorPhases {
             expect("noTicketBeforeLifecycle", homeTicket() == null, () -> "SERVER_STARTED 時已有 B 票：" + homeTicket());
             expect("busyAtStart", gate().globalChamberBusy(server, chamber), () -> "開服時艙不 busy");
             expect("aPresenceBusy", gate().presence(server, chamber) == ChamberSessionGateway.Presence.BUSY, () -> "presence=" + gate().presence(server, chamber));
+            // T5-5 fix1（品質 M-2）：開服時 B 的 home chunks 都還沒載入（只查詢、不載入），bLoadedByFormalTicket 才不會在 B 已常駐時變成空真。
+            expect("bNotLoadedAtStart", !bAnyLoaded(), () -> "開服時 B 的 home chunks 已有載入：" + homeChunks);
             var start = new LinkedHashMap<String, Object>();
             start.put("row", rowFacts(flushed));
             start.put("bLoaded", bAnyLoaded());
@@ -767,8 +771,10 @@ final class M7HomeCorridorPhases {
             var expected = crash.getAsJsonArray("expectedLogin").get(index);
             expect("participantLoginPose", JSON.toJsonTree(pose).equals(expected), () -> names.get(index) + " login=" + pose + " expected=" + expected);
             if (index == 0) loginTick = server.getTicks();
+            if (index == 1) secondLoginTick = server.getTicks();
             if (loginPoses == null) loginPoses = new ArrayList<>();
             loginPoses.add(pose);
+            movedEach.add(false);
             recordWorld(index, connection.player());
         }
 
@@ -797,7 +803,9 @@ final class M7HomeCorridorPhases {
             for (int i = 0; i < participants.size(); i++) {
                 var player = participants.get(i).player();
                 recordWorld(i, player);
-                if (!moved && !JSON.toJsonTree(pose(player)).equals(JSON.toJsonTree(loginPoses.get(i)))) {
+                boolean differs = !JSON.toJsonTree(pose(player)).equals(JSON.toJsonTree(loginPoses.get(i)));
+                if (differs) movedEach.set(i, true);
+                if (!moved && differs) {
                     moved = true;
                     expect("fenceReadyAtFirstMove", fenceReady(), () -> "第一次返還移動時 HomeRootFence 尚未就緒");
                 }
@@ -807,6 +815,8 @@ final class M7HomeCorridorPhases {
             var flushed = homeRow(journal.allFlushedSessions().get(sid));
             var current = homeRow(journal.allSessions().get(sid));
             if (flushed != null && flushed.state() == SessionState.RETURNING) converted = true;
+            // 第 6、9 列：乙的 Returned 第一次在 checked 列上成立的 tick（JOIN 只排到下一個 tick，設計稿 7.3）。
+            if (ids.size() == 2 && secondReturnedTick < 0 && secondLoginTick >= 0 && flushed != null && returned(flushed, ids.get(1))) secondReturnedTick = server.getTicks();
             if (flushed != null && flushed.home().selection() instanceof Selected || current != null && current.home().selection() instanceof Selected) selectedSeen = true;
             prevBPlayers = b.getPlayers().size();
             if (endMissing(journal, pages).isEmpty()) {
@@ -894,6 +904,12 @@ final class M7HomeCorridorPhases {
             }
             expect("checkpointOnce", eventNames().subList(0, Math.min(2, eventNames().size())).equals(List.of(HEAD, RETURN))
                     && eventNames().stream().filter(HEAD::equals).count() == 1 && eventNames().stream().filter(RETURN::equals).count() == 1, () -> "events=" + eventNames());
+            if (ids.size() == 2) {
+                // T5-5 fix1（規格 M-2，設計稿 7.3、7.4）：第 6、9 列的甲 crash 前已返還、在 B 不動；乙在 JOIN 的下一個 tick 被送回 exact B（JOIN 當 tick 不返還）。
+                expect("firstStayedInB", !movedEach.get(0), () -> "甲被移動：pose=" + pose(participants.get(0).player()) + " login=" + loginPoses.get(0));
+                expect("secondReturnedNextTick", secondLoginTick >= 0 && secondReturnedTick == secondLoginTick + 1,
+                        () -> "乙登入 tick=" + secondLoginTick + " Returned 成立 tick=" + secondReturnedTick);
+            }
             if (row.removedEnd()) {
                 expect("convertedToReturning", converted, () -> "沒有觀察到 checked RETURNING");
                 expect("releaseAcked", !pages.releaseComplete(sid) && !pages.hasReservation(sid), () -> "完成收據未消費");
@@ -902,6 +918,8 @@ final class M7HomeCorridorPhases {
                 if (row == Row.ARMING) expect("stayedInB", !moved, () -> "第 1 列的參與者在 B 原地，不應移動");
                 if (row == Row.SELECT_PENDING) expect("noSelectionEver", !selectedSeen, () -> "journal 出現過選定列");
             } else if (row.dormantEnd()) {
+                // T5-5 fix1（規格 M-2，設計稿 7.4）：第 7、8 列 crash 前已全員返還，reopen 不移動任何人；第 6 列的甲在 B 不動。
+                if (row == Row.CLEANUP_BEFORE || row == Row.CLEANUP_AFTER) expect("stayedInB", !moved, () -> "已返還的參與者被移動：poses=" + poses() + " login=" + loginPoses);
                 var crashSelection = String.valueOf(disk.get("selection"));
                 expect("selectionKept", flushed != null && flushed.home().selection() instanceof Selected && JSON.toJsonTree(selectionFacts(flushed)).toString().equals(crashSelection),
                         () -> "end=" + (flushed == null ? null : flushed.home().selection()) + " crash=" + crashSelection);
