@@ -775,7 +775,10 @@ pwsh -NoProfile -File scripts/verification/m7-home-probe.ps1 -VerifyAggregate <c
     - 合計 32 個（10×3＋2）。
   - SelfTest 預算（使用者 2026-11-19 11:5x 裁示「上限改 1000 個＋時限 120 秒（建議）」）：每一次 `-VerifySummary -SelfTest` 或 `-VerifyAggregate -SelfTest` 呼叫各自最多 1000 個負控，SelfTest 計時 120 秒（從第一個負控之前到最後的原件重驗之後）。第 1001 個負控在執行前以 `M7_HOME_SELFTEST_BUDGET` 拒絕。各負控完成後與原件重驗後核對耗時，超過以 `M7_HOME_SELFTEST_TIME` 失敗。現有預算負控各驗多一個、超時 0.1 秒的具名拒絕，恰在上限時仍接受。PASS 行在 `negativeChecks=` 之後記 `selfTestSeconds=`。M6 runner 與其他 gate 的時限不變。
   - 47 列時的負控數（T5 Step 0 實測，本機對 `run-all-b90f443e…` 的真實 summary 與由它切出的分片）：單份完整 404（2＋8＋8×47＋18），SelfTest 約 5.3 秒；family 三份彙總 434（2＋8＋10×3＋376＋18），約 5.8 秒；門態五份彙總 454（2＋8＋10×5＋376＋18），約 4.6 秒。單份分片：`-Family restart` 55、`-Family receipt` 51、`-DoorState` 116。每多一列原生 close 列多 8 個負控，restart／receipt 族另加該列的 B 收尾票負控。
-  - 57 列時的負控數（T5-5；**預估，依公式推算，待實跑核對**）：單份完整 516（2＋8＋8×57＋18＋32）；family 四份彙總 556（2＋8＋10×4＋456＋18＋32）；門態六份彙總 576（2＋8＋10×6＋456＋18＋32）；單份分片 `-Family corridor` 124（2＋8＋2＋80＋32）。`-Family restart`、`-Family receipt`、`-DoorState` 的單份分片只含原本的列，預期仍是 55、51、116（未實跑）。corridor 列每列 8＋3 個，第 10 列 8＋5 個。都在每次 1000 個、120 秒的上限之內；SelfTest 秒數未實測。
+  - 57 列時的負控數（T5-5）：
+    - 單份分片已實測（`c6e26e1`；SDD `t5-5-chain-4a47f417.json`、`t5-5-focused-r3-4e34e4bf.json`、`t5-5-focused-r4-f6e1aae7.json`）：`-Family corridor` 124（2＋8＋2＋80＋32，SelfTest 約 0.6～0.7 秒）、`-Family restart` 55、`-Family receipt` 51（各約 0.3 秒）。
+    - 依公式推算、**完整 run-all 後實測**：單份完整 516（2＋8＋8×57＋18＋32）；family 四份彙總 556（2＋8＋10×4＋456＋18＋32）；門態六份彙總 576（2＋8＋10×6＋456＋18＋32）；`-DoorState` 單份分片 116。
+    - corridor 列每列 8＋3 個，第 10 列 8＋5 個。都在每次 1000 個、120 秒的上限之內。
 - run-all 與 CI 接線見下方「run-all 與 CI 接線（T4 B2b-3）」。
 
 ### B2a：其餘跨 JVM 鏈（`M7HomeChainPhases.java`）
@@ -853,7 +856,7 @@ plan Task 5 :327 的切點以 Windows 原生跨 JVM 鏈驗證：crash 停在入�
 - 覆蓋界線：
   - corridor 列沒有涵蓋「走廊幾何已寫進世界、從未落盤就 crash」：第 2～10 列都先做基線 2 才 crash，第 1 列在寫幾何之前就 crash。
   - 磁碟上本來就是 RETURNING 的未選定列（例如取消之後、一人已返還時 crash）沒有原生列，只有 JUnit `M7HomeAttachActionTest.returningTakesTicketAndSpaceWithoutRewrite` 與讀碼支持。
-- 耗時（設計稿 7.6，**預估，待實測**）：本機每列約 50～75 秒、第 10 列約 60～85 秒，`-Family corridor` 約 9～12.5 分鐘，每個 phase 都低於 `-PhaseMinutes 5`。run-all 與 CI 見下方「run-all 與 CI 接線（T4 B2b-3）」。
+- 耗時（本機實測，`c6e26e1` 的 focused r3／r4 與 `48b25db` 的 r1／r2）：每個 phase 約 17～19 秒、每列約 35～37 秒，`-Family corridor` 整族 355～358 秒，每個 phase 都遠低於 `-PhaseMinutes 5`（設計稿 7.6 原估每列 50～75 秒、整族 9～12.5 分鐘，偏高）。run-all 與 CI 見下方「run-all 與 CI 接線（T4 B2b-3）」。
 - `ci-rule-check.ps1` 的 M7 fixture 不在 run-all 內，由 SDD 驅動另外執行（設計稿第 10 節），見下方「M7 各段的最後重驗與 ci-rule-check fixture」。
 
 ### 管理員說明：回程收據與熱列不符（T4 P1、P2）
@@ -1058,7 +1061,7 @@ CI 45569149943（`238ade6`）的 Windows 走廊段卡住超過 90 秒、被 idle
 
 run-all 新 step `m7-home-native`（在 `m6-native` 之後）：
 
-- 以 `-EvidenceRoot <run root>` 一次跑完整 57 列（T5-5 起；T4B 起到 T5-5 之前是 47 列，本機約 27～30 分鐘：47 列×約 38 秒）。corridor 10 列本機每列約 50～75 秒、第 10 列約 60～85 秒，合計約 9～12.5 分鐘，整步約 36～42 分鐘（都是設計稿 7.6 的預估，待實測）。run root 內必須恰好一份 `m7-home-run-<12 hex>.json`（`M7_HOME_RUNALL_SUMMARY`）。
+- 以 `-EvidenceRoot <run root>` 一次跑完整 57 列（T5-5 起；T4B 起到 T5-5 之前是 47 列，本機約 27～30 分鐘：47 列×約 38 秒）。corridor 10 列本機實測每列約 35～37 秒、合計約 6 分鐘（`c6e26e1` focused r3／r4：358 秒），整步依此推算約 33～36 分鐘（整步本身待完整 run-all 實測）。run root 內必須恰好一份 `m7-home-run-<12 hex>.json`（`M7_HOME_RUNALL_SUMMARY`）。
 - 再以 `-VerifySummary <那一份> -ExpectedHead <run-all 開始時的 HEAD> -RequireComplete -SelfTest` 驗證，輸出必須恰好一行 `M7_HOME_VERIFIED_COMPLETE PASS rows=57 phases=114 … selection=all HEAD=<同一個 HEAD>`（`M7_HOME_RUNALL_NOT_COMPLETE`；T4B 之前是 46／92，T4B 起到 T5-5 之前是 47／94）。分片 summary 會被 `-RequireComplete` 以 `M7_HOME_NOT_COMPLETE` 拒絕，不能冒充完整。
 - `summary` step 另外唯讀重驗同一份 summary（T4 B2b-4，B2b3-M2，`Get-M7HomeNativeProof`）：run root 內恰一份、`-VerifySummary … -ExpectedHead <HEAD> -RequireComplete`（不再跑負控）、輸出恰一行 57 列的 `M7_HOME_VERIFIED_COMPLETE PASS`，重驗前後 SHA-256 相同、head／57 列／114 phase 相符；結果寫進 `summary.json` 的 `m7HomeNative`（`summary`、`sha256`、`rows`、`phases`、`status=COMPLETE`、`verify`），`SUMMARY` 行最後加 `m7native=COMPLETE:57`（T4B 之前是 46／92、`COMPLETE:46`；T4B 起到 T5-5 之前是 47／94、`COMPLETE:47`）。跳過或刪掉 `m7-home-native` step 時，summary step 以 `M7_HOME_RUNALL_SUMMARY` 失敗。其他 step 與 `summary.json` 既有欄位沒有改。
 - `summary` step 的 M4 recovery `readback-fault` 分支另外直接核 `pending-stopped.json` 的 `stopSaveCalls≥1` 與 `universeUnchanged=true`（B2b1-M4，與 `m4-recovery-probe.ps1` 對齊）。
@@ -1068,5 +1071,5 @@ CI（`.github/workflows/build.yml`）新增兩個 job，其他 job 不變：
 - `m7-home-native`（windows-latest，matrix 五片，`fail-fast: false`；T5-5 之前是四片）：`ordinary`、`sealed`、`passable` 各以 `-DoorState` 跑 13 列；`restart-receipt` 依序以 `-Family restart`、`-Family receipt` 跑 4＋4 列（T4B 之前是 3＋4）；`corridor`（T5-5）以 `-Family corridor` 跑 10 列。每次 runner 輸出的 `M7_HOME_SUMMARY=` 恰一行，路徑依序寫進 `build/m7-home-native/<shard>.txt`。驗證 step 對每一份跑 `-VerifySummary -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為該選擇的 `M7_HOME_VERIFIED_SHARD PASS … selection=doorState:<門態>|family:<族> HEAD=$GITHUB_SHA`（單份驗證對分片也是 exit 0，所以不只看 exit code）。artifact `m7-home-native-<shard>`：清單、summary、phase 證據（`.superpowers/verification/m7-home-*/**`）、各 root 的 `preservation.json`、`server.properties`、`world/data/**`。
 - `m7-home-native-aggregate`（`needs: m7-home-native`，windows-latest）：以 `merge-multiple` 把五片 artifact 下載回 workspace 根目錄。summary 內記的是絕對路徑，所以彙總也必須在 windows-latest（workspace 路徑與分片 job 相同）；先核五個清單恰為 `corridor,ordinary,passable,restart-receipt,sealed`、合計 6 份 summary、每份 summary 引用的 `preservation.json` 與 phase receipt 都已下載（`M7_HOME_CI_AGGREGATE_*`），再跑 `-VerifyAggregate … -ExpectedHead $GITHUB_SHA -SelfTest`，輸出必須恰為 `M7_HOME_AGGREGATE_COMPLETE PASS combination=doorState summaries=6 rows=57 phases=114 … HEAD=$GITHUB_SHA`（T4B 之前是 46／92；T4B 起到 T5-5 之前是四片、`summaries=5 rows=47 phases=94`）。結果另存 artifact `m7-home-aggregate`。
 - runner 環境比對（T4 B2b-4，B2b3-M3）：每片在執行 step 之前，以「記錄 Windows M7 原生分片 runner 環境」step 寫 `build/m7-home-native/<shard>.runner.json`（`shard`、`workspace`＝`GITHUB_WORKSPACE` 的絕對路徑、`imageOS`、`imageVersion`），隨分片 artifact 上傳。彙總 step 先記下自己的值，逐片比對：缺記錄或 shard 不符 `M7_HOME_CI_AGGREGATE_RUNNER`、workspace 不同 `M7_HOME_CI_AGGREGATE_WORKSPACE`、`ImageOS` 不同 `M7_HOME_CI_AGGREGATE_IMAGE`，訊息附兩邊的 workspace 與 image；同一個 image 只有 `ImageVersion` 不同時只記一行 `M7_HOME_CI_AGGREGATE_IMAGE_VERSION_DIFFERS`、不失敗（不影響路徑）。這些比對排在清單檔名檢查之後（runner 記錄要靠清單的檔名才找得到）、summary 數與原件存在檢查之前（`.github/workflows/build.yml` 彙總 step），所以路徑不同時以具名錯因失敗，不會看起來像原件沒上傳。彙總 step 的主體包在 `try/catch` 裡：任何錯誤都先把訊息、error record、例外與 script stack 附加到上傳的 `build/m7-home-native-aggregate.log`（`M7_HOME_CI_AGGREGATE_FAIL …`），再原樣丟出；原本的判定沒有改。
-- timeout：分片 job 90 分鐘、執行 step 60 分鐘、驗證 10 分鐘；彙總 job 30 分鐘。依據：本機門態分片 450～572 秒、restart 約 103 秒、receipt 約 130 秒；同 runner 上 M6 原生鏈本機約 8 分鐘、CI job 24～31 分鐘（約 3～3.9 倍），M7 JUnit 約 3～3.5 倍，估門態分片在 CI 約 30～40 分鐘（含第一個 phase 的冷編譯）。T5-5 的 `corridor` 片沿用同一組上限（job 90 分、執行 step 60 分、驗證 10 分），沒有另設；依 CI 45767504067 既有分片約 57～98 秒／列，估 corridor 片在 CI 約 100～180 秒／列、合計約 17～30 分鐘（設計稿 7.6 的預估，待實測）。
+- timeout：分片 job 90 分鐘、執行 step 60 分鐘、驗證 10 分鐘；彙總 job 30 分鐘。依據：本機門態分片 450～572 秒、restart 約 103 秒、receipt 約 130 秒；同 runner 上 M6 原生鏈本機約 8 分鐘、CI job 24～31 分鐘（約 3～3.9 倍），M7 JUnit 約 3～3.5 倍，估門態分片在 CI 約 30～40 分鐘（含第一個 phase 的冷編譯）。T5-5 的 `corridor` 片沿用同一組上限（job 90 分、執行 step 60 分、驗證 10 分），沒有另設；依本機實測每列約 36 秒，比照既有原生分片本機與 CI 的比例（本機 close 列約 38 秒／列，CI 45767504067 約 57～98 秒／列，約 1.5～2.6 倍），估 corridor 片在 CI 約 54～94 秒／列、合計約 9～16 分鐘（推算，CI 未實測）。
 - 這些 step 目前沒有 `ci-rule-check.ps1` 的 fixture；T4 B2b-3 以 SDD 內一次性的 harness 逐字抽出 step 原文實跑驗證（見 SDD `t4b2b3-report.md`）。
